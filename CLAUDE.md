@@ -4,7 +4,7 @@ Context for Claude working in this repo.
 
 ## What this is
 
-A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, **Coup**, **Codenames**, **Cross Clues**, and **Love Letter**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
+A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, **Coup**, **Codenames**, **Cross Clues**, **Love Letter**, **Skull**, **Liar's Dice**, **Liar's Poker**, and **Cockroach Poker**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
 
 The Catan project one directory up (`../catan/`) is the inspirational reference for the engine / store / net layering. Read its CLAUDE.md for the patterns we're echoing — they're proven against 6 expansions there. **One critical difference: this app is host-authoritative with redacted per-peer views, not full-state replication.** Catan can replicate the full state because Catan has no hidden information beyond dev cards (and even those leak from action logs); social deduction breaks if every peer holds every role. See the "Hidden info model" section below.
 
@@ -17,7 +17,7 @@ TypeScript, Vite, React 19, Trystero (WebRTC torrent), Zustand for state, Vitest
 Five layers, separated by directory:
 
 - **`src/engine/`** — pure game-agnostic plumbing. Defines the `GameModule` contract (private state, action, public view + per-seat redactor) and the cross-game registry. No React, no DOM, no network imports.
-- **`src/games/<id>/`** — one folder per game. Each implements `GameModule` and ships its own state/actions/AI/UI. Currently: `onuw/`, `secret-hitler/`, `avalon/`, `coup/`, `codenames/`, `cross-clues/`, `love-letter/`. Adding a new game = new folder + registry entry, no engine changes.
+- **`src/games/<id>/`** — one folder per game. Each implements `GameModule` and ships its own state/actions/AI/UI. Currently: `onuw/`, `secret-hitler/`, `avalon/`, `coup/`, `codenames/`, `cross-clues/`, `love-letter/`, `skull/`, `liars-dice/`, `liars-poker/`, `cockroach-poker/`. Adding a new game = new folder + registry entry, no engine changes.
 - **`src/net/`** — Trystero wrapper. Typed channels for hello/lobby/seatReq/start/action/view/snap/chat, persistent UUID via localStorage. Consumed only by `networkStore`.
 - **`src/store/`** — two Zustand stores: `gameStore` (private state on host, public view everywhere) and `networkStore` (connection, role, lobby, chat).
 - **`src/ui/`** — React. `home/` and `lobby/` are game-agnostic; `game/GameRouter.tsx` dispatches to the per-game UI under `src/games/<id>/ui/`.
@@ -63,6 +63,10 @@ See each game's README:
 - `src/games/codenames/README.md` — Codenames (party word-association, 2-team)
 - `src/games/cross-clues/README.md` — Cross Clues (cooperative word game)
 - `src/games/love-letter/README.md` — Love Letter (16-card micro deduction)
+- `src/games/skull/README.md` — Skull (3–6p bluffing with skull/rose disks)
+- `src/games/liars-dice/README.md` — Liar's Dice (cup-of-dice bid-or-call, wild-ones + spot-on options)
+- `src/games/liars-poker/README.md` — Liar's Poker (52-card deck, declare poker hands across combined pool; inverted flush ranking; optional dummy-hand last life)
+- `src/games/cockroach-poker/README.md` — Cockroach Poker (pass face-down creature cards with a claim; first to 4 of one creature loses)
 
 ## Conventions
 
@@ -103,6 +107,10 @@ See each game's README:
 - [x] Phase 10 — Cross Clues (coop word game): 5×5 secret-word grid, 25-coord deck, host-authoritative clue-giver redaction, themed word packs (Standard / Spicy / Kids), final-score tiers (16 great / 21 legendary / 25 perfect). No winner team — uses `score` + `scoreRating` instead.
 - [x] Phase 11 — Codenames (party word-association, 2-team).
 - [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players, base-set 16-card deck (Princess/Countess/King/Prince ×2/Handmaid ×2/Baron ×2/Priest ×2/Guard ×5). Per-seat single hidden card is the only redaction; Priest peek is privately addressed to the actor. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
+- [x] Phase 13 — Skull (3–6p bluffing): each player's 3 roses + 1 skull disks stacked face-down per seat (single chokepoint redaction). Configurable challenge target (1/2/3 wins, default 2). Phases: `placeOpening` → `placing` → `bidding` → `revealing` → `roundOver` → `gameOver`. Challenger flips from own stack first, then chooses opponent stacks (top-down); hit a skull → drop a disk (rose preferred). Heuristic AI.
+- [x] Phase 14 — Liar's Dice (2–8p): 5 dice per seat (rerolled per round); per-seat `yourDice` redacted, on-reveal everyone sees `lastReveal.allDice`. Options: 1s-wild (counts toward any non-1 bid) and spot-on (caller wins if bid is exactly right, else they lose). Binomial-prior AI uses unseen-dice math to call/raise.
+- [x] Phase 15 — Liar's Poker (2–8p): standard 52-card deck, configurable 1–5 cards/seat (default 3). Combined-pool verification — declared hand must exist across the union of all hands. Standard 8-category ranking EXCEPT plain flushes: declared as `{topRank, suit}`, **lower top card is stronger** (must have exact top + 4 strictly-lower same-suit cards). Straight flushes use standard high-rank-wins. Hand compare + existence live in `src/games/liars-poker/hands.ts` with focused test coverage for the inverted-flush rule. Optional dummy-hand "last life" — a player who loses their last card gets one round with a single dealt card they can't see but everyone else can. Monte-Carlo prior AI.
+- [x] Phase 16 — Cockroach Poker (3–6p): 64-card deck (8 creatures × 8). Pass face-down with a claim; receiver believes / rejects / peeks + passes onward. Chokepoint redaction includes peek-chain tracking (`pass.seenBy`) so previously-peeked seats see the card too. Lose on 4 of any one creature face-up.
 
 ## Non-goals (do not implement)
 

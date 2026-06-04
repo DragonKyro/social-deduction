@@ -6,6 +6,10 @@ import { coupModule } from '@/games/coup';
 import { codenamesModule } from '@/games/codenames';
 import { crossCluesModule } from '@/games/cross-clues';
 import { loveLetterModule } from '@/games/love-letter';
+import { skullModule } from '@/games/skull';
+import { liarsDiceModule } from '@/games/liars-dice';
+import { liarsPokerModule } from '@/games/liars-poker';
+import { cockroachPokerModule } from '@/games/cockroach-poker';
 
 // Central registry of every game module the app knows how to play. The
 // HomeMenu reads `GAMES` to render the picker; the host's `bindGame`
@@ -27,6 +31,10 @@ export const GAMES: Record<GameId, GameModule<any, any, any>> = {
   codenames: codenamesModule,
   'cross-clues': crossCluesModule,
   'love-letter': loveLetterModule,
+  skull: skullModule,
+  'liars-dice': liarsDiceModule,
+  'liars-poker': liarsPokerModule,
+  'cockroach-poker': cockroachPokerModule,
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -9,6 +9,10 @@ import { CoupSetup } from '@/games/coup/ui/CoupSetup';
 import { CodenamesSetup } from '@/games/codenames/ui/CodenamesSetup';
 import { CrossCluesSetup } from '@/games/cross-clues/ui/CrossCluesSetup';
 import { LoveLetterSetup } from '@/games/love-letter/ui/LoveLetterSetup';
+import { SkullSetup } from '@/games/skull/ui/SkullSetup';
+import { LiarsDiceSetup } from '@/games/liars-dice/ui/LiarsDiceSetup';
+import { LiarsPokerSetup } from '@/games/liars-poker/ui/LiarsPokerSetup';
+import { CockroachPokerSetup } from '@/games/cockroach-poker/ui/CockroachPokerSetup';
 import { GameTileArt } from './GameTileArt';
 import styles from './HomeMenu.module.css';
 
@@ -23,6 +27,10 @@ type Stage =
   | { kind: 'codenames-setup' }
   | { kind: 'cross-clues-setup' }
   | { kind: 'love-letter-setup' }
+  | { kind: 'skull-setup' }
+  | { kind: 'liars-dice-setup' }
+  | { kind: 'liars-poker-setup' }
+  | { kind: 'cockroach-poker-setup' }
   | { kind: 'join-online' };
 
 export function HomeMenu() {
@@ -47,6 +55,18 @@ export function HomeMenu() {
   if (stage.kind === 'love-letter-setup') {
     return <LoveLetterSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
+  if (stage.kind === 'skull-setup') {
+    return <SkullSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'liars-dice-setup') {
+    return <LiarsDiceSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'liars-poker-setup') {
+    return <LiarsPokerSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'cockroach-poker-setup') {
+    return <CockroachPokerSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
   if (stage.kind === 'join-online') {
     return <JoinOnline onBack={() => setStage({ kind: 'menu' })} />;
   }
@@ -58,9 +78,24 @@ export function HomeMenu() {
     else if (id === 'codenames') setStage({ kind: 'codenames-setup' });
     else if (id === 'cross-clues') setStage({ kind: 'cross-clues-setup' });
     else if (id === 'love-letter') setStage({ kind: 'love-letter-setup' });
+    else if (id === 'skull') setStage({ kind: 'skull-setup' });
+    else if (id === 'liars-dice') setStage({ kind: 'liars-dice-setup' });
+    else if (id === 'liars-poker') setStage({ kind: 'liars-poker-setup' });
+    else if (id === 'cockroach-poker') setStage({ kind: 'cockroach-poker-setup' });
   };
 
-  const wired: GameId[] = ['onuw', 'avalon', 'coup', 'codenames', 'cross-clues', 'love-letter'];
+  const wired: GameId[] = [
+    'onuw',
+    'avalon',
+    'coup',
+    'codenames',
+    'cross-clues',
+    'love-letter',
+    'skull',
+    'liars-dice',
+    'liars-poker',
+    'cockroach-poker',
+  ];
 
   return (
     <main className={styles.root}>

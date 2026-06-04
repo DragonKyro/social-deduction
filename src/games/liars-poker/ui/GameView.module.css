@@ -1,0 +1,310 @@
+.root {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: #dcfce7;
+}
+
+.subtitle {
+  margin: 0;
+  color: #86efac;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #cbd5e1;
+}
+
+.secondaryButton {
+  background: #1f2937;
+  color: #e2e8f0;
+  padding: 10px 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #15803d;
+  color: #f0fdf4;
+  font-weight: 700;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: #334155;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.actionButtonRed {
+  background: #7f1d1d;
+  color: #fee2e2;
+  padding: 10px 18px;
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.boardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.seatPanel {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.seatPanel.active {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px #fbbf24 inset;
+}
+
+.seatPanel.localSeat {
+  border-color: #14b8a6;
+}
+
+.seatPanel.bidder {
+  border-color: #22c55e;
+}
+
+.seatPanel.dummy {
+  background: linear-gradient(180deg, #0b1220, #1f1f3a);
+  border-color: #a78bfa;
+}
+
+.seatPanel.eliminatedSeat {
+  opacity: 0.5;
+}
+
+.seatHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.seatName {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.youTag {
+  color: #14b8a6;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.dummyTag {
+  color: #a78bfa;
+  font-size: 11px;
+  margin-left: 4px;
+  background: #312e81;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.seatStatusRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.statusBad {
+  font-size: 11px;
+  color: #fca5a5;
+  background: #7f1d1d;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.statusActive {
+  font-size: 11px;
+  color: #fef3c7;
+  background: #b45309;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.statusMuted {
+  font-size: 11px;
+  color: #94a3b8;
+  background: #1f2937;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.seatTokens {
+  text-align: right;
+}
+
+.tokenCount {
+  font-weight: 700;
+  font-size: 18px;
+  color: #86efac;
+}
+
+.tokenLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+}
+
+.handRow {
+  display: flex;
+  align-items: center;
+}
+
+.cardList {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cardChip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 50px;
+  border-radius: 5px;
+  background: #f8fafc;
+  font-weight: 700;
+  border: 1px solid #cbd5e1;
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+.cardRed {
+  color: #b91c1c;
+}
+
+.cardBlack {
+  color: #0f172a;
+}
+
+.cardRank {
+  font-size: 14px;
+}
+
+.cardSuit {
+  font-size: 14px;
+}
+
+.cardBack {
+  display: inline-block;
+  width: 36px;
+  height: 50px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #1e3a8a, #0b0f17);
+  border: 1px solid #475569;
+}
+
+.empty {
+  color: #475569;
+  font-size: 12px;
+}
+
+.passButton {
+  background: #1f2937;
+  color: #94a3b8;
+  border: 1px dashed #334155;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.claimStrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #0b1220;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.claimLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.bidControls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.bidControls label {
+  display: grid;
+  gap: 4px;
+}
+
+.controlLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.bidSelect {
+  padding: 6px 8px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.preview {
+  margin: 12px 0;
+  font-size: 14px;
+  color: #cbd5e1;
+}

@@ -69,10 +69,14 @@ Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a 
 11. ✅ Phase 10 — Cross Clues (coop)
 12. ✅ Phase 11 — Codenames (party word-association)
 13. ✅ Phase 12 — Love Letter (16-card micro deduction)
-14. Phase 6 — Online multiplayer wiring
-15. Phase 7 — AI for all games
-16. Phase 8 — In-game chat + phase-gated visibility
-17. Phase 9 — Replay
+14. Phase 13 — Skull (bidding/bluffing, 3-6p)
+15. Phase 14 — Liar's Dice (dice bidding, 2-8p)
+16. Phase 15 — Liar's Poker (serial-number bluffing, 2-10p)
+17. Phase 16 — Cockroach Poker (creature-card bluffing, 2-6p)
+18. Phase 6 — Online multiplayer wiring
+19. Phase 7 — AI for all games
+20. Phase 8 — In-game chat + phase-gated visibility
+21. Phase 9 — Replay
 
 See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 

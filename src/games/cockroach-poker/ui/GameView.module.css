@@ -1,0 +1,323 @@
+.root {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: #ecfccb;
+}
+
+.subtitle {
+  margin: 0;
+  color: #bef264;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #cbd5e1;
+}
+
+.h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+
+.divider {
+  height: 1px;
+  background: #1f2937;
+  margin: 12px 0;
+}
+
+.helperText {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
+.secondaryButton {
+  background: #1f2937;
+  color: #e2e8f0;
+  padding: 10px 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #65a30d;
+  color: #f7fee7;
+  font-weight: 700;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: #334155;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.actionButton {
+  background: #166534;
+  color: #dcfce7;
+  padding: 10px 18px;
+  border: 1px solid #22c55e;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.actionButtonRed {
+  background: #7f1d1d;
+  color: #fee2e2;
+  padding: 10px 18px;
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.boardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.seatPanel {
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.seatPanel.active {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px #fbbf24 inset;
+}
+
+.seatPanel.localSeat {
+  border-color: #14b8a6;
+}
+
+.seatPanel.holder {
+  border-color: #a78bfa;
+}
+
+.seatPanel.lostSeat {
+  opacity: 0.5;
+}
+
+.seatHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.seatName {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.youTag {
+  color: #14b8a6;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.seatStatusRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.statusBad {
+  font-size: 11px;
+  color: #fca5a5;
+  background: #7f1d1d;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.statusActive {
+  font-size: 11px;
+  color: #fef3c7;
+  background: #b45309;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.statusMuted {
+  font-size: 11px;
+  color: #94a3b8;
+  background: #1f2937;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.seatTokens {
+  text-align: right;
+}
+
+.tokenCount {
+  font-weight: 700;
+  font-size: 18px;
+  color: #bef264;
+}
+
+.tokenLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+}
+
+.rowGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.rowCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  background: #1f2937;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+
+.rowCell.rowDanger {
+  background: #7f1d1d;
+  border-color: #b91c1c;
+}
+
+.rowIcon {
+  font-size: 18px;
+}
+
+.rowCount {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.empty {
+  color: #475569;
+  font-size: 12px;
+}
+
+.passButton {
+  background: #1f2937;
+  color: #94a3b8;
+  border: 1px dashed #334155;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chainStrip {
+  background: #0b1220;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+  color: #cbd5e1;
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.chainLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.chainHop {
+  color: #cbd5e1;
+}
+
+.handList {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.handChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1f2937;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+}
+
+.passControls {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.passControls label {
+  display: grid;
+  gap: 4px;
+}
+
+.controlLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.passSelect {
+  padding: 6px 8px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 6px;
+  font-size: 14px;
+}

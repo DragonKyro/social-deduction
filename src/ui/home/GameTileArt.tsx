@@ -19,6 +19,14 @@ export function GameTileArt({ id }: { id: GameId }) {
       return <CrossCluesTile />;
     case 'love-letter':
       return <LoveLetterTile />;
+    case 'skull':
+      return <SkullTile />;
+    case 'liars-dice':
+      return <LiarsDiceTile />;
+    case 'liars-poker':
+      return <LiarsPokerTile />;
+    case 'cockroach-poker':
+      return <CockroachPokerTile />;
   }
 }
 
@@ -292,6 +300,131 @@ function CoupTile() {
         <ellipse cx="40" cy="34" rx="10" ry="6" fill="#0b0f17" />
         <ellipse cx="80" cy="34" rx="10" ry="6" fill="#0b0f17" />
       </g>
+    </TileBase>
+  );
+}
+
+function SkullTile() {
+  // Stylized skull motif over crimson-on-black, with a rose offset to one
+  // side to telegraph the dual disk-types.
+  return (
+    <TileBase gradFrom="#7f1d1d" gradTo="#0b0f17">
+      <g transform="translate(120, 36)">
+        {/* Skull head */}
+        <path
+          d="M40 0 Q80 0 80 40 L80 70 L60 70 L60 90 L20 90 L20 70 L0 70 L0 40 Q0 0 40 0 Z"
+          fill="#f1f5f9"
+          stroke="#0b0f17"
+          strokeWidth="2"
+        />
+        {/* Eyes */}
+        <ellipse cx="20" cy="40" rx="9" ry="11" fill="#0b0f17" />
+        <ellipse cx="60" cy="40" rx="9" ry="11" fill="#0b0f17" />
+        {/* Nose */}
+        <path d="M40 50 L34 64 L40 70 L46 64 Z" fill="#0b0f17" />
+        {/* Teeth */}
+        <line x1="20" y1="78" x2="60" y2="78" stroke="#0b0f17" strokeWidth="2" />
+        <line x1="32" y1="78" x2="32" y2="90" stroke="#0b0f17" strokeWidth="2" />
+        <line x1="48" y1="78" x2="48" y2="90" stroke="#0b0f17" strokeWidth="2" />
+      </g>
+      {/* Rose */}
+      <g transform="translate(48, 110)">
+        <circle cx="20" cy="20" r="20" fill="#fce7f3" stroke="#831843" strokeWidth="2" />
+        <circle cx="20" cy="20" r="12" fill="#f472b6" />
+        <circle cx="20" cy="20" r="6" fill="#831843" />
+      </g>
+    </TileBase>
+  );
+}
+
+function LiarsDiceTile() {
+  // A cluster of three dice tilted, partially behind a tipping leather cup.
+  return (
+    <TileBase gradFrom="#1e40af" gradTo="#0b0f17">
+      {/* Cup */}
+      <g transform="translate(40, 70)">
+        <path d="M0 0 L70 0 L60 80 L10 80 Z" fill="#7c2d12" stroke="#fde047" strokeWidth="2" />
+        <ellipse cx="35" cy="0" rx="35" ry="8" fill="#92400e" stroke="#fde047" strokeWidth="2" />
+      </g>
+      {/* Dice */}
+      <g transform="translate(160, 50) rotate(-12)">
+        <rect x="0" y="0" width="42" height="42" rx="6" fill="#f8fafc" stroke="#0b0f17" strokeWidth="2" />
+        <circle cx="12" cy="12" r="3" fill="#dc2626" />
+        <circle cx="30" cy="30" r="3" fill="#0b0f17" />
+        <circle cx="12" cy="30" r="3" fill="#0b0f17" />
+        <circle cx="30" cy="12" r="3" fill="#0b0f17" />
+      </g>
+      <g transform="translate(210, 100) rotate(15)">
+        <rect x="0" y="0" width="42" height="42" rx="6" fill="#f8fafc" stroke="#0b0f17" strokeWidth="2" />
+        <circle cx="21" cy="21" r="3" fill="#0b0f17" />
+        <circle cx="10" cy="10" r="3" fill="#0b0f17" />
+        <circle cx="32" cy="10" r="3" fill="#0b0f17" />
+        <circle cx="10" cy="32" r="3" fill="#0b0f17" />
+        <circle cx="32" cy="32" r="3" fill="#0b0f17" />
+      </g>
+      <g transform="translate(255, 50) rotate(-5)">
+        <rect x="0" y="0" width="42" height="42" rx="6" fill="#f8fafc" stroke="#0b0f17" strokeWidth="2" />
+        <circle cx="21" cy="21" r="3" fill="#0b0f17" />
+      </g>
+    </TileBase>
+  );
+}
+
+function LiarsPokerTile() {
+  // Fan of poker cards with a clear flush motif.
+  return (
+    <TileBase gradFrom="#14532d" gradTo="#0b0f17">
+      <g transform="translate(60, 30)">
+        {/* Card 1: A♠ */}
+        <g transform="translate(0, 30) rotate(-25)">
+          <rect width="50" height="70" rx="5" fill="#f8fafc" stroke="#0b0f17" strokeWidth="1.5" />
+          <text x="8" y="20" fontSize="14" fontWeight="700" fill="#0b0f17">A</text>
+          <text x="8" y="36" fontSize="14" fill="#0b0f17">♠</text>
+        </g>
+        {/* Card 2: K♠ */}
+        <g transform="translate(40, 18) rotate(-12)">
+          <rect width="50" height="70" rx="5" fill="#f8fafc" stroke="#0b0f17" strokeWidth="1.5" />
+          <text x="8" y="20" fontSize="14" fontWeight="700" fill="#0b0f17">K</text>
+          <text x="8" y="36" fontSize="14" fill="#0b0f17">♠</text>
+        </g>
+        {/* Card 3: Q♥ */}
+        <g transform="translate(85, 12)">
+          <rect width="50" height="70" rx="5" fill="#f8fafc" stroke="#0b0f17" strokeWidth="1.5" />
+          <text x="8" y="20" fontSize="14" fontWeight="700" fill="#b91c1c">Q</text>
+          <text x="8" y="36" fontSize="14" fill="#b91c1c">♥</text>
+        </g>
+        {/* Card 4: J♠ */}
+        <g transform="translate(130, 18) rotate(12)">
+          <rect width="50" height="70" rx="5" fill="#f8fafc" stroke="#0b0f17" strokeWidth="1.5" />
+          <text x="8" y="20" fontSize="14" fontWeight="700" fill="#0b0f17">J</text>
+          <text x="8" y="36" fontSize="14" fill="#0b0f17">♠</text>
+        </g>
+        {/* Card 5: 10♠ */}
+        <g transform="translate(170, 30) rotate(25)">
+          <rect width="50" height="70" rx="5" fill="#f8fafc" stroke="#0b0f17" strokeWidth="1.5" />
+          <text x="6" y="20" fontSize="13" fontWeight="700" fill="#0b0f17">10</text>
+          <text x="8" y="36" fontSize="14" fill="#0b0f17">♠</text>
+        </g>
+      </g>
+    </TileBase>
+  );
+}
+
+function CockroachPokerTile() {
+  // Three creature icons (cockroach, spider, rat) flanking a face-down card.
+  return (
+    <TileBase gradFrom="#4d7c0f" gradTo="#1c1917">
+      {/* Card back center */}
+      <g transform="translate(130, 50)">
+        <rect width="60" height="80" rx="6" fill="#1e3a8a" stroke="#fbbf24" strokeWidth="2" />
+        <rect x="6" y="6" width="48" height="68" rx="3" fill="none" stroke="#fbbf24" strokeWidth="1" />
+        <text x="30" y="48" fontSize="28" textAnchor="middle">🪳</text>
+      </g>
+      {/* Creature icons */}
+      <text x="36" y="80" fontSize="32" textAnchor="middle">🕷</text>
+      <text x="36" y="135" fontSize="32" textAnchor="middle">🐀</text>
+      <text x="270" y="80" fontSize="32" textAnchor="middle">🐸</text>
+      <text x="270" y="135" fontSize="32" textAnchor="middle">🦂</text>
     </TileBase>
   );
 }

@@ -15,7 +15,11 @@ export type GameId =
   | 'coup'
   | 'codenames'
   | 'cross-clues'
-  | 'love-letter';
+  | 'love-letter'
+  | 'skull'
+  | 'liars-dice'
+  | 'liars-poker'
+  | 'cockroach-poker';
 
 export type PlayerId = string; // stable UUID, persistent in localStorage
 
