@@ -3,6 +3,7 @@ import { onuwModule } from '@/games/onuw';
 import { secretHitlerModule } from '@/games/secret-hitler';
 import { avalonModule } from '@/games/avalon';
 import { coupModule } from '@/games/coup';
+import { codenamesModule } from '@/games/codenames';
 
 // Central registry of every game module the app knows how to play. The
 // HomeMenu reads `GAMES` to render the picker; the host's `bindGame`
@@ -21,6 +22,7 @@ export const GAMES: Record<GameId, GameModule<any, any, any>> = {
   'secret-hitler': secretHitlerModule,
   avalon: avalonModule,
   coup: coupModule,
+  codenames: codenamesModule,
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

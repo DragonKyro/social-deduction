@@ -1,0 +1,281 @@
+.root {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.scoreBanner {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+}
+
+.scoreRed,
+.scoreBlue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.scoreRed {
+  color: #fca5a5;
+}
+.scoreBlue {
+  color: #93c5fd;
+  justify-content: flex-end;
+}
+
+.scoreBigNum {
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.turnPill {
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.turnPill.red {
+  background: #7f1d1d;
+  color: #fee2e2;
+}
+.turnPill.blue {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+.card {
+  position: relative;
+  aspect-ratio: 5 / 3;
+  border-radius: 8px;
+  background: #f5e9c9;
+  color: #1c1917;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid #c2a878;
+  cursor: default;
+  user-select: none;
+  text-align: center;
+  padding: 4px;
+  box-shadow: 0 1px 0 #fff inset, 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.cardClickable {
+  cursor: pointer;
+}
+.cardClickable:hover {
+  filter: brightness(1.08);
+}
+
+/* Spymaster-key tint (subtle border tag on the unrevealed card). */
+.kindRed {
+  box-shadow: 0 0 0 2px #dc2626 inset;
+}
+.kindBlue {
+  box-shadow: 0 0 0 2px #2563eb inset;
+}
+.kindBystander {
+  box-shadow: 0 0 0 2px #6b7280 inset;
+}
+.kindAssassin {
+  box-shadow: 0 0 0 2px #0a0a0a inset, 0 0 0 4px #fbbf24 inset;
+}
+
+/* Revealed cards override entirely. */
+.revealed {
+  color: white;
+  cursor: default;
+  box-shadow: none;
+}
+.revealed.kindRed {
+  background: #dc2626;
+}
+.revealed.kindBlue {
+  background: #2563eb;
+}
+.revealed.kindBystander {
+  background: #d6d3d1;
+  color: #1c1917;
+}
+.revealed.kindAssassin {
+  background: #0a0a0a;
+  color: #fbbf24;
+}
+
+.cardWord {
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.cluePanel {
+  display: grid;
+  gap: 10px;
+}
+
+.clueInputRow {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.clueInput {
+  padding: 8px 10px;
+  font-size: 16px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.numberInput {
+  padding: 8px 10px;
+  font-size: 16px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.primary {
+  background: #10b981;
+  color: white;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #047857;
+  cursor: pointer;
+}
+.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.coverScreen {
+  display: grid;
+  place-items: center;
+  padding: 40px 16px;
+  background: #0b1220;
+  border: 1px dashed #334155;
+  border-radius: 10px;
+}
+
+.coverInner {
+  text-align: center;
+  display: grid;
+  gap: 12px;
+  max-width: 460px;
+}
+
+.dangerBtn {
+  background: #b91c1c;
+  color: white;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #7f1d1d;
+  cursor: pointer;
+}
+
+.guessStatusBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.clueChip {
+  padding: 4px 10px;
+  background: #1f2937;
+  border-radius: 999px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #fef3c7;
+}
+
+.clueLog {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.clueLogRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #0b1220;
+  border-left: 3px solid #334155;
+  border-radius: 4px;
+}
+
+.clueLogRow.red {
+  border-left-color: #dc2626;
+}
+.clueLogRow.blue {
+  border-left-color: #2563eb;
+}
+
+.gameOverBanner {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 800;
+  padding: 20px;
+  border-radius: 12px;
+}
+
+.gameOverBanner.red {
+  background: linear-gradient(135deg, #7f1d1d, #b91c1c);
+  color: #fff;
+}
+.gameOverBanner.blue {
+  background: linear-gradient(135deg, #1e3a8a, #2563eb);
+  color: #fff;
+}

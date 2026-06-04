@@ -13,6 +13,8 @@ export function GameTileArt({ id }: { id: GameId }) {
       return <SecretHitlerTile />;
     case 'coup':
       return <CoupTile />;
+    case 'codenames':
+      return <CodenamesTile />;
   }
 }
 
@@ -110,6 +112,47 @@ function SecretHitlerTile() {
         <text x="200" y="10" textAnchor="middle" fontSize="14" fill="#fef3c7" fontWeight="700">
           ★
         </text>
+      </g>
+    </TileBase>
+  );
+}
+
+function CodenamesTile() {
+  // 5×5 grid of red / blue / tan / one black assassin tile.
+  // Hand-picked layout so red and blue look balanced and the assassin pops.
+  const palette = [
+    'r', 'r', 't', 'b', 'r',
+    't', 'b', 'r', 'b', 't',
+    'r', 't', 'k', 't', 'b',
+    'b', 'r', 'b', 'r', 't',
+    't', 'b', 'r', 't', 'b',
+  ];
+  const colorMap: Record<string, string> = {
+    r: '#dc2626',
+    b: '#2563eb',
+    t: '#e7d7a5',
+    k: '#0a0a0a',
+  };
+  return (
+    <TileBase gradFrom="#0f172a" gradTo="#1c1917">
+      <g transform="translate(58, 18)">
+        {palette.map((c, i) => {
+          const x = (i % 5) * 42;
+          const y = Math.floor(i / 5) * 30;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width="38"
+              height="26"
+              rx="3"
+              fill={colorMap[c]}
+              stroke={c === 'k' ? '#fbbf24' : 'rgba(0,0,0,0.3)'}
+              strokeWidth={c === 'k' ? 1.5 : 1}
+            />
+          );
+        })}
       </g>
     </TileBase>
   );

@@ -3,6 +3,7 @@ import { OnuwGameView } from '@/games/onuw/ui/GameView';
 import { SecretHitlerGameView } from '@/games/secret-hitler/ui/GameView';
 import { AvalonGameView } from '@/games/avalon/ui/GameView';
 import { CoupGameView } from '@/games/coup/ui/GameView';
+import { CodenamesGameView } from '@/games/codenames/ui/GameView';
 
 // Per-game UIs live under `src/games/<id>/ui/`. The router picks the right
 // one based on the current public view's gameId. This is the only place
@@ -23,6 +24,8 @@ export function GameRouter() {
       return <AvalonGameView />;
     case 'coup':
       return <CoupGameView />;
+    case 'codenames':
+      return <CodenamesGameView />;
     default:
       return <main style={{ padding: 24 }}>Unknown game: {view.gameId}</main>;
   }

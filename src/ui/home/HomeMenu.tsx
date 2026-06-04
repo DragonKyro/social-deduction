@@ -6,6 +6,7 @@ import { useNetworkStore } from '@/store/networkStore';
 import { AvalonSetup } from '@/games/avalon/ui/AvalonSetup';
 import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
 import { CoupSetup } from '@/games/coup/ui/CoupSetup';
+import { CodenamesSetup } from '@/games/codenames/ui/CodenamesSetup';
 import { GameTileArt } from './GameTileArt';
 import styles from './HomeMenu.module.css';
 
@@ -17,6 +18,7 @@ type Stage =
   | { kind: 'avalon-setup' }
   | { kind: 'onuw-setup' }
   | { kind: 'coup-setup' }
+  | { kind: 'codenames-setup' }
   | { kind: 'join-online' };
 
 export function HomeMenu() {
@@ -32,6 +34,9 @@ export function HomeMenu() {
   if (stage.kind === 'coup-setup') {
     return <CoupSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
+  if (stage.kind === 'codenames-setup') {
+    return <CodenamesSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
   if (stage.kind === 'join-online') {
     return <JoinOnline onBack={() => setStage({ kind: 'menu' })} />;
   }
@@ -40,9 +45,10 @@ export function HomeMenu() {
     if (id === 'avalon') setStage({ kind: 'avalon-setup' });
     else if (id === 'onuw') setStage({ kind: 'onuw-setup' });
     else if (id === 'coup') setStage({ kind: 'coup-setup' });
+    else if (id === 'codenames') setStage({ kind: 'codenames-setup' });
   };
 
-  const wired: GameId[] = ['onuw', 'avalon', 'coup'];
+  const wired: GameId[] = ['onuw', 'avalon', 'coup', 'codenames'];
 
   return (
     <main className={styles.root}>
