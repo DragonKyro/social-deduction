@@ -3,7 +3,7 @@ import type { GameId } from '@/engine/types';
 
 // Stub home menu — game picker + solo/online toggle land in Phase 0b.
 
-export function HomeMenu(): JSX.Element {
+export function HomeMenu() {
   const games = Object.values(GAMES) as Array<{ id: GameId; displayName: string }>;
   return (
     <main style={{ padding: 24, display: 'grid', gap: 16, maxWidth: 640, margin: '0 auto' }}>

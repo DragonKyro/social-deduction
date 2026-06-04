@@ -6,6 +6,10 @@ export interface AvalonOptions {
   // Role pool beyond the required (merlin + assassin + filler loyal + filler minion).
   // Order in this list doesn't affect deal order — module shuffles internally.
   specialRoles: AvalonRoleId[];
+  // Optional modules — independent toggles, freely stackable.
+  ladyOfTheLake: boolean;
+  excalibur: boolean;
+  twoLancelots: boolean;
 }
 
 export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, AvalonAction> = {
@@ -27,6 +31,10 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
       seed: config.seed,
       winnerTeam: null,
       assassinationTarget: null,
+      ladyOfTheLake: null,
+      excalibur: null,
+      lancelotSwapDeck: null,
+      lancelotSwapsApplied: 0,
     };
   },
 
@@ -54,10 +62,31 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
       proposedTeam: state.proposedTeam,
       currentLeaderSeat: state.currentLeaderSeat,
       winnerTeam: state.winnerTeam,
+      ladyOfTheLake: state.ladyOfTheLake
+        ? {
+            enabled: true,
+            holder: state.ladyOfTheLake.holder,
+            pastHolders: state.ladyOfTheLake.pastHolders,
+          }
+        : null,
+      excalibur: state.excalibur
+        ? {
+            enabled: state.excalibur.enabled,
+            holderSeat: state.excalibur.holderSeat,
+            usedOnSeat: state.excalibur.usedOnSeat,
+          }
+        : null,
+      lancelotSwapsApplied: state.lancelotSwapDeck ? state.lancelotSwapsApplied : null,
       yourRole: ownSeat?.role ?? null,
       yourAlignment: ownSeat?.alignment ?? null,
       yourRoleKnowledge: seat === null ? [] : (state.roleKnowledge[seat] ?? []),
       yourQuestCard: ownSeat?.questCard ?? null,
+      yourLadyOfTheLakeReveals:
+        seat === null || !state.ladyOfTheLake
+          ? []
+          : state.ladyOfTheLake.privateReveals
+              .filter((r) => r.by === seat)
+              .map((r) => ({ target: r.target, alignment: r.alignment })),
     };
   },
 
@@ -67,7 +96,15 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
 
   defaultConfig(playerCount: number): GameConfig {
     const specialRoles: AvalonRoleId[] = playerCount >= 7 ? ['percival', 'morgana'] : [];
-    const options: AvalonOptions = { specialRoles };
+    const options: AvalonOptions = {
+      specialRoles,
+      // Default optional modules on for 7+ player tables, off for 5-6p.
+      // Lady of the Lake is the most-common third-party module; Excalibur
+      // is also common at 7+ but doubles the team-vote-then-act complexity.
+      ladyOfTheLake: playerCount >= 7,
+      excalibur: false,
+      twoLancelots: false,
+    };
     return {
       gameId: 'avalon',
       seats: [],

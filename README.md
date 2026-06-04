@@ -3,10 +3,10 @@
 A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-peer with friends. AI seats supported.
 
 **Games:**
-- 🐺 **One Night Ultimate Werewolf** (with planned Daybreak expansion)
+- 🐺 **One Night Ultimate Werewolf** (with planned Daybreak + Bonus Roles)
 - 🗳️ **Secret Hitler**
-- ⚔️ **The Resistance: Avalon**
-- 🎭 **Coup** (with planned Reformation expansion)
+- ⚔️ **The Resistance: Avalon** (with planned Lady of the Lake, Excalibur, Two Lancelots)
+- 🎭 **Coup** (with planned Rebellion G54 + Anarchy)
 
 ## Status
 
@@ -52,16 +52,19 @@ Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a 
 
 1. ✅ Phase 0 — Project scaffold
 2. Phase 0b — Home menu + solo flow
-3. Phase 1 — ONUW base game (11 roles, night order, day vote)
+3. Phase 1 — ONUW base (11 roles)
 4. Phase 2 — ONUW Daybreak expansion
-5. Phase 3 — Secret Hitler base game
-6. Phase 4 — Avalon (base box + 2 Lancelots)
-7. Phase 5 — Coup base game
-8. Phase 5b — Coup Reformation
-9. Phase 6 — Online multiplayer wiring
-10. Phase 7 — AI for all four games
-11. Phase 8 — In-game chat + phase-gated visibility
-12. Phase 9 — Replay
+5. Phase 2b — ONUW Bonus Roles pack (16 roles + artifacts)
+6. Phase 3 — Secret Hitler base game
+7. Phase 4 — Avalon base box
+8. Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots)
+9. Phase 5 — Coup classic base game
+10. Phase 5b — Coup: Rebellion G54 (25 characters, pick 5 per match)
+11. Phase 5c — G54: Anarchy expansion (+6 characters)
+12. Phase 6 — Online multiplayer wiring
+13. Phase 7 — AI for all four games
+14. Phase 8 — In-game chat + phase-gated visibility
+15. Phase 9 — Replay
 
 See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 

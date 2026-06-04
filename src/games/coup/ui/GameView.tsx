@@ -1,6 +1,6 @@
 // Stub Coup game view. Phase 5 fills this in.
 
-export function CoupGameView(): JSX.Element {
+export function CoupGameView() {
   return (
     <main style={{ padding: 24 }}>
       <h2>Coup</h2>

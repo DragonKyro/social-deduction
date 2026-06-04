@@ -9,7 +9,7 @@ import { CoupGameView } from '@/games/coup/ui/GameView';
 // in the UI layer that switches on game id; everything below it is
 // game-specific.
 
-export function GameRouter(): JSX.Element {
+export function GameRouter() {
   const view = useGameStore((s) => s.publicView);
   if (!view) {
     return <main style={{ padding: 24 }}>No active game.</main>;

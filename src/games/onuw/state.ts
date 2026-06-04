@@ -14,7 +14,7 @@ import type { PlayerId, SeatIndex } from '@/engine/types';
 // expansion = a new file + a registry entry; no engine changes needed.
 
 export type OnuwRoleId =
-  // Base game roles
+  // ---- Base game ----
   | 'werewolf'
   | 'minion'
   | 'mason'
@@ -26,17 +26,61 @@ export type OnuwRoleId =
   | 'insomniac'
   | 'hunter'
   | 'villager'
-  // Daybreak expansion (planned)
+  // ---- Daybreak expansion ----
   | 'doppelganger'
   | 'witch'
-  | 'apprentice-seer'
-  | 'paranormal-investigator'
-  | 'village-idiot'
+  | 'apprenticeSeer'
+  | 'paranormalInvestigator'
+  | 'villageIdiot'
   | 'revealer'
   | 'curator'
-  | 'alpha-wolf'
-  | 'mystic-wolf'
-  | 'dream-wolf';
+  | 'alphaWolf'
+  | 'mysticWolf'
+  | 'dreamWolf'
+  // ---- Bonus Roles pack (consolidated Bonus Packs 1-4) ----
+  // Note: these roles all integrate cleanly with the standard wake-order
+  // engine; no role here changes the day/vote loop or introduces a new
+  // phase beyond the existing setup → night → day → vote → resolution.
+  | 'auraSeer' // sees which seats woke at night (any seat with a night action)
+  | 'cursed' // village team, but loses to werewolves if killed
+  | 'prince' // village; cannot be voted out (gets the Cloak artifact)
+  | 'apprenticeTanner' // tanner-team-lite: wins if killed without being told otherwise
+  | 'beholder' // sees who the seer is
+  | 'thing' // village; secretly taps a neighbor to confirm presence at night
+  | 'squire' // village; sees where the werewolf cards are (not who holds them)
+  | 'bodySnatcher' // swaps own role with another seat; takes their team
+  | 'empath' // village; counts werewolves among neighbors
+  | 'nostradamus' // village; tries to predict who'll be killed today
+  | 'familyMan' // village team, but wins with werewolves if a neighbor is a werewolf
+  | 'windyWendy' // moves a single role card to a new position at night
+  | 'defenderEr' // village; redirects a single werewolf attack (Daybreak interaction)
+  | 'theSponge' // village; absorbs the role-team of a chosen neighbor
+  | 'ricochetRhino' // werewolf-team; vote bounces to a chosen seat
+  | 'innocentBystander'; // filler village role (no night action)
+
+// ----------------------------------------------------------------------------
+// Artifacts (Bonus Roles pack)
+//
+// Artifacts are role-independent tokens that grant a small ability. Most
+// roles in the Bonus Roles pack interact with artifacts (e.g. Prince
+// requires the Cloak; Hunter is more interesting with the Bow). At setup
+// the host deals 0-N artifacts based on lobby config; each artifact lives
+// on a single seat for the duration of the night.
+//
+// Hidden info: artifact ownership is PUBLIC in this implementation
+// (matches Bezier's intent — artifacts are flavor + interaction-prompts,
+// not redacted info). The role that REQUIRES the artifact (Prince) is
+// still private; an opponent can see "Seat 3 has the Cloak" without
+// knowing Seat 3's role.
+// ----------------------------------------------------------------------------
+
+export type OnuwArtifactId =
+  | 'bowOfTheHunter'
+  | 'cloakOfThePrince'
+  | 'swordOfTheBodyguard'
+  | 'mistOfTheVampire'
+  | 'daggerOfTheTraitor'
+  | 'alienArtifact';
 
 export type OnuwPhase =
   | 'setup'
@@ -62,6 +106,8 @@ export interface OnuwSeatState {
   observation: OnuwNightObservation | null;
   voteTarget: SeatIndex | null;
   killed: boolean;
+  // Bonus Roles: 0+ artifacts held by this seat. Public.
+  artifacts: OnuwArtifactId[];
 }
 
 export interface OnuwPrivateState {
@@ -84,6 +130,8 @@ export interface OnuwPublicSeatState {
   name: string;
   isAlive: boolean;
   hasVoted: boolean;
+  // Public artifact ownership.
+  artifacts: OnuwArtifactId[];
   // Only populated post-resolution.
   revealedRole: OnuwRoleId | null;
 }
