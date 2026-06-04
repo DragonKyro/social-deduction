@@ -8,10 +8,6 @@ import type { PlayerId, SeatIndex } from '@/engine/types';
 // fixed order and performs a private action) → day phase (free discussion,
 // timer) → vote → resolve. Center cards are a 3-card pool no seat owns;
 // some roles peek at or swap with them.
-//
-// Each role module under `roles/` declares `wakeOrder`, `nightAction`, and
-// any role-specific public-view augmentation. Adding a new role from an
-// expansion = a new file + a registry entry; no engine changes needed.
 
 export type OnuwRoleId =
   // ---- Base game ----
@@ -38,40 +34,26 @@ export type OnuwRoleId =
   | 'mysticWolf'
   | 'dreamWolf'
   // ---- Bonus Roles pack (consolidated Bonus Packs 1-4) ----
-  // Note: these roles all integrate cleanly with the standard wake-order
-  // engine; no role here changes the day/vote loop or introduces a new
-  // phase beyond the existing setup → night → day → vote → resolution.
-  | 'auraSeer' // sees which seats woke at night (any seat with a night action)
-  | 'cursed' // village team, but loses to werewolves if killed
-  | 'prince' // village; cannot be voted out (gets the Cloak artifact)
-  | 'apprenticeTanner' // tanner-team-lite: wins if killed without being told otherwise
-  | 'beholder' // sees who the seer is
-  | 'thing' // village; secretly taps a neighbor to confirm presence at night
-  | 'squire' // village; sees where the werewolf cards are (not who holds them)
-  | 'bodySnatcher' // swaps own role with another seat; takes their team
-  | 'empath' // village; counts werewolves among neighbors
-  | 'nostradamus' // village; tries to predict who'll be killed today
-  | 'familyMan' // village team, but wins with werewolves if a neighbor is a werewolf
-  | 'windyWendy' // moves a single role card to a new position at night
-  | 'defenderEr' // village; redirects a single werewolf attack (Daybreak interaction)
-  | 'theSponge' // village; absorbs the role-team of a chosen neighbor
-  | 'ricochetRhino' // werewolf-team; vote bounces to a chosen seat
-  | 'innocentBystander'; // filler village role (no night action)
+  | 'auraSeer'
+  | 'cursed'
+  | 'prince'
+  | 'apprenticeTanner'
+  | 'beholder'
+  | 'thing'
+  | 'squire'
+  | 'bodySnatcher'
+  | 'empath'
+  | 'nostradamus'
+  | 'familyMan'
+  | 'windyWendy'
+  | 'defenderEr'
+  | 'theSponge'
+  | 'ricochetRhino'
+  | 'innocentBystander';
 
 // ----------------------------------------------------------------------------
-// Artifacts (Bonus Roles pack)
-//
-// Artifacts are role-independent tokens that grant a small ability. Most
-// roles in the Bonus Roles pack interact with artifacts (e.g. Prince
-// requires the Cloak; Hunter is more interesting with the Bow). At setup
-// the host deals 0-N artifacts based on lobby config; each artifact lives
-// on a single seat for the duration of the night.
-//
-// Hidden info: artifact ownership is PUBLIC in this implementation
-// (matches Bezier's intent — artifacts are flavor + interaction-prompts,
-// not redacted info). The role that REQUIRES the artifact (Prince) is
-// still private; an opponent can see "Seat 3 has the Cloak" without
-// knowing Seat 3's role.
+// Artifacts — kept in the type union for future expansion. Not yet wired
+// into setup UI (artifacts are flavor-only for the current build).
 // ----------------------------------------------------------------------------
 
 export type OnuwArtifactId =
@@ -83,44 +65,111 @@ export type OnuwArtifactId =
   | 'alienArtifact';
 
 export type OnuwPhase =
-  | 'setup'
-  | 'night' // running night actions, but only the host knows which step we're on
-  | 'day' // discussion, timer
-  | 'voting' // each seat picks a vote target
+  | 'setup' // post-deal; each seat must ack their initial role privately
+  | 'night' // roles act in order; host advances the cursor
+  | 'day' // discussion + cheatsheet timer
+  | 'voting' // each seat picks a vote target (private)
   | 'resolution' // votes locked, deaths shown
   | 'gameOver';
 
+// ----------------------------------------------------------------------------
+// Night observations — per-seat private outputs from night actions.
+// Some night steps produce one note (Seer sees a card, Beholder learns who
+// Seer is). Others produce multiple lines (Doppelganger gets both a copy
+// note AND any follow-up action result). We model that as a list of
+// entries; each entry references either a seat ("Seat 3") or a center
+// card ("Center 1") and the role glimpsed there.
+// ----------------------------------------------------------------------------
+
+export interface OnuwObservationEntry {
+  // Human-readable label for the lookup target.
+  label: string;
+  // Optional position info — present when the observation revealed a card.
+  position?: { kind: 'seat' | 'center'; index: number };
+  // Optional revealed role.
+  role?: OnuwRoleId;
+}
+
 export interface OnuwNightObservation {
-  // What this seat saw during its night step. Stays in `Private` and is
-  // copied into the per-seat `Public` only for the owning seat.
+  // Free-form sentence shown on the seat's night summary screen.
   text: string;
-  seenRoles?: Array<{ seat: SeatIndex | 'center'; index: number; role: OnuwRoleId }>;
+  entries: OnuwObservationEntry[];
 }
 
 export interface OnuwSeatState {
   index: SeatIndex;
-  // Dealt role. May differ from `finalRole` after the Robber / Troublemaker
-  // / Drunk swap cards. Vote resolution uses `finalRole`.
+  name: string;
+  // Dealt role. May differ from `finalRole` after Robber/Troublemaker/Drunk/
+  // Witch/Body Snatcher/Doppelganger/Alpha Wolf swaps. Vote resolution uses
+  // `finalRole` (the card sitting in front of them at end of night).
   dealtRole: OnuwRoleId;
   finalRole: OnuwRoleId;
-  observation: OnuwNightObservation | null;
+  // Multiple observations per seat — Doppelganger may emit two; the
+  // Insomniac wake also appends an entry after midnight swaps.
+  observations: OnuwNightObservation[];
   voteTarget: SeatIndex | null;
   killed: boolean;
-  // Bonus Roles: 0+ artifacts held by this seat. Public.
   artifacts: OnuwArtifactId[];
+}
+
+// Center cards by slot 0..2. Order is preserved through all swaps; we
+// surface this order in the UI so reasoning about "the center role moved
+// here" works without spoilers.
+export interface OnuwCenterCard {
+  index: number; // 0..2
+  role: OnuwRoleId;
+}
+
+// One entry per night step. We pre-compute the schedule at setup using
+// the dealt role pool (a role only appears in the schedule if it acts at
+// night). Doppelganger inserts a follow-up step dynamically after it
+// copies a role.
+export interface OnuwNightStep {
+  stepIndex: number;
+  // The role this step is for. Multiple seats may share a role (werewolf
+  // ×2, masons); the step covers all of them at once.
+  role: OnuwRoleId;
+  // Seats that hold the role at the START of the night (dealt). Some
+  // roles only matter for the dealt set (Insomniac peeks at their final
+  // card but is identified by the dealt role).
+  seats: SeatIndex[];
+  // True once the host has executed (or auto-skipped) this step.
+  resolved: boolean;
+  // Each role declares whether it expects an interactive action. False =
+  // host narrates and auto-advances; True = host blocks until each seat
+  // owning the role submits the right action.
+  interactive: boolean;
 }
 
 export interface OnuwPrivateState {
   phase: OnuwPhase;
-  // Three face-down center cards. Indexed 0..2.
-  centerCards: OnuwRoleId[];
+  centerCards: OnuwCenterCard[];
   seats: OnuwSeatState[];
-  // Cursor through the night-order step list. The host advances this as
-  // each role's action resolves. Peers can't infer it from the public view.
+  // Pre-computed night schedule + cursor.
+  nightSchedule: OnuwNightStep[];
   nightStepIndex: number;
-  // Seed forwarded to module deal/shuffle.
+  // Per-step seat acknowledgement — when a step covers multiple seats
+  // (e.g. werewolves, masons), we wait until each seat has individually
+  // submitted before advancing.
+  nightStepAcks: Record<number, SeatIndex[]>;
+  // Setup acks (every seat must privately view their role before night
+  // starts). Same shape as Avalon.
+  setupAcked: Record<SeatIndex, boolean>;
+  // Vote-phase acks: which seats have submitted a private vote so the UI
+  // knows whose turn it is in hot-seat mode.
+  voteAcks: SeatIndex[];
+  // Role pool dealt this match (length = seatCount + 3).
+  rolePool: OnuwRoleId[];
+  // Day discussion config.
+  dayDurationSec: number;
+  allowNoLynch: boolean;
   seed: number;
   winnerTeam: 'village' | 'werewolves' | 'tanner' | null;
+  // Resolved-from-vote: seats whose votes killed them, in order of total
+  // votes received. Populated when phase = 'resolution' / 'gameOver'.
+  killedSeats: SeatIndex[];
+  // Voting tallies — public after resolution. seat -> votes received.
+  voteTally: Record<SeatIndex, number>;
 }
 
 // === Public view (per seat) ===
@@ -128,35 +177,53 @@ export interface OnuwPrivateState {
 export interface OnuwPublicSeatState {
   index: SeatIndex;
   name: string;
-  isAlive: boolean;
+  hasAckedSetup: boolean;
+  // Whether the seat has submitted a vote this round (not WHO they voted
+  // for — that stays hidden until resolution).
   hasVoted: boolean;
-  // Public artifact ownership.
+  // Public after resolution.
+  voteTarget: SeatIndex | null;
+  votesReceived: number;
+  killed: boolean;
+  // Revealed only post-resolution.
+  revealedRole: OnuwRoleId | null;
   artifacts: OnuwArtifactId[];
-  // Only populated post-resolution.
+}
+
+export interface OnuwPublicCenterCard {
+  index: number;
+  // Revealed only at gameOver.
   revealedRole: OnuwRoleId | null;
 }
 
 export interface OnuwPublicState {
   phase: OnuwPhase;
   seats: OnuwPublicSeatState[];
+  centerCards: OnuwPublicCenterCard[];
   // Roles in the deal pool; not which seat holds which. Players need this
   // to reason about possibilities ("there are 2 werewolves total").
   rolePool: OnuwRoleId[];
+  // Night progress (so the day screen can show "1 of 7 wakeups left").
+  nightStepIndex: number;
+  nightTotalSteps: number;
+  // Whose step the host is currently waiting on (role + seats still owed).
+  // Populated only during night phase.
+  activeNightStep: {
+    role: OnuwRoleId;
+    seats: SeatIndex[];
+    acked: SeatIndex[];
+    interactive: boolean;
+  } | null;
   // Filled only for the seat that owns this view.
-  yourRole: OnuwRoleId | null;
-  yourObservation: OnuwNightObservation | null;
+  yourSeat: SeatIndex | null;
+  yourDealtRole: OnuwRoleId | null;
+  yourFinalRole: OnuwRoleId | null;
+  yourObservations: OnuwNightObservation[];
   yourVoteTarget: SeatIndex | null;
   winnerTeam: OnuwPrivateState['winnerTeam'];
-  // Time remaining on day-phase / night-step timers, broadcast by host.
-  timerMsRemaining: number | null;
-}
-
-// Marker type used by the (currently unimplemented) Doppelganger expansion
-// to remember which seat / role it copied.
-export interface DoppelgangerLink {
-  seat: SeatIndex;
-  role: OnuwRoleId;
-  index: number; // step ordering when it acts as the copied role
+  // Set at resolution / gameOver.
+  killedSeats: SeatIndex[];
+  voteTally: Record<SeatIndex, number>;
 }
 
 // Helper: build an empty private state from a config. Real role dealing
@@ -166,9 +233,18 @@ export function emptyPrivateState(seed: number): OnuwPrivateState {
     phase: 'setup',
     centerCards: [],
     seats: [],
+    nightSchedule: [],
     nightStepIndex: 0,
+    nightStepAcks: {},
+    setupAcked: {},
+    voteAcks: [],
+    rolePool: [],
+    dayDurationSec: 300,
+    allowNoLynch: true,
     seed,
     winnerTeam: null,
+    killedSeats: [],
+    voteTally: {},
   };
 }
 

@@ -2,12 +2,17 @@ import { useState } from 'react';
 import { GAMES } from '@/engine/registry';
 import type { GameId } from '@/engine/types';
 import { AvalonSetup } from '@/games/avalon/ui/AvalonSetup';
+import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
+import { GameTileArt } from './GameTileArt';
+import styles from './HomeMenu.module.css';
 
 // Top-level home menu. Picks a game and routes into the appropriate
-// per-game setup screen. Right now only Avalon is wired (Phase 4 base);
-// other games still show a "stub" disabled button.
+// per-game setup screen. Currently wired: Avalon and ONUW.
 
-type Stage = { kind: 'menu' } | { kind: 'avalon-setup' };
+type Stage =
+  | { kind: 'menu' }
+  | { kind: 'avalon-setup' }
+  | { kind: 'onuw-setup' };
 
 export function HomeMenu() {
   const [stage, setStage] = useState<Stage>({ kind: 'menu' });
@@ -16,29 +21,40 @@ export function HomeMenu() {
   if (stage.kind === 'avalon-setup') {
     return <AvalonSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
+  if (stage.kind === 'onuw-setup') {
+    return <OnuwSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
 
   const pick = (id: GameId) => {
     if (id === 'avalon') setStage({ kind: 'avalon-setup' });
+    else if (id === 'onuw') setStage({ kind: 'onuw-setup' });
   };
 
+  const wired: GameId[] = ['onuw', 'avalon'];
+
   return (
-    <main style={{ padding: 24, display: 'grid', gap: 16, maxWidth: 640, margin: '0 auto' }}>
-      <h1 style={{ marginBottom: 4 }}>Social Deduction</h1>
-      <p style={{ color: '#94a3b8', marginTop: 0 }}>Pick a game to play locally (hot-seat).</p>
-      <div style={{ display: 'grid', gap: 8 }}>
+    <main className={styles.root}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>
+          <span className={styles.titleAccent}>Social</span> Deduction
+        </h1>
+        <p className={styles.tagline}>Lies, votes, and bad alibis. Pick your poison.</p>
+      </div>
+      <div className={styles.grid}>
         {games.map((g) => {
-          const wired = g.id === 'avalon';
+          const enabled = wired.includes(g.id);
           return (
             <button
               key={g.id}
-              disabled={!wired}
+              disabled={!enabled}
               onClick={() => pick(g.id)}
-              style={{ padding: '12px 16px', fontSize: 15, textAlign: 'left' }}
+              className={`${styles.tile} ${enabled ? '' : styles.tileDisabled}`}
             >
-              {g.displayName}
-              {!wired && (
-                <span style={{ color: '#94a3b8', fontSize: 12, marginLeft: 8 }}>(coming soon)</span>
-              )}
+              <GameTileArt id={g.id} />
+              <div className={styles.tileInfo}>
+                <span className={styles.tileName}>{g.displayName}</span>
+                {!enabled && <span className={styles.tileBadge}>coming soon</span>}
+              </div>
             </button>
           );
         })}

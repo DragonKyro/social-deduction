@@ -1,0 +1,349 @@
+.root {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.coverScreen {
+  position: fixed;
+  inset: 0;
+  background: #0b0f17;
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+
+.coverInner {
+  max-width: 540px;
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+}
+
+.roleReveal {
+  display: grid;
+  gap: 14px;
+  place-items: center;
+  text-align: center;
+}
+
+.roleName {
+  font-size: 28px;
+  margin: 8px 0 4px;
+}
+
+.teamPill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.teamPill.village {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+.teamPill.werewolves {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.teamPill.tanner {
+  background: #854d0e;
+  color: #fef3c7;
+}
+
+.observation {
+  background: #0b0f17;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.observationText {
+  margin: 0;
+  font-size: 14px;
+  color: #cbd5e1;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.primary {
+  background: #2563eb;
+  border-color: #1e40af;
+}
+.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.danger {
+  background: #b91c1c;
+  border-color: #7f1d1d;
+}
+.danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.success {
+  background: #15803d;
+  border-color: #166534;
+}
+.success:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.muted {
+  background: #1f2937;
+  border-color: #334155;
+}
+
+.seatGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.seat {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  cursor: default;
+}
+
+.seat.selectable {
+  cursor: pointer;
+}
+
+.seat.selectable:hover {
+  border-color: #60a5fa;
+}
+
+.seat.selected {
+  border-color: #fbbf24;
+  background: #374151;
+}
+
+.seat.killed {
+  background: #2a1a1a;
+  border-color: #7f1d1d;
+}
+
+.seat.you {
+  outline: 1px dashed #60a5fa;
+  outline-offset: -1px;
+}
+
+.seatAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #0b0f17;
+  border: 1px solid #334155;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.seatName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.seatMeta {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.centerCardRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.centerCard {
+  display: grid;
+  gap: 4px;
+  place-items: center;
+  padding: 10px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  border-radius: 10px;
+  min-width: 100px;
+}
+
+.centerCard.selectable {
+  cursor: pointer;
+}
+
+.centerCard.selectable:hover {
+  border-color: #60a5fa;
+}
+
+.centerCard.selected {
+  border-color: #fbbf24;
+  background: #374151;
+}
+
+.centerCardLabel {
+  font-size: 11px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.centerBack {
+  width: 60px;
+  height: 84px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  border: 2px solid #334155;
+  display: grid;
+  place-items: center;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.cheatsheet {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cheatRow {
+  display: grid;
+  grid-template-columns: 28px auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  background: #0b0f17;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.cheatStep {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fbbf24;
+  text-align: center;
+}
+
+.cheatName {
+  font-weight: 700;
+}
+
+.cheatDesc {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cheatCount {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: #1f2937;
+  border-radius: 999px;
+  border: 1px solid #334155;
+}
+
+.nightStepBanner {
+  background: linear-gradient(135deg, #1e1b4b, #312e81);
+  border: 2px solid #6366f1;
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+}
+
+.gameOverBanner {
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  border-radius: 12px;
+}
+
+.gameOverBanner.village {
+  background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+}
+
+.gameOverBanner.werewolves {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+}
+
+.gameOverBanner.tanner {
+  background: linear-gradient(135deg, #854d0e, #ca8a04);
+}
+
+.voteTable {
+  margin-top: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.voteRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  padding: 6px 10px;
+  background: #0b0f17;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.timerBar {
+  width: 100%;
+  height: 10px;
+  background: #0b0f17;
+  border: 1px solid #1f2937;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.timerFill {
+  height: 100%;
+  background: linear-gradient(90deg, #16a34a, #22c55e);
+  transition: width 0.5s linear;
+}

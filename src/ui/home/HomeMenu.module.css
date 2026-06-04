@@ -1,0 +1,91 @@
+.root {
+  padding: 32px 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 28px;
+}
+
+.header {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: 42px;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+
+.titleAccent {
+  background: linear-gradient(90deg, #f87171, #fbbf24, #60a5fa, #a855f7);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tagline {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.tile {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 0;
+  padding: 0;
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+  font-family: inherit;
+}
+
+.tile:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: #60a5fa;
+}
+
+.tileDisabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tileInfo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, transparent, #0b0f17);
+}
+
+.tileName {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.tileBadge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  background: #1f2937;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #334155;
+}
