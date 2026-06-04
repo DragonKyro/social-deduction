@@ -1,0 +1,351 @@
+.root {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.scoreBar {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+  padding: 10px 14px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+}
+
+.scoreNum {
+  font-size: 28px;
+  font-weight: 800;
+  color: #f1f5f9;
+}
+
+.scoreLabel {
+  color: #94a3b8;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.roleBadge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.roleBadge.clueGiver {
+  background: #6b21a8;
+  color: #f3e8ff;
+}
+.roleBadge.guesser {
+  background: #92400e;
+  color: #fef3c7;
+}
+.roleBadge.observer {
+  background: #1f2937;
+  color: #94a3b8;
+}
+
+/* ----- Grid ----- */
+
+.gridWrap {
+  display: grid;
+  grid-template-columns: 80px repeat(5, 1fr);
+  gap: 6px;
+  align-items: stretch;
+}
+
+.cornerCell {
+  background: transparent;
+}
+
+.headerCell {
+  display: grid;
+  place-items: center;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 6px;
+  text-align: center;
+  min-height: 56px;
+}
+
+.headerLabel {
+  font-size: 11px;
+  color: #64748b;
+  letter-spacing: 0.1em;
+}
+
+.headerWord {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f1f5f9;
+  text-transform: lowercase;
+}
+
+.headerCell.activeRow,
+.headerCell.activeCol {
+  background: #14532d33;
+  border-color: #22c55e;
+  outline: 2px solid #22c55e88;
+}
+
+.cell {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: #cbd5e1;
+  text-align: center;
+  padding: 4px;
+  cursor: default;
+  user-select: none;
+}
+
+.cell.clickable {
+  cursor: pointer;
+}
+.cell.clickable:hover {
+  background: #334155;
+  border-color: #64748b;
+}
+
+.cell.green {
+  background: #14532d;
+  border-color: #22c55e;
+  color: #ecfdf5;
+}
+.cell.red {
+  background: #7f1d1d;
+  border-color: #ef4444;
+  color: #fee2e2;
+}
+
+.cell.heldCoord {
+  outline: 2px solid #fbbf24;
+  outline-offset: -1px;
+}
+
+.cellClue {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: lowercase;
+}
+
+.cellEmptyHint {
+  font-size: 11px;
+  color: #475569;
+}
+
+/* ----- Action panel ----- */
+
+.actionPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.actionRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.clueInput {
+  flex: 1;
+  padding: 10px 12px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.primaryButton {
+  background: #10b981;
+  color: #022c22;
+  font-weight: 700;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.primaryButton:disabled {
+  background: #334155;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: #1f2937;
+  color: #e2e8f0;
+  padding: 10px 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.coordCard {
+  display: flex;
+  gap: 18px;
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #4c1d95, #6b21a8);
+  border-radius: 10px;
+  align-items: center;
+}
+
+.coordWord {
+  font-size: 18px;
+  font-weight: 700;
+  color: #f3e8ff;
+  text-transform: lowercase;
+}
+
+.coordPlus {
+  color: #c4b5fd;
+  font-size: 14px;
+}
+
+.clueBanner {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, #92400e, #b45309);
+  border-radius: 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.clueBannerLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #fef3c7;
+}
+
+.clueBannerWord {
+  font-size: 22px;
+  font-weight: 800;
+  color: #fffbeb;
+  letter-spacing: 0.04em;
+}
+
+/* ----- Seat strip ----- */
+
+.seatStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.seatChip {
+  padding: 6px 12px;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.seatChip.active {
+  background: #14532d33;
+  border-color: #22c55e;
+  color: #ecfdf5;
+}
+
+.seatChip.localActive {
+  outline: 2px solid #fbbf24;
+}
+
+.seatChip button {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ackPill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #14532d;
+  color: #d1fae5;
+}
+
+.gameOverPanel {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: linear-gradient(135deg, #0b1220, #111827);
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  gap: 8px;
+  text-align: center;
+}
+
+.gameOverScore {
+  font-size: 56px;
+  font-weight: 800;
+  color: #f1f5f9;
+}
+
+.gameOverRating {
+  font-size: 18px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+}
+.gameOverRating.perfect {
+  color: #fcd34d;
+}
+.gameOverRating.legendary {
+  color: #22d3ee;
+}
+.gameOverRating.great {
+  color: #34d399;
+}
+.gameOverRating.rookie {
+  color: #94a3b8;
+}

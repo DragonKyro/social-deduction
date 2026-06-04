@@ -4,6 +4,7 @@ import { secretHitlerModule } from '@/games/secret-hitler';
 import { avalonModule } from '@/games/avalon';
 import { coupModule } from '@/games/coup';
 import { codenamesModule } from '@/games/codenames';
+import { crossCluesModule } from '@/games/cross-clues';
 
 // Central registry of every game module the app knows how to play. The
 // HomeMenu reads `GAMES` to render the picker; the host's `bindGame`
@@ -23,6 +24,7 @@ export const GAMES: Record<GameId, GameModule<any, any, any>> = {
   avalon: avalonModule,
   coup: coupModule,
   codenames: codenamesModule,
+  'cross-clues': crossCluesModule,
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

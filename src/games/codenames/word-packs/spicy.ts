@@ -1,0 +1,32 @@
+// Spicy — adult party variant. Double-entendre, bar humor, dating apps.
+// PG-13: no explicit content, no slurs. Words that earn a knowing grin
+// when paired with a clue. Family-friendly groups should skip this pack.
+export const SPICY_WORDS: readonly string[] = [
+  'KISS', 'FLIRT', 'CRUSH', 'DATE', 'ROMANCE', 'LOVE', 'AFFAIR', 'FLING',
+  'SINGLE', 'TAKEN', 'EX', 'BREAKUP', 'MAKEUP', 'MARRY', 'DIVORCE',
+  'TINDER', 'BUMBLE', 'HINGE', 'GHOSTED', 'SWIPE', 'MATCH', 'PROFILE',
+  'BIO', 'DM', 'SLIDE', 'TYPE', 'VIBE', 'CHEMISTRY',
+  'BAR', 'CLUB', 'LOUNGE', 'PUB', 'DIVE', 'SPEAKEASY', 'BASEMENT',
+  'COCKTAIL', 'MARTINI', 'SHOT', 'TEQUILA', 'WHISKEY', 'WINE', 'BEER',
+  'HANGOVER', 'BLACKOUT', 'BUZZED', 'TIPSY', 'TOAST',
+  'PARTY', 'RAGE', 'AFTERPARTY', 'KARAOKE', 'DANCE', 'TWERK', 'GRIND',
+  'SLOWDANCE', 'SLOWJAM', 'SLAP', 'WINK', 'SMIRK',
+  'BACHELOR', 'BACHELORETTE', 'VEGAS', 'STRIP', 'CASINO', 'ROULETTE',
+  'GAMBLE', 'BLUFF', 'DOUBLE', 'TRIPLE', 'JACKPOT',
+  'WHISPER', 'TEASE', 'TICKLE', 'WINK', 'BLUSH', 'SHIVER', 'SHIVER',
+  'SECRET', 'GOSSIP', 'RUMOR', 'SCANDAL', 'SCOOP', 'TEA', 'DRAMA',
+  'CHEAT', 'LIE', 'BETRAY', 'JEALOUS', 'POSSESSIVE',
+  'LATE', 'CURFEW', 'SNEAK', 'CREEP', 'SLIP', 'ESCAPE', 'BUST',
+  'WALKOFSHAME', 'HICKEY', 'STAIN', 'TIGHT', 'LOOSE', 'WET',
+  'HOT', 'COLD', 'STEAMY', 'SPICY', 'SWEET', 'SOUR', 'BITTER', 'NAUGHTY',
+  'NICE', 'BAD', 'GOOD', 'WICKED', 'SINFUL', 'GUILTY', 'INNOCENT',
+  'BANANA', 'EGGPLANT', 'PEACH', 'CHERRY', 'MELON', 'CUCUMBER', 'WHIPPED',
+  'CREAM', 'HONEY', 'SYRUP', 'CHOCOLATE',
+  'LIPS', 'TONGUE', 'NECK', 'HIPS', 'CURVES', 'ABS', 'BICEPS', 'CHEST',
+  'LEGS', 'SHOULDERS', 'EYES',
+  'STRIP', 'POLE', 'DANCE', 'TANGO', 'SALSA', 'BALLROOM', 'LAPDANCE',
+  'TEXT', 'SEXT', 'EMOJI', 'GIF', 'MEME', 'STORY', 'SNAP', 'POST',
+  'PILLOW', 'BEDROOM', 'MIRROR', 'CANDLE', 'ROSE', 'SILK', 'LACE',
+  'LEATHER', 'VELVET', 'HEELS', 'LIPSTICK', 'PERFUME', 'COLOGNE',
+  'COUGAR', 'HEARTTHROB', 'CRUSH', 'CATFISH', 'PLAYER', 'CHARMER',
+];

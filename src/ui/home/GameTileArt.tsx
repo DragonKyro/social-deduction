@@ -15,6 +15,8 @@ export function GameTileArt({ id }: { id: GameId }) {
       return <CoupTile />;
     case 'codenames':
       return <CodenamesTile />;
+    case 'cross-clues':
+      return <CrossCluesTile />;
   }
 }
 
@@ -150,6 +152,73 @@ function CodenamesTile() {
               fill={colorMap[c]}
               stroke={c === 'k' ? '#fbbf24' : 'rgba(0,0,0,0.3)'}
               strokeWidth={c === 'k' ? 1.5 : 1}
+            />
+          );
+        })}
+      </g>
+    </TileBase>
+  );
+}
+
+function CrossCluesTile() {
+  // 5x5 grid with row/col header bars (echoing the coord-card concept) plus
+  // one green and one red token to telegraph the hit/miss tokens you place
+  // during play.
+  return (
+    <TileBase gradFrom="#0f766e" gradTo="#134e4a">
+      <g transform="translate(64, 14)">
+        {/* Column header bar */}
+        <rect x="32" y="0" width="160" height="14" rx="3" fill="#0b1220" opacity="0.65" />
+        {Array.from({ length: 5 }, (_, c) => (
+          <text
+            key={`ch-${c}`}
+            x={32 + c * 32 + 16}
+            y={11}
+            textAnchor="middle"
+            fontSize="9"
+            fill="#5eead4"
+            fontWeight="700"
+          >
+            {c + 1}
+          </text>
+        ))}
+        {/* Row header bar */}
+        <rect x="0" y="20" width="28" height="128" rx="3" fill="#0b1220" opacity="0.65" />
+        {Array.from({ length: 5 }, (_, r) => (
+          <text
+            key={`rh-${r}`}
+            x={14}
+            y={20 + r * 26 + 17}
+            textAnchor="middle"
+            fontSize="11"
+            fill="#5eead4"
+            fontWeight="700"
+          >
+            {String.fromCharCode(65 + r)}
+          </text>
+        ))}
+        {/* 5x5 grid of cells */}
+        {Array.from({ length: 25 }, (_, i) => {
+          const r = Math.floor(i / 5);
+          const c = i % 5;
+          const x = 32 + c * 32;
+          const y = 20 + r * 26;
+          // Sparse token placement so the tile reads as "mid-game".
+          const isGreen = (r === 1 && c === 2) || (r === 3 && c === 4);
+          const isRed = r === 2 && c === 1;
+          const fill = isGreen ? '#22c55e' : isRed ? '#ef4444' : '#1e293b';
+          const stroke = isGreen || isRed ? '#f1f5f9' : '#334155';
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width="28"
+              height="22"
+              rx="3"
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={isGreen || isRed ? 1.5 : 1}
             />
           );
         })}

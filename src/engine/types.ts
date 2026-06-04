@@ -8,7 +8,13 @@
 // `PublicView` — they never receive other players' hidden information.
 // ============================================================================
 
-export type GameId = 'onuw' | 'secret-hitler' | 'avalon' | 'coup' | 'codenames';
+export type GameId =
+  | 'onuw'
+  | 'secret-hitler'
+  | 'avalon'
+  | 'coup'
+  | 'codenames'
+  | 'cross-clues';
 
 export type PlayerId = string; // stable UUID, persistent in localStorage
 

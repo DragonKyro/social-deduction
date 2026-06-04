@@ -60,6 +60,7 @@ See each game's README:
 - `src/games/secret-hitler/README.md` — Secret Hitler
 - `src/games/avalon/README.md` — Avalon
 - `src/games/coup/README.md` — Coup
+- `src/games/cross-clues/README.md` — Cross Clues (cooperative word game)
 
 ## Conventions
 
@@ -97,6 +98,7 @@ See each game's README:
 - [ ] Phase 7 — AI for all four games (one heuristic level per game)
 - [ ] Phase 8 — In-game chat + phase-gated visibility (night-silence, dead-spectate, etc.)
 - [ ] Phase 9 — Game history / replay (host records action log, redacted per-seat replay)
+- [x] Phase 10 — Cross Clues (coop word game): 5×5 secret-word grid, 25-coord deck, host-authoritative clue-giver redaction, themed word packs (Standard / Spicy / Kids), final-score tiers (16 great / 21 legendary / 25 perfect). No winner team — uses `score` + `scoreRating` instead.
 
 ## Non-goals (do not implement)
 
