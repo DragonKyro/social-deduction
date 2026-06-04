@@ -4,6 +4,11 @@ import { useNetworkStore } from '@/store/networkStore';
 import { codenamesModule } from '../module';
 import type { CodenamesOptions, CodenamesSeatConfig } from '../module';
 import type { TeamColor } from '../state';
+import {
+  WORD_PACK_LIST,
+  buildPoolFromPacks,
+  type WordPackId,
+} from '@/words';
 import styles from './CodenamesSetup.module.css';
 
 // Local-host setup for Codenames. Player count + per-seat team + spymaster
@@ -30,8 +35,21 @@ function defaultPlayers(count: number): CodenamesSeatConfig[] {
 export function CodenamesSetup({ onBack }: Props) {
   const [playerCount, setPlayerCount] = useState(4);
   const [players, setPlayers] = useState<CodenamesSeatConfig[]>(() => defaultPlayers(16));
+  const [selectedPacks, setSelectedPacks] = useState<WordPackId[]>(['classic']);
   const [online, setOnline] = useState(false);
   const [roomCode, setRoomCode] = useState('');
+
+  const togglePack = (id: WordPackId) => {
+    setSelectedPacks((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+  };
+
+  const pool = useMemo(() => buildPoolFromPacks(selectedPacks), [selectedPacks]);
+  const poolTooSmall = pool.length < 25;
+  const hasAdultsOnly = selectedPacks.some(
+    (id) => WORD_PACK_LIST.find((p) => p.id === id)?.adultsOnly,
+  );
 
   const slice = players.slice(0, playerCount);
 
@@ -97,7 +115,10 @@ export function CodenamesSetup({ onBack }: Props) {
       ...p,
       name: p.name.trim() || `Player ${i + 1}`,
     }));
-    const opts: CodenamesOptions = { players: final };
+    const opts: CodenamesOptions = {
+      players: final,
+      packs: selectedPacks.length > 0 ? selectedPacks : ['classic'],
+    };
     if (online) {
       const code = roomCode.trim();
       if (!code) return;
@@ -186,6 +207,54 @@ export function CodenamesSetup({ onBack }: Props) {
       </section>
 
       <section className={styles.panel}>
+        <h3 className={styles.h3}>Word packs</h3>
+        <p className={styles.subtitle}>
+          Pick any combination. Words are deduped across selected packs. Classic
+          on its own keeps the standard experience; mix in themed packs for a
+          different vibe.
+        </p>
+        <div className={styles.packGrid}>
+          {WORD_PACK_LIST.map((p) => {
+            const on = selectedPacks.includes(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className={`${styles.packCard} ${on ? styles.packCardOn : ''}`}
+                onClick={() => togglePack(p.id)}
+              >
+                <div className={styles.packEmoji}>{p.emoji}</div>
+                <div className={styles.packBody}>
+                  <div className={styles.packName}>
+                    {p.name}
+                    {p.adultsOnly && <span className={styles.packAdult}> 18+</span>}
+                  </div>
+                  <div className={styles.packBlurb}>{p.blurb}</div>
+                  <div className={styles.packCount}>{p.words.length} words</div>
+                </div>
+                <div className={styles.packCheck}>{on ? '✓' : ''}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className={styles.packSummary}>
+          <span>
+            Pool size: <b>{pool.length}</b> unique words
+          </span>
+          {poolTooSmall && (
+            <span className={styles.warning}>
+              Need at least 25 words — pick at least one pack.
+            </span>
+          )}
+          {hasAdultsOnly && !poolTooSmall && (
+            <span style={{ color: '#fbbf24', fontSize: 12 }}>
+              Includes a Spicy (18+) pack — make sure your table is on board.
+            </span>
+          )}
+        </div>
+      </section>
+
+      <section className={styles.panel}>
         <h3 className={styles.h3}>Rules summary</h3>
         <ul style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6, paddingLeft: 18, margin: 0 }}>
           <li>5×5 grid. Starting team has 9 cards; the other has 8. 7 bystanders + 1 assassin.</li>
@@ -219,7 +288,7 @@ export function CodenamesSetup({ onBack }: Props) {
       <footer className={styles.footer}>
         <button
           className={styles.startButton}
-          disabled={!!validation || (online && !roomCode.trim())}
+          disabled={!!validation || poolTooSmall || (online && !roomCode.trim())}
           onClick={startGame}
         >
           {online ? 'Open lobby →' : 'Start game →'}

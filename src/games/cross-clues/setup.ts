@@ -1,6 +1,6 @@
 import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
-import { getPack } from './word-packs';
+import { buildPoolFromPacks, type WordPackId } from '@/words';
 import type {
   CellState,
   Coord,
@@ -45,25 +45,26 @@ function buildCoordDeck(): Coord[] {
 }
 
 // Build the initial private state for a match. Pure — deterministic from
-// the seed + packId + seat names. Host calls this once at match start.
+// the seed + selected packs + seat names. Host calls this once at match
+// start. Pack words are deduped before the deal.
 export function buildInitial(
   names: string[],
-  packId: string,
+  packs: readonly WordPackId[],
   seed: number,
 ): CrossCluesPrivateState {
   if (names.length < 2 || names.length > 6) {
     throw new Error(`Cross Clues needs 2-6 players (got ${names.length})`);
   }
-  const pack = getPack(packId);
-  if (pack.words.length < WORDS_PER_GRID) {
+  const pool = buildPoolFromPacks(packs.length > 0 ? packs : ['classic']);
+  if (pool.length < WORDS_PER_GRID) {
     throw new Error(
-      `Pack "${pack.id}" only has ${pack.words.length} words; need ≥ ${WORDS_PER_GRID}`,
+      `Word pool only has ${pool.length} words; need ≥ ${WORDS_PER_GRID}`,
     );
   }
 
-  // 1) Pick 10 words from the chosen pack.
+  // 1) Pick 10 words from the combined pool.
   const wordsRng = makeRng(seed);
-  const shuffledWords = rngShuffle(wordsRng, pack.words);
+  const shuffledWords = rngShuffle(wordsRng, pool);
   const rowWords = shuffledWords.slice(0, GRID_SIZE);
   const colWords = shuffledWords.slice(GRID_SIZE, WORDS_PER_GRID);
 
@@ -109,7 +110,7 @@ export function buildInitial(
     revealAcked,
     history: [],
     score: 0,
-    packId: pack.id,
+    packs: packs.slice(),
     seed,
   };
 }

@@ -2,7 +2,11 @@ import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { CrossCluesAction } from './actions';
 import { aiChooseAction } from './ai';
 import { buildInitial, rotateRoles } from './setup';
-import { DEFAULT_PACK_ID, PACKS } from './word-packs';
+import {
+  DEFAULT_WORD_PACK_ID,
+  WORD_PACKS,
+  type WordPackId,
+} from '@/words';
 import type {
   CellState,
   Coord,
@@ -30,7 +34,12 @@ export interface CrossCluesSeatConfig {
 
 export interface CrossCluesOptions {
   players: CrossCluesSeatConfig[];
-  packId: string;
+  // Selected word packs (multi-select, shared with Codenames). Words are
+  // deduped across packs. If empty/missing we fall back to ['classic'].
+  packs?: WordPackId[];
+  // Legacy single-pack id — accepted for backwards compatibility. Promoted
+  // to `packs: [packId]` when present.
+  packId?: WordPackId;
 }
 
 function getOptions(config: GameConfig): CrossCluesOptions {
@@ -205,9 +214,18 @@ export const crossCluesModule: GameModule<
         `Cross Clues requires ${this.minPlayers}-${this.maxPlayers} players (got ${playerCount})`,
       );
     }
+    // Resolve packs: explicit packs list wins, else legacy packId, else
+    // classic default. Empty array falls back to classic so the deal can
+    // never starve.
+    const packs: WordPackId[] =
+      opts.packs && opts.packs.length > 0
+        ? opts.packs
+        : opts.packId
+          ? [opts.packId]
+          : [DEFAULT_WORD_PACK_ID];
     return buildInitial(
       opts.players.map((p) => p.name),
-      opts.packId ?? DEFAULT_PACK_ID,
+      packs,
       config.seed,
     );
   },
@@ -311,7 +329,7 @@ export const crossCluesModule: GameModule<
       lastRound,
       score: state.score,
       scoreRating: state.phase === 'gameOver' ? scoreRatingFor(state.score) : null,
-      packId: state.packId,
+      packs: state.packs,
       yourSeat: seat,
       yourCoord: isClueGiver ? state.currentCoord : null,
       yourRole: roleFor(state, seat),
@@ -330,7 +348,7 @@ export const crossCluesModule: GameModule<
         name: `Player ${i + 1}`,
         isAI: false,
       })),
-      packId: DEFAULT_PACK_ID,
+      packs: [DEFAULT_WORD_PACK_ID],
     };
     return {
       gameId: 'cross-clues',
@@ -342,4 +360,4 @@ export const crossCluesModule: GameModule<
 };
 
 // Re-export for convenience / tests.
-export { PACKS };
+export { WORD_PACKS };

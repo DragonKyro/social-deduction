@@ -4,7 +4,7 @@ Context for Claude working in this repo.
 
 ## What this is
 
-A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, and **Coup**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
+A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, **Coup**, **Codenames**, **Cross Clues**, and **Love Letter**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
 
 The Catan project one directory up (`../catan/`) is the inspirational reference for the engine / store / net layering. Read its CLAUDE.md for the patterns we're echoing — they're proven against 6 expansions there. **One critical difference: this app is host-authoritative with redacted per-peer views, not full-state replication.** Catan can replicate the full state because Catan has no hidden information beyond dev cards (and even those leak from action logs); social deduction breaks if every peer holds every role. See the "Hidden info model" section below.
 
@@ -17,7 +17,7 @@ TypeScript, Vite, React 19, Trystero (WebRTC torrent), Zustand for state, Vitest
 Five layers, separated by directory:
 
 - **`src/engine/`** — pure game-agnostic plumbing. Defines the `GameModule` contract (private state, action, public view + per-seat redactor) and the cross-game registry. No React, no DOM, no network imports.
-- **`src/games/<id>/`** — one folder per game. Each implements `GameModule` and ships its own state/actions/AI/UI. Currently: `onuw/`, `secret-hitler/`, `avalon/`, `coup/`. Adding a new game = new folder + registry entry, no engine changes.
+- **`src/games/<id>/`** — one folder per game. Each implements `GameModule` and ships its own state/actions/AI/UI. Currently: `onuw/`, `secret-hitler/`, `avalon/`, `coup/`, `codenames/`, `cross-clues/`, `love-letter/`. Adding a new game = new folder + registry entry, no engine changes.
 - **`src/net/`** — Trystero wrapper. Typed channels for hello/lobby/seatReq/start/action/view/snap/chat, persistent UUID via localStorage. Consumed only by `networkStore`.
 - **`src/store/`** — two Zustand stores: `gameStore` (private state on host, public view everywhere) and `networkStore` (connection, role, lobby, chat).
 - **`src/ui/`** — React. `home/` and `lobby/` are game-agnostic; `game/GameRouter.tsx` dispatches to the per-game UI under `src/games/<id>/ui/`.
@@ -60,7 +60,9 @@ See each game's README:
 - `src/games/secret-hitler/README.md` — Secret Hitler
 - `src/games/avalon/README.md` — Avalon
 - `src/games/coup/README.md` — Coup
+- `src/games/codenames/README.md` — Codenames (party word-association, 2-team)
 - `src/games/cross-clues/README.md` — Cross Clues (cooperative word game)
+- `src/games/love-letter/README.md` — Love Letter (16-card micro deduction)
 
 ## Conventions
 
@@ -99,6 +101,8 @@ See each game's README:
 - [ ] Phase 8 — In-game chat + phase-gated visibility (night-silence, dead-spectate, etc.)
 - [ ] Phase 9 — Game history / replay (host records action log, redacted per-seat replay)
 - [x] Phase 10 — Cross Clues (coop word game): 5×5 secret-word grid, 25-coord deck, host-authoritative clue-giver redaction, themed word packs (Standard / Spicy / Kids), final-score tiers (16 great / 21 legendary / 25 perfect). No winner team — uses `score` + `scoreRating` instead.
+- [x] Phase 11 — Codenames (party word-association, 2-team).
+- [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players, base-set 16-card deck (Princess/Countess/King/Prince ×2/Handmaid ×2/Baron ×2/Priest ×2/Guard ×5). Per-seat single hidden card is the only redaction; Priest peek is privately addressed to the actor. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
 
 ## Non-goals (do not implement)
 

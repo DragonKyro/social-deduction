@@ -17,6 +17,8 @@ export function GameTileArt({ id }: { id: GameId }) {
       return <CodenamesTile />;
     case 'cross-clues':
       return <CrossCluesTile />;
+    case 'love-letter':
+      return <LoveLetterTile />;
   }
 }
 
@@ -222,6 +224,47 @@ function CrossCluesTile() {
             />
           );
         })}
+      </g>
+    </TileBase>
+  );
+}
+
+function LoveLetterTile() {
+  // Sealed wax-stamped envelope on rose gradient — pure visual cue: a love
+  // letter, sealed, with a small heart wax seal. Plus a tiny stack of cards
+  // off to the side to hint at the deck-driven gameplay.
+  return (
+    <TileBase gradFrom="#831843" gradTo="#1c1917">
+      {/* Envelope body */}
+      <g transform="translate(48, 50)">
+        <rect
+          x="0"
+          y="0"
+          width="180"
+          height="100"
+          rx="6"
+          fill="#fce7f3"
+          stroke="#831843"
+          strokeWidth="2"
+        />
+        {/* Flap */}
+        <path d="M0 0 L90 56 L180 0" fill="#fbcfe8" stroke="#831843" strokeWidth="2" />
+        {/* Wax seal */}
+        <circle cx="90" cy="58" r="14" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.5" />
+        <path
+          d="M84 56 Q84 51 90 53 Q96 51 96 56 Q96 62 90 66 Q84 62 84 56 Z"
+          fill="#fef3c7"
+        />
+      </g>
+      {/* Mini card stack */}
+      <g transform="translate(244, 110) rotate(-12)">
+        <rect width="44" height="60" rx="4" fill="#be185d" stroke="#fbbf24" strokeWidth="1.5" />
+        <rect x="-4" y="-4" width="44" height="60" rx="4" fill="#831843" stroke="#fbbf24" strokeWidth="1.5" />
+        <rect x="-8" y="-8" width="44" height="60" rx="4" fill="#4c1d95" stroke="#fbbf24" strokeWidth="1.5" />
+      </g>
+      {/* Small hearts */}
+      <g fill="#fbbf24" opacity="0.7">
+        <path d="M20 30 a4 4 0 0 1 8 0 a4 4 0 0 1 8 0 c0 4 -8 10 -8 10 c0 0 -8 -6 -8 -10 z" />
       </g>
     </TileBase>
   );

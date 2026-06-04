@@ -7,10 +7,13 @@ A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-pee
 - 🗳️ **Secret Hitler**
 - ⚔️ **Avalon** (with planned Lady of the Lake, Excalibur, Two Lancelots)
 - 🎭 **Coup** (with planned Rebellion G54 + Anarchy)
+- 🕵️ **Codenames** (party word-association)
+- 🧭 **Cross Clues** (cooperative word-association)
+- 💌 **Love Letter** (16-card micro deduction)
 
 ## Status
 
-Three games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), and **Coup** (Classic + full G54 + Anarchy character pools — all 37 characters playable, with one-per-category balance enforcement). Secret Hitler and the remaining Avalon modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
+Six games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), **Coup** (Classic + full G54 + Anarchy — all 37 characters), **Codenames**, **Cross Clues**, and **Love Letter** (base 16-card set). Secret Hitler and the remaining Avalon modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
 
 ## Quickstart
 
@@ -38,6 +41,9 @@ src/
     secret-hitler/  # Secret Hitler
     avalon/         # Avalon
     coup/           # Coup
+    codenames/      # Codenames
+    cross-clues/    # Cross Clues
+    love-letter/    # Love Letter
   net/              # Trystero room binding, identity, typed channels
   store/            # Zustand: gameStore, networkStore
   ui/
@@ -60,15 +66,13 @@ Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a 
 8. Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots)
 9. ✅ Phase 5 — Coup classic base game
 10. ✅ Phase 5b/c — Coup G54 + Anarchy (all 37 characters playable; one-per-category balance enforced with non-blocking off-balance warning)
-11. Phase 6 — Online multiplayer wiring
-12. Phase 7 — AI for all four games
-13. Phase 8 — In-game chat + phase-gated visibility
-14. Phase 9 — Replay
-
-**Potential future games:**
-- Cross Clues (cooperative word-association)
-- Codenames (party word-association, 2-team)
-- Love Letter (16-card micro deduction)
+11. ✅ Phase 10 — Cross Clues (coop)
+12. ✅ Phase 11 — Codenames (party word-association)
+13. ✅ Phase 12 — Love Letter (16-card micro deduction)
+14. Phase 6 — Online multiplayer wiring
+15. Phase 7 — AI for all games
+16. Phase 8 — In-game chat + phase-gated visibility
+17. Phase 9 — Replay
 
 See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 

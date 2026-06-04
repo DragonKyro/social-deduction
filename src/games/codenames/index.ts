@@ -15,5 +15,13 @@ export type {
   CardKind,
   TeamColor,
 } from './state';
-export { DEFAULT_WORDS } from './words';
 export { buildBoard, pickStartingTeam, GRID_SIZE } from './setup';
+// Word packs are shared with Cross Clues. Re-exported here so existing
+// imports under `@/games/codenames` keep working.
+export {
+  WORD_PACKS,
+  WORD_PACK_LIST,
+  buildPoolFromPacks,
+  CLASSIC_WORDS,
+} from '@/words';
+export type { WordPackId, WordPack } from '@/words';

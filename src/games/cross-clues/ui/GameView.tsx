@@ -29,7 +29,8 @@ export function CrossCluesGameView() {
         <div>
           <h2 className={styles.title}>Cross Clues</h2>
           <p className={styles.subtitle}>
-            Round {Math.min(view.roundNumber, 25)} of 25 · pack: {view.packId}
+            Round {Math.min(view.roundNumber, 25)} of 25 · packs:{' '}
+            {view.packs.length > 0 ? view.packs.join(', ') : 'classic'}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

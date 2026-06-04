@@ -14,7 +14,8 @@ export type GameId =
   | 'avalon'
   | 'coup'
   | 'codenames'
-  | 'cross-clues';
+  | 'cross-clues'
+  | 'love-letter';
 
 export type PlayerId = string; // stable UUID, persistent in localStorage
 

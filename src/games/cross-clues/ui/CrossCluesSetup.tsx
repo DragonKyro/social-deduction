@@ -1,19 +1,28 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
 import { useNetworkStore } from '@/store/networkStore';
 import { crossCluesModule } from '../module';
 import type { CrossCluesOptions } from '../module';
-import { DEFAULT_PACK_ID, PACKS } from '../word-packs';
+import {
+  WORD_PACK_LIST,
+  buildPoolFromPacks,
+  DEFAULT_WORD_PACK_ID,
+  type WordPackId,
+} from '@/words';
 import styles from './CrossCluesSetup.module.css';
 
 // Local-host setup for Cross Clues. Picks player count (2-6), per-seat
-// names, and a word pack. Mirrors the layout of AvalonSetup/CodenamesSetup.
+// names, and one or more word packs. Pack list is shared with Codenames.
 
 interface Props {
   onBack: () => void;
 }
 
 const COUNT_OPTIONS = [2, 3, 4, 5, 6];
+
+// Cross Clues only deals 10 words per match; almost any single pack
+// satisfies this. We still enforce ≥ 10 unique words across the pool.
+const MIN_POOL = 10;
 
 export function CrossCluesSetup({ onBack }: Props) {
   const [playerCount, setPlayerCount] = useState(4);
@@ -25,7 +34,7 @@ export function CrossCluesSetup({ onBack }: Props) {
     'Player 5',
     'Player 6',
   ]);
-  const [packId, setPackId] = useState<string>(DEFAULT_PACK_ID);
+  const [selectedPacks, setSelectedPacks] = useState<WordPackId[]>([DEFAULT_WORD_PACK_ID]);
   const [online, setOnline] = useState(false);
   const [roomCode, setRoomCode] = useState('');
 
@@ -37,13 +46,25 @@ export function CrossCluesSetup({ onBack }: Props) {
     });
   };
 
+  const togglePack = (id: WordPackId) => {
+    setSelectedPacks((cur) =>
+      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
+    );
+  };
+
+  const pool = useMemo(() => buildPoolFromPacks(selectedPacks), [selectedPacks]);
+  const poolTooSmall = pool.length < MIN_POOL;
+  const hasAdultsOnly = selectedPacks.some(
+    (id) => WORD_PACK_LIST.find((p) => p.id === id)?.adultsOnly,
+  );
+
   const startGame = () => {
     const playerNames = Array.from({ length: playerCount }, (_, i) =>
       (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
     );
     const opts: CrossCluesOptions = {
       players: playerNames.map((name) => ({ name, isAI: false })),
-      packId,
+      packs: selectedPacks.length > 0 ? selectedPacks : [DEFAULT_WORD_PACK_ID],
     };
     if (online) {
       const code = roomCode.trim();
@@ -103,21 +124,48 @@ export function CrossCluesSetup({ onBack }: Props) {
       </section>
 
       <section className={styles.panel}>
-        <h3 className={styles.h3}>Word pack</h3>
+        <h3 className={styles.h3}>Word packs</h3>
+        <p className={styles.subtitle}>
+          Same pack list as Codenames — pick any combination. Words are deduped
+          across selected packs.
+        </p>
         <div className={styles.packGrid}>
-          {Object.values(PACKS).map((pack) => (
-            <button
-              key={pack.id}
-              type="button"
-              className={`${styles.packCard} ${pack.id === packId ? styles.active : ''}`}
-              onClick={() => setPackId(pack.id)}
-            >
-              <span className={styles.packName}>{pack.displayName}</span>
-              <span className={styles.packDescription}>{pack.description}</span>
-              <span className={styles.packCount}>{pack.words.length} words</span>
-            </button>
-          ))}
+          {WORD_PACK_LIST.map((pack) => {
+            const on = selectedPacks.includes(pack.id);
+            return (
+              <button
+                key={pack.id}
+                type="button"
+                className={`${styles.packCard} ${on ? styles.active : ''}`}
+                onClick={() => togglePack(pack.id)}
+              >
+                <span className={styles.packName}>
+                  {pack.emoji} {pack.name}
+                  {pack.adultsOnly && (
+                    <span style={{ color: '#fbbf24', fontSize: 11, marginLeft: 6 }}>18+</span>
+                  )}
+                </span>
+                <span className={styles.packDescription}>{pack.blurb}</span>
+                <span className={styles.packCount}>
+                  {pack.words.length} words {on && '· ✓ selected'}
+                </span>
+              </button>
+            );
+          })}
         </div>
+        <div style={{ marginTop: 10, color: '#cbd5e1', fontSize: 13 }}>
+          Pool size: <b>{pool.length}</b> unique words
+        </div>
+        {poolTooSmall && (
+          <div className={styles.warning}>
+            Need at least {MIN_POOL} words — pick at least one pack.
+          </div>
+        )}
+        {hasAdultsOnly && !poolTooSmall && (
+          <div style={{ marginTop: 6, color: '#fbbf24', fontSize: 12 }}>
+            Includes a Spicy (18+) pack — make sure your table is on board.
+          </div>
+        )}
       </section>
 
       <section className={styles.panel}>
@@ -153,7 +201,7 @@ export function CrossCluesSetup({ onBack }: Props) {
       <footer className={styles.footer}>
         <button
           className={styles.startButton}
-          disabled={online && !roomCode.trim()}
+          disabled={poolTooSmall || (online && !roomCode.trim())}
           onClick={startGame}
         >
           {online ? 'Open lobby →' : 'Start game →'}

@@ -13,7 +13,13 @@ import {
   buildBoard,
   pickStartingTeam,
 } from './setup';
-import { DEFAULT_WORDS } from './words';
+import {
+  CLASSIC_WORDS,
+  WORD_PACKS,
+  WORD_PACK_LIST,
+  buildPoolFromPacks,
+  type WordPackId,
+} from '@/words';
 
 function apply(state: CodenamesPrivateState, action: CodenamesAction): CodenamesPrivateState {
   return codenamesModule.applyAction(state, action, '');
@@ -71,7 +77,7 @@ describe('Codenames — setup', () => {
   });
 
   it('default word pool is large enough (>= 25)', () => {
-    expect(DEFAULT_WORDS.length).toBeGreaterThanOrEqual(25);
+    expect(CLASSIC_WORDS.length).toBeGreaterThanOrEqual(25);
   });
 
   it('same seed produces the same board + starting team', () => {
@@ -376,5 +382,112 @@ describe('Codenames — viewFor redaction', () => {
     expect(v.cards.every((c) => c.kind === null)).toBe(true);
     expect(v.yourSeat).toBeNull();
     expect(v.yourRole).toBeNull();
+  });
+});
+
+describe('Codenames — word packs', () => {
+  it('every pack has at least 25 words (enough to fill a board alone)', () => {
+    for (const p of WORD_PACK_LIST) {
+      expect(p.words.length, `pack ${p.id} has too few words`).toBeGreaterThanOrEqual(25);
+    }
+  });
+
+  it('every pack word is uppercase and a single token', () => {
+    for (const p of WORD_PACK_LIST) {
+      for (const w of p.words) {
+        expect(w, `pack ${p.id}: "${w}" should be uppercase`).toBe(w.toUpperCase());
+        expect(/\s/.test(w), `pack ${p.id}: "${w}" contains whitespace`).toBe(false);
+        expect(w.length, `pack ${p.id}: empty entry`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('buildPoolFromPacks dedupes overlapping words across packs', () => {
+    // Compose a pool that's likely to overlap (classic + nature both have
+    // many animal nouns) and assert no dupes survive.
+    const pool = buildPoolFromPacks(['classic', 'nature', 'food']);
+    expect(new Set(pool).size).toBe(pool.length);
+  });
+
+  it('buildPoolFromPacks returns empty array for empty selection', () => {
+    expect(buildPoolFromPacks([])).toEqual([]);
+  });
+
+  it('unknown pack ids are skipped, not thrown', () => {
+    const pool = buildPoolFromPacks(['classic', 'bogus' as WordPackId]);
+    expect(pool.length).toBe(WORD_PACKS.classic.words.length);
+  });
+
+  it('createInitialState uses the union of selected packs when packs are given', () => {
+    const opts = {
+      players: [
+        { name: 'A', team: 'red' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'B', team: 'red' as const, role: 'operative' as const, isAI: false },
+        { name: 'C', team: 'blue' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'D', team: 'blue' as const, role: 'operative' as const, isAI: false },
+      ],
+      // Use a single, small-ish themed pack; every dealt word should be in
+      // its pool. This proves the pack selection actually drove the deal.
+      packs: ['fantasy'] as WordPackId[],
+    };
+    const config = {
+      gameId: 'codenames' as const,
+      seats: [],
+      seed: 1234,
+      gameOptions: opts as unknown as Record<string, unknown>,
+    };
+    const state = codenamesModule.createInitialState(config);
+    const fantasyPool = new Set(WORD_PACKS.fantasy.words.map((w) => w.toUpperCase()));
+    for (const c of state.cards) {
+      expect(fantasyPool.has(c.word.toUpperCase()), `${c.word} not in fantasy pack`).toBe(true);
+    }
+  });
+
+  it('createInitialState falls back to classic when no packs given', () => {
+    const opts = {
+      players: [
+        { name: 'A', team: 'red' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'B', team: 'red' as const, role: 'operative' as const, isAI: false },
+        { name: 'C', team: 'blue' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'D', team: 'blue' as const, role: 'operative' as const, isAI: false },
+      ],
+    };
+    const config = {
+      gameId: 'codenames' as const,
+      seats: [],
+      seed: 999,
+      gameOptions: opts as unknown as Record<string, unknown>,
+    };
+    const state = codenamesModule.createInitialState(config);
+    const classicPool = new Set(WORD_PACKS.classic.words.map((w) => w.toUpperCase()));
+    for (const c of state.cards) {
+      expect(classicPool.has(c.word.toUpperCase()), `${c.word} not in classic pack`).toBe(true);
+    }
+  });
+
+  it('explicit wordPool overrides pack selection', () => {
+    // 30-word custom deck; same seed twice ⇒ same draw; every dealt word
+    // must come from our pool, not the classic default.
+    const customDeck = Array.from({ length: 30 }, (_, i) => `CUSTOM${i}`);
+    const opts = {
+      players: [
+        { name: 'A', team: 'red' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'B', team: 'red' as const, role: 'operative' as const, isAI: false },
+        { name: 'C', team: 'blue' as const, role: 'spymaster' as const, isAI: false },
+        { name: 'D', team: 'blue' as const, role: 'operative' as const, isAI: false },
+      ],
+      packs: ['classic'] as WordPackId[],
+      wordPool: customDeck,
+    };
+    const config = {
+      gameId: 'codenames' as const,
+      seats: [],
+      seed: 77,
+      gameOptions: opts as unknown as Record<string, unknown>,
+    };
+    const state = codenamesModule.createInitialState(config);
+    for (const c of state.cards) {
+      expect(customDeck.includes(c.word)).toBe(true);
+    }
   });
 });

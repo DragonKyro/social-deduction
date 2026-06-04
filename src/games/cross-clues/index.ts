@@ -1,4 +1,4 @@
-export { crossCluesModule, PACKS } from './module';
+export { crossCluesModule, WORD_PACKS } from './module';
 export type {
   CrossCluesOptions,
   CrossCluesSeatConfig,
@@ -17,5 +17,12 @@ export type {
   RoundRecord,
   TokenColor,
 } from './state';
-export { DEFAULT_PACK_ID, getPack } from './word-packs';
-export type { WordPack } from './word-packs';
+// Word packs are shared with Codenames. Re-export from the shared
+// module so old imports under `@/games/cross-clues` keep working.
+export {
+  WORD_PACKS as PACKS,
+  WORD_PACK_LIST,
+  buildPoolFromPacks,
+  DEFAULT_WORD_PACK_ID as DEFAULT_PACK_ID,
+} from '@/words';
+export type { WordPack, WordPackId } from '@/words';

@@ -1,13 +1,11 @@
-// Default word pool for Codenames. ~330 single-token words that work well
-// as clue targets — common nouns, verbs, places, people, and a few proper
-// nouns. Drawn from public-domain word lists in the spirit of the published
-// game (the published word list itself is copyrighted, so we use our own).
+// Classic word pack — ~330 single-token words that work well as clue
+// targets: common nouns, verbs, places, people, and a few proper nouns.
+// Drawn from public-domain word lists in the spirit of Codenames (the
+// published word list itself is copyrighted, so we use our own).
 //
-// All entries are uppercase, single-token (no spaces, no hyphens) so they
-// render uniformly on the 5×5 grid. If you want to swap in a themed deck
-// later, expose it through `CodenamesOptions.wordPool`.
+// Used as the default pack by both Codenames and Cross Clues.
 
-export const DEFAULT_WORDS: readonly string[] = [
+export const CLASSIC_WORDS: readonly string[] = [
   'AGENT', 'AIR', 'ALIEN', 'AMAZON', 'AMBULANCE', 'ANGEL', 'APPLE', 'ARM',
   'ATLANTIS', 'AZTEC', 'BACK', 'BALL', 'BAND', 'BANK', 'BAR', 'BARK',
   'BAT', 'BATTERY', 'BEACH', 'BEAR', 'BEAT', 'BED', 'BELL', 'BELT',

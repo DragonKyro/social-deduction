@@ -1,6 +1,6 @@
 import { makeRng, rngFloat, rngShuffle } from '@/engine/rng';
+import { CLASSIC_WORDS } from '@/words';
 import type { CardKind, CodenamesCard, TeamColor } from './state';
-import { DEFAULT_WORDS } from './words';
 
 // 25-card grid. Starting team gets 9, other team gets 8, then 7 bystanders
 // and 1 assassin. Which team starts is itself determined by the seed so the
@@ -16,7 +16,7 @@ export const ASSASSIN_CARDS = 1;
 export function buildBoard(
   seed: number,
   startingTeam: TeamColor,
-  pool: readonly string[] = DEFAULT_WORDS,
+  pool: readonly string[] = CLASSIC_WORDS,
 ): CodenamesCard[] {
   if (pool.length < GRID_SIZE) {
     throw new Error(`Word pool needs at least ${GRID_SIZE} entries (got ${pool.length})`);

@@ -9,6 +9,7 @@ import type {
   CodenamesSeatState,
   TeamColor,
 } from './state';
+import { buildPoolFromPacks, type WordPackId } from '@/words';
 
 export interface CodenamesSeatConfig {
   name: string;
@@ -20,8 +21,11 @@ export interface CodenamesSeatConfig {
 
 export interface CodenamesOptions {
   players: CodenamesSeatConfig[];
-  // Optional override of the default word pool. We don't expose this in
-  // the UI yet — it's a hook for themed decks.
+  // Selected word packs (multi-select). Words are deduped across packs.
+  // If empty/missing we fall back to ['classic'] so default behavior is
+  // unchanged. Use the legacy `wordPool` field if you want to inject a
+  // bespoke deck directly (precedence over packs when both are set).
+  packs?: WordPackId[];
   wordPool?: string[];
 }
 
@@ -96,7 +100,15 @@ export const codenamesModule: GameModule<
     }
 
     const startingTeam = pickStartingTeam(config.seed);
-    const cards = buildBoard(config.seed, startingTeam, opts.wordPool);
+    // Resolve word pool: explicit wordPool wins, else union of selected
+    // packs, else classic default. We require ≥ 25 unique words after
+    // dedup so the deal can never starve.
+    const resolvedPool = opts.wordPool
+      ? opts.wordPool
+      : buildPoolFromPacks(
+          opts.packs && opts.packs.length > 0 ? opts.packs : ['classic'],
+        );
+    const cards = buildBoard(config.seed, startingTeam, resolvedPool);
     const seats: CodenamesSeatState[] = players.map((p, i) => ({
       index: i,
       name: p.name,
@@ -382,7 +394,7 @@ export const codenamesModule: GameModule<
         isAI: false,
       };
     });
-    const opts: CodenamesOptions = { players };
+    const opts: CodenamesOptions = { players, packs: ['classic'] };
     return {
       gameId: 'codenames',
       seats: [],

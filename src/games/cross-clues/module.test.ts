@@ -4,7 +4,7 @@ import { crossCluesModule } from './module';
 import type { CrossCluesOptions } from './module';
 import type { CrossCluesAction } from './actions';
 import type { Coord, CrossCluesPrivateState } from './state';
-import { PACKS } from './word-packs';
+import { WORD_PACKS, type WordPackId } from '@/words';
 
 // Drop the unused `byUuid` arg the GameModule contract takes — tests don't
 // care about identity. Same wrapper Avalon's tests use.
@@ -17,7 +17,7 @@ function apply(
 
 function configFor(
   playerCount: number,
-  packId = 'standard',
+  packs: WordPackId[] = ['classic'],
   seed = 42,
 ): GameConfig {
   const opts: CrossCluesOptions = {
@@ -25,7 +25,7 @@ function configFor(
       name: `P${i + 1}`,
       isAI: false,
     })),
-    packId,
+    packs,
   };
   return {
     gameId: 'cross-clues',
@@ -84,28 +84,38 @@ describe('Cross Clues — setup', () => {
   });
 
   it('deals 5 row words and 5 col words from the chosen pack', () => {
-    const s = crossCluesModule.createInitialState(configFor(4, 'standard'));
+    const s = crossCluesModule.createInitialState(configFor(4, ['classic']));
     expect(s.rowWords).toHaveLength(5);
     expect(s.colWords).toHaveLength(5);
     // No overlap between row and col words (slices of one shuffled list).
     const overlap = s.rowWords.filter((w) => s.colWords.includes(w));
     expect(overlap).toHaveLength(0);
-    // Every dealt word comes from the chosen pack.
-    const pool = new Set(PACKS['standard']!.words);
+    // Every dealt word comes from the chosen pack (uppercased canonical).
+    const pool = new Set(WORD_PACKS['classic']!.words.map((w) => w.toUpperCase()));
     for (const w of [...s.rowWords, ...s.colWords]) {
       expect(pool.has(w)).toBe(true);
     }
   });
 
-  it('falls back to the standard pack on unknown packId', () => {
-    const s = crossCluesModule.createInitialState(configFor(4, 'no-such-pack'));
-    // The state records the actual pack used.
-    expect(s.packId).toBe('standard');
+  it('combining multiple packs dedupes and draws from the union', () => {
+    const s = crossCluesModule.createInitialState(configFor(4, ['classic', 'food']));
+    const pool = new Set([
+      ...WORD_PACKS['classic']!.words.map((w) => w.toUpperCase()),
+      ...WORD_PACKS['food']!.words.map((w) => w.toUpperCase()),
+    ]);
+    for (const w of [...s.rowWords, ...s.colWords]) {
+      expect(pool.has(w)).toBe(true);
+    }
+  });
+
+  it('falls back to classic when no packs are provided', () => {
+    const s = crossCluesModule.createInitialState(configFor(4, []));
+    expect(s.packs).toEqual(['classic']);
   });
 
   it('seeds the deck so the same seed produces the same deal', () => {
-    const a = crossCluesModule.createInitialState(configFor(4, 'standard', 7));
-    const b = crossCluesModule.createInitialState(configFor(4, 'standard', 7));
+    const a = crossCluesModule.createInitialState(configFor(4, ['classic'], 7));
+    const b = crossCluesModule.createInitialState(configFor(4, ['classic'], 7));
     expect(b.rowWords).toEqual(a.rowWords);
     expect(b.colWords).toEqual(a.colWords);
     expect(b.remainingDeck).toEqual(a.remainingDeck);
@@ -114,8 +124,8 @@ describe('Cross Clues — setup', () => {
   });
 
   it('changing the seed diverges at least one of the dealt slots', () => {
-    const a = crossCluesModule.createInitialState(configFor(4, 'standard', 1));
-    const b = crossCluesModule.createInitialState(configFor(4, 'standard', 2));
+    const a = crossCluesModule.createInitialState(configFor(4, ['classic'], 1));
+    const b = crossCluesModule.createInitialState(configFor(4, ['classic'], 2));
     const differ =
       a.rowWords.join() !== b.rowWords.join() ||
       a.colWords.join() !== b.colWords.join() ||
@@ -235,7 +245,7 @@ describe('Cross Clues — clue + guess validation', () => {
 
 describe('Cross Clues — round scoring + token placement', () => {
   it('correct guess places a green token on the held coord and increments score', () => {
-    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, 'standard', 99)));
+    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, ['classic'], 99)));
     const trueCoord = s.currentCoord!;
     s = apply(s, { type: 'submitClue', bySeat: s.currentClueGiver!, clue: 'cat' });
     s = apply(s, { type: 'submitGuess', bySeat: s.currentGuesser!, coord: trueCoord });
@@ -248,7 +258,7 @@ describe('Cross Clues — round scoring + token placement', () => {
   });
 
   it('wrong guess places a red token on the held coord (not the guess) and leaves score', () => {
-    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, 'standard', 100)));
+    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, ['classic'], 100)));
     const trueCoord = s.currentCoord!;
     // Find any other unresolved cell to wrong-guess at.
     let wrong: Coord | null = null;
@@ -271,7 +281,7 @@ describe('Cross Clues — round scoring + token placement', () => {
   });
 
   it('records the round in history with correct flag', () => {
-    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, 'standard', 7)));
+    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, ['classic'], 7)));
     const trueCoord = s.currentCoord!;
     s = playRound(s, 'sun', () => trueCoord);
     expect(s.history).toHaveLength(1);
@@ -376,7 +386,7 @@ describe('Cross Clues — viewFor redaction', () => {
   });
 
   it('full-game hidden-info audit: yourCoord never leaks across 25 rounds', () => {
-    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, 'standard', 314)));
+    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, ['classic'], 314)));
     for (let r = 0; r < 25; r++) {
       // During clueGiving, exactly one seat sees the coord; everyone else is null.
       const exposers: SeatIndex[] = [];
@@ -406,7 +416,7 @@ describe('Cross Clues — viewFor redaction', () => {
 
 describe('Cross Clues — end of game', () => {
   it('all 25 rounds → gameOver, isFinished true, scoreRating populated', () => {
-    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, 'standard', 5)));
+    let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3, ['classic'], 5)));
     for (let r = 0; r < 25; r++) {
       // Guess correctly every time so score = 25.
       const trueCoord = s.currentCoord!;
@@ -444,7 +454,7 @@ describe('Cross Clues — end of game', () => {
 describe('Cross Clues — AI smoke', () => {
   it('AI-only simulation completes 25 rounds without throwing', () => {
     const aiChoose = crossCluesModule.aiChooseAction!;
-    let s = crossCluesModule.createInitialState(configFor(3, 'standard', 7));
+    let s = crossCluesModule.createInitialState(configFor(3, ['classic'], 7));
     // Bound the loop to avoid runaway if the AI ever returns null with no
     // forward progress.
     const HARD_CAP = 300;
@@ -473,7 +483,7 @@ describe('Cross Clues — defaults', () => {
     expect(cfg.gameId).toBe('cross-clues');
     const s = crossCluesModule.createInitialState(cfg);
     expect(s.seats).toHaveLength(4);
-    expect(s.packId).toBe('standard');
+    expect(s.packs).toEqual(['classic']);
     expect(s.phase).toBe('setup');
   });
 });

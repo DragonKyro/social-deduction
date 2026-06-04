@@ -8,6 +8,7 @@ import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
 import { CoupSetup } from '@/games/coup/ui/CoupSetup';
 import { CodenamesSetup } from '@/games/codenames/ui/CodenamesSetup';
 import { CrossCluesSetup } from '@/games/cross-clues/ui/CrossCluesSetup';
+import { LoveLetterSetup } from '@/games/love-letter/ui/LoveLetterSetup';
 import { GameTileArt } from './GameTileArt';
 import styles from './HomeMenu.module.css';
 
@@ -21,6 +22,7 @@ type Stage =
   | { kind: 'coup-setup' }
   | { kind: 'codenames-setup' }
   | { kind: 'cross-clues-setup' }
+  | { kind: 'love-letter-setup' }
   | { kind: 'join-online' };
 
 export function HomeMenu() {
@@ -42,6 +44,9 @@ export function HomeMenu() {
   if (stage.kind === 'cross-clues-setup') {
     return <CrossCluesSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
+  if (stage.kind === 'love-letter-setup') {
+    return <LoveLetterSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
   if (stage.kind === 'join-online') {
     return <JoinOnline onBack={() => setStage({ kind: 'menu' })} />;
   }
@@ -52,9 +57,10 @@ export function HomeMenu() {
     else if (id === 'coup') setStage({ kind: 'coup-setup' });
     else if (id === 'codenames') setStage({ kind: 'codenames-setup' });
     else if (id === 'cross-clues') setStage({ kind: 'cross-clues-setup' });
+    else if (id === 'love-letter') setStage({ kind: 'love-letter-setup' });
   };
 
-  const wired: GameId[] = ['onuw', 'avalon', 'coup', 'codenames', 'cross-clues'];
+  const wired: GameId[] = ['onuw', 'avalon', 'coup', 'codenames', 'cross-clues', 'love-letter'];
 
   return (
     <main className={styles.root}>

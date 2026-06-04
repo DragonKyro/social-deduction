@@ -71,7 +71,8 @@ export interface CrossCluesPrivateState {
 
   history: RoundRecord[];
   score: number; // running 0..25 (correct guesses)
-  packId: string;
+  // Packs selected for this match, in the order the host picked them.
+  packs: string[];
   seed: number;
 }
 
@@ -120,7 +121,7 @@ export interface CrossCluesPublicState {
   score: number;
   // null until phase === 'gameOver'.
   scoreRating: CrossCluesScoreRating | null;
-  packId: string;
+  packs: string[];
 
   // ----- Redacted per-seat slots -----
   yourSeat: SeatIndex | null;
