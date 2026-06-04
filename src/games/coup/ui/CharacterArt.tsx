@@ -180,6 +180,204 @@ function Glyph({ character, p }: { character: CoupCharacter; p: Palette }) {
           <ellipse cx={58} cy={44} rx={4} ry={8} transform="rotate(20 58 44)" />
         </g>
       );
+    case 'capitalist':
+    case 'financier':
+      // Top hat + dollar
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={32} y={12} width={36} height={22} />
+          <rect x={26} y={32} width={48} height={4} />
+          <text
+            x={50}
+            y={56}
+            textAnchor="middle"
+            fontSize={20}
+            fontWeight={700}
+            fontFamily="sans-serif"
+            fill={p.emblem}
+          >
+            $
+          </text>
+        </g>
+      );
+    case 'speculator':
+      // Chart line up
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
+          <path d="M20 50 L36 36 L48 42 L72 18" />
+          <path d="M72 18 L62 18 M72 18 L72 28" />
+        </g>
+      );
+    case 'treasurer':
+      // Two coins exchanging
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <circle cx={35} cy={32} r={14} />
+          <circle cx={65} cy={32} r={14} />
+          <path d="M28 50 L72 50" stroke={p.emblem} strokeWidth={2} />
+          <text x={35} y={37} textAnchor="middle" fontSize={14} fill={p.primary}>$</text>
+          <text x={65} y={37} textAnchor="middle" fontSize={14} fill={p.primary}>$</text>
+        </g>
+      );
+    case 'newscaster':
+    case 'reporter':
+      // Microphone
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={42} y={14} width={16} height={22} rx={8} />
+          <path d="M34 30 Q34 44 50 44 Q66 44 66 30" fill="none" stroke={p.emblem} strokeWidth={2} />
+          <path d="M50 44 L50 54" stroke={p.emblem} strokeWidth={3} />
+        </g>
+      );
+    case 'producer':
+      // Clapper / video
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={22} y={28} width={56} height={28} />
+          <path d="M22 16 L78 22 L78 28 L22 28 Z" />
+          <path d="M30 16 L34 24 M44 16 L48 24 M58 16 L62 24" stroke={p.primary} strokeWidth={1.5} />
+        </g>
+      );
+    case 'lobbyist':
+      // Briefcase
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={22} y={24} width={56} height={32} rx={3} />
+          <rect x={38} y={16} width={24} height={10} />
+          <path d="M22 38 L78 38" stroke={p.primary} strokeWidth={1.5} />
+        </g>
+      );
+    case 'guerrilla':
+      // Bandana / star
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <path d="M50 12 L58 32 L78 32 L62 44 L68 64 L50 52 L32 64 L38 44 L22 32 L42 32 Z" />
+        </g>
+      );
+    case 'judge':
+      // Gavel
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={20} y={50} width={60} height={6} />
+          <rect x={30} y={16} width={24} height={12} transform="rotate(-30 42 22)" />
+          <rect x={36} y={22} width={28} height={6} transform="rotate(60 50 28)" />
+        </g>
+      );
+    case 'mayor':
+      // City building
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={28} y={28} width={44} height={28} />
+          <path d="M22 28 L50 12 L78 28" />
+          <rect x={36} y={36} width={6} height={6} fill={p.primary} />
+          <rect x={48} y={36} width={6} height={6} fill={p.primary} />
+          <rect x={58} y={36} width={6} height={6} fill={p.primary} />
+        </g>
+      );
+    case 'priest':
+      // Cross
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={44} y={12} width={12} height={48} />
+          <rect x={28} y={28} width={44} height={12} />
+        </g>
+      );
+    case 'lawyer':
+      // Scales of justice
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={2.5} strokeLinecap="round">
+          <path d="M50 14 L50 54" />
+          <path d="M30 24 L70 24" />
+          <path d="M30 24 L24 38 L36 38 Z" fill={p.emblem} />
+          <path d="M70 24 L64 38 L76 38 Z" fill={p.emblem} />
+        </g>
+      );
+    case 'bishop':
+      // Mitre
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <path d="M50 10 Q40 22 36 38 L36 56 L64 56 L64 38 Q60 22 50 10 Z" />
+          <path d="M50 26 L50 50 M40 36 L60 36" stroke={p.primary} strokeWidth={2} fill="none" />
+        </g>
+      );
+    case 'protestor':
+      // Raised fist
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={36} y={24} width={28} height={26} rx={4} />
+          <rect x={34} y={20} width={32} height={8} rx={3} />
+          <rect x={42} y={50} width={16} height={10} />
+        </g>
+      );
+    case 'peacekeeper':
+      // Dove / shield
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <path d="M50 14 L66 24 L62 44 Q56 56 50 58 Q44 56 38 44 L34 24 Z" />
+          <circle cx={50} cy={28} r={3} fill={p.primary} />
+          <circle cx={50} cy={28} r={1.5} fill={p.emblem} />
+        </g>
+      );
+    case 'foreignConsular':
+      // Handshake
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
+          <path d="M22 36 L36 30 L48 38 L60 30 L72 36" />
+          <path d="M40 38 L40 50 M58 38 L58 50" />
+          <path d="M36 50 L62 50" stroke={p.emblem} strokeWidth={3} />
+        </g>
+      );
+    case 'diplomat':
+      // Envelope
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={22} y={20} width={56} height={32} />
+          <path d="M22 20 L50 40 L78 20" fill="none" stroke={p.primary} strokeWidth={2} />
+        </g>
+      );
+    case 'anarchist':
+      // Circled A
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={3.5} strokeLinecap="round">
+          <circle cx={50} cy={34} r={20} />
+          <path d="M40 44 L50 22 L60 44 M44 38 L56 38" />
+        </g>
+      );
+    case 'armsDealer':
+      // Crossed rifles
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
+          <path d="M22 14 L74 50" />
+          <path d="M74 14 L22 50" />
+          <circle cx={48} cy={32} r={3} fill={p.rim} />
+        </g>
+      );
+    case 'paramilitary':
+      // Helmet
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <path d="M22 38 Q22 16 50 16 Q78 16 78 38 L78 44 L22 44 Z" />
+          <rect x={22} y={44} width={56} height={6} />
+        </g>
+      );
+    case 'socialist':
+      // Equality bars
+      return (
+        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
+          <rect x={26} y={24} width={48} height={8} />
+          <rect x={26} y={36} width={48} height={8} />
+          <rect x={26} y={48} width={48} height={8} />
+        </g>
+      );
+    case 'worldBank':
+      // Globe + coin
+      return (
+        <g fill="none" stroke={p.emblem} strokeWidth={2}>
+          <circle cx={50} cy={32} r={18} fill={p.rim} stroke={p.emblem} />
+          <ellipse cx={50} cy={32} rx={18} ry={8} />
+          <path d="M32 32 L68 32 M50 14 L50 50" />
+        </g>
+      );
     default:
       // Generic question-mark glyph for unimplemented characters.
       return (

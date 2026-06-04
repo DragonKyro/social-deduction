@@ -2,7 +2,7 @@ import { makeRng, rngShuffle } from '@/engine/rng';
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { CoupGameAction } from './actions';
 import { CHARACTERS, blockersFor } from './characters';
-import { buildInitialState, validateCharacterSet } from './setup';
+import { buildInitialState, validateCharacterSetFull } from './setup';
 import type {
   CoupCharacter,
   CoupPendingAction,
@@ -19,16 +19,9 @@ export interface CoupSeatConfig {
 }
 
 export interface CoupOptions {
-  // Local-host seat list. AI flag scaffolded (no AI yet).
   players: CoupSeatConfig[];
-  // Classic 5-character base, or G54 25-character pool.
   ruleset: CoupRuleset;
-  // G54 only. 'anarchy' adds 6 characters and the Social Media general
-  // action. Empty in classic.
   expansions: Array<'anarchy'>;
-  // Exact list of characters that go into the deck this match. Each entry
-  // contributes 3 deck copies. For classic this is the canonical 5; for G54
-  // / Anarchy the host can curate any 5-8 implemented characters.
   characters: CoupCharacter[];
 }
 
@@ -66,7 +59,6 @@ function nextLivingAfter(state: CoupPrivateState, from: SeatIndex): SeatIndex {
   return from;
 }
 
-// Draw a card from the deck. Mutates `state.deck`.
 function drawCard(state: CoupPrivateState): CoupCharacter {
   if (state.deck.length === 0) {
     throw new Error('Deck is empty');
@@ -74,9 +66,6 @@ function drawCard(state: CoupPrivateState): CoupCharacter {
   return state.deck.shift()!;
 }
 
-// Return a card to the deck and reshuffle deterministically. Uses the
-// `rngCursor` so multiple shuffles within a game still produce different
-// orders.
 function returnAndShuffle(state: CoupPrivateState, cards: CoupCharacter[]) {
   state.deck.push(...cards);
   state.rngCursor = (state.rngCursor + 0x9e3779b9) >>> 0;
@@ -98,25 +87,33 @@ function emptyPending(by: SeatIndex): CoupPendingAction {
     inquisitorBranch: null,
     inquisitorPeekCardIndex: null,
     spyPeekCardIndex: null,
+    treatyPair: null,
+    pileOnPot: null,
+    chipInPot: null,
+    swapInProgress: null,
     loseInfluencePending: null,
   };
 }
 
-// Window participants: every LIVING seat other than the claimant (and for
-// block-challenge, other than the blocker themselves).
 function challengeWindowParticipants(state: CoupPrivateState, exclude: SeatIndex[]): SeatIndex[] {
   return livingSeats(state).filter((s) => !exclude.includes(s));
 }
 
-// Check whether the seat actually holds the claimed character.
 function seatHas(seat: CoupSeatState, character: CoupCharacter): boolean {
   return seat.influences.some((i) => !i.revealed && i.char === character);
 }
 
-// Mark an influence card as revealed (lost).
+// Mark an influence as revealed. Respects the reviveBlessed token — if the
+// seat is about to be eliminated and holds the token, the token is spent and
+// the seat keeps the card face-down ("blessed save").
 function loseInfluencePick(seat: CoupSeatState, cardIndex: 0 | 1): boolean {
   const card = seat.influences[cardIndex];
   if (!card || card.revealed) return false;
+  if (livingInfluenceCount(seat) === 1 && seat.tokens.reviveBlessed) {
+    // Bless saves the last influence. Token consumed; card stays face-down.
+    seat.tokens.reviveBlessed = false;
+    return false;
+  }
   card.revealed = true;
   if (livingInfluenceCount(seat) === 0) {
     seat.eliminated = true;
@@ -124,22 +121,31 @@ function loseInfluencePick(seat: CoupSeatState, cardIndex: 0 | 1): boolean {
   return true;
 }
 
-// Pick any unrevealed card to drop (used when no choice is necessary, e.g.
-// last living card).
 function loseAnyInfluence(seat: CoupSeatState): boolean {
   const idx = seat.influences.findIndex((i) => !i.revealed);
   if (idx === -1) return false;
   return loseInfluencePick(seat, idx as 0 | 1);
 }
 
-// After applying an effect, check for game-over. If exactly one seat is
-// still living, that seat wins.
 function checkWin(state: CoupPrivateState) {
   const alive = state.seats.filter((s) => !s.eliminated);
   if (alive.length === 1) {
     state.winnerSeat = alive[0]!.index;
     state.phase = 'gameOver';
     appendLog(state, `${alive[0]!.name} wins!`);
+  }
+}
+
+// Token-aware targeting check. Throws on illegal targets.
+function assertTargetable(state: CoupPrivateState, by: SeatIndex, target: SeatIndex) {
+  const t = state.seats[target];
+  if (!t || t.eliminated) throw new Error('Invalid target.');
+  if (target === by) throw new Error("You can't target yourself.");
+  if (t.tokens.peacekeeping) {
+    throw new Error(`${t.name} is under Peacekeeping protection.`);
+  }
+  if (t.tokens.treaty === by || state.seats[by]!.tokens.treaty === target) {
+    throw new Error(`A Treaty bars you from targeting ${t.name}.`);
   }
 }
 
@@ -163,13 +169,12 @@ function resolveEffect(state: CoupPrivateState) {
         appendLog(state, `${by.name} took Foreign Aid (+2).`);
         return endTurn(state);
       case 'coup': {
-        // Cost was paid up-front at declare. Target must lose an influence.
         const target = state.seats[p.target!]!;
         appendLog(state, `${by.name} couped ${target.name}.`);
         if (livingInfluenceCount(target) <= 1) {
           loseAnyInfluence(target);
           checkWin(state);
-          if (state.phase !== 'gameOver') endTurn(state);
+          if ((state.phase as string) !== 'gameOver') endTurn(state);
           return;
         }
         p.loseInfluencePending = { seat: target.index, reason: 'coup' };
@@ -181,16 +186,13 @@ function resolveEffect(state: CoupPrivateState) {
     }
   }
 
-  // Character actions.
   switch (p.characterActionId) {
     case 'tax': {
-      // Duke / Banker
       by.coins += 3;
       appendLog(state, `${by.name} taxed +3 as ${characterLabel(p.claimedCharacter)}.`);
       return endTurn(state);
     }
     case 'taxLevy': {
-      // Tax Collector: 1 from every other living player (skip 0-coin players).
       let total = 0;
       for (const s of state.seats) {
         if (s.index === by.index || s.eliminated) continue;
@@ -203,63 +205,58 @@ function resolveEffect(state: CoupPrivateState) {
       appendLog(state, `${by.name} (Tax Collector) levied ${total} coin${total === 1 ? '' : 's'}.`);
       return endTurn(state);
     }
-    case 'assassinate': {
+    case 'assassinate':
+    case 'soldierStrike':
+    case 'mercenaryHire':
+    case 'protectedEliminate':
+    case 'paramilitaryRiot': {
       const target = state.seats[p.target!]!;
-      // Cost (3) was already paid at declare.
-      appendLog(state, `${by.name} assassinated ${target.name}.`);
+      const reasonMap: Record<string, 'assassinate' | 'soldier' | 'mercenary' | 'guerrilla' | 'paramilitary'> = {
+        assassinate: 'assassinate',
+        soldierStrike: 'soldier',
+        mercenaryHire: 'mercenary',
+        protectedEliminate: 'guerrilla',
+        paramilitaryRiot: 'paramilitary',
+      };
+      const reason = reasonMap[p.characterActionId];
+      appendLog(state, `${by.name} (${characterLabel(p.claimedCharacter)}) strikes ${target.name}.`);
       if (livingInfluenceCount(target) <= 1) {
         loseAnyInfluence(target);
         checkWin(state);
-        if (state.phase !== 'gameOver') endTurn(state);
+        if ((state.phase as string) !== 'gameOver') endTurn(state);
         return;
       }
-      p.loseInfluencePending = { seat: target.index, reason: 'assassinate' };
-      state.phase = 'loseInfluence';
-      return;
-    }
-    case 'soldierStrike': {
-      const target = state.seats[p.target!]!;
-      appendLog(state, `${by.name} (Soldier) struck ${target.name}.`);
-      if (livingInfluenceCount(target) <= 1) {
-        loseAnyInfluence(target);
-        checkWin(state);
-        if (state.phase !== 'gameOver') endTurn(state);
-        return;
-      }
-      p.loseInfluencePending = { seat: target.index, reason: 'soldier' };
-      state.phase = 'loseInfluence';
-      return;
-    }
-    case 'mercenaryHire': {
-      const target = state.seats[p.target!]!;
-      appendLog(
-        state,
-        `${by.name} + ${
-          state.seats[p.mercenaryPartner!]?.name ?? '???'
-        } (Mercenary) struck ${target.name}.`,
-      );
-      if (livingInfluenceCount(target) <= 1) {
-        loseAnyInfluence(target);
-        checkWin(state);
-        if (state.phase !== 'gameOver') endTurn(state);
-        return;
-      }
-      p.loseInfluencePending = { seat: target.index, reason: 'mercenary' };
+      p.loseInfluencePending = { seat: target.index, reason };
       state.phase = 'loseInfluence';
       return;
     }
     case 'steal':
     case 'thiefSteal': {
       const target = state.seats[p.target!]!;
-      const take = Math.min(2, target.coins);
+      const bonus = Math.min(3, by.tokens.weapons);
+      const want = 2 + bonus;
+      const take = Math.min(want, target.coins);
       target.coins -= take;
       by.coins += take;
-      appendLog(state, `${by.name} stole ${take} coin${take === 1 ? '' : 's'} from ${target.name}.`);
+      appendLog(
+        state,
+        `${by.name} stole ${take} coin${take === 1 ? '' : 's'} from ${target.name}${
+          bonus > 0 ? ` (+${bonus} weapons bonus)` : ''
+        }.`,
+      );
+      return endTurn(state);
+    }
+    case 'customSteal': {
+      // Speculator: amount = own coins, max 5.
+      const target = state.seats[p.target!]!;
+      const want = Math.min(by.coins, 5);
+      const take = Math.min(want, target.coins);
+      target.coins -= take;
+      by.coins += take;
+      appendLog(state, `${by.name} (Speculator) stole ${take} coins from ${target.name}.`);
       return endTurn(state);
     }
     case 'exchange': {
-      // Ambassador: draw 2, combine with hand (only the unrevealed cards),
-      // keep N (= living-influence count), return rest.
       const drawn = [drawCard(state), drawCard(state)];
       const live = by.influences.filter((i) => !i.revealed).map((i) => i.char);
       state.exchangeOffer = {
@@ -272,14 +269,10 @@ function resolveEffect(state: CoupPrivateState) {
     }
     case 'inquisitorExchange': {
       if (p.inquisitorBranch === 'peek') {
-        // Inquisitor opted to peek a target instead of exchange.
         const target = state.seats[p.target!]!;
         const idx = (p.inquisitorPeekCardIndex ?? 0) as 0 | 1;
         const card = target.influences[idx];
-        if (!card) {
-          return endTurn(state);
-        }
-        // Record peek in spy log so the active seat sees it in their view.
+        if (!card) return endTurn(state);
         state.privatePeeks[by.index]!.push({
           byActionId: 'inquisitorPeek',
           target: target.index,
@@ -287,10 +280,9 @@ function resolveEffect(state: CoupPrivateState) {
           cardIndex: idx,
         });
         appendLog(state, `${by.name} (Inquisitor) peeked at ${target.name}.`);
-        state.phase = 'spyPeek'; // reuse the peek-ack screen
+        state.phase = 'spyPeek';
         return;
       }
-      // Default branch: exchange 1 card with the deck.
       const drawn = [drawCard(state)];
       const live = by.influences.filter((i) => !i.revealed).map((i) => i.char);
       state.exchangeOffer = {
@@ -305,9 +297,7 @@ function resolveEffect(state: CoupPrivateState) {
       const target = state.seats[p.target!]!;
       const idx = (p.spyPeekCardIndex ?? 0) as 0 | 1;
       const card = target.influences[idx];
-      if (!card) {
-        return endTurn(state);
-      }
+      if (!card) return endTurn(state);
       state.privatePeeks[by.index]!.push({
         byActionId: 'spyPeek',
         target: target.index,
@@ -324,6 +314,119 @@ function resolveEffect(state: CoupPrivateState) {
       appendLog(state, `${by.name} (Plantation Owner) gained +${bonus}.`);
       return endTurn(state);
     }
+
+    // === New mechanics this milestone ======================================
+
+    case 'pileOnIncome': {
+      const baseAmount =
+        p.claimedCharacter && CHARACTERS[p.claimedCharacter]?.action?.amount
+          ? CHARACTERS[p.claimedCharacter]!.action!.amount!
+          : 2;
+      p.pileOnPot = {
+        contributors: [p.by],
+        coinsEach: baseAmount,
+        closed: [],
+      };
+      appendLog(
+        state,
+        `${by.name} opens a ${characterLabel(p.claimedCharacter)} pile-on (+${baseAmount} each — join or pass).`,
+      );
+      state.phase = 'pileOnWindow';
+      return;
+    }
+    case 'chipInEliminate': {
+      const target = state.seats[p.target!]!;
+      const livingOpponents = livingSeats(state).filter((s) => s !== p.by);
+      const threshold = Math.max(1, Math.ceil(livingOpponents.length / 2));
+      p.chipInPot = { contributors: [], threshold, passes: [] };
+      appendLog(
+        state,
+        `${by.name} (${characterLabel(p.claimedCharacter)}) rallies against ${target.name} — opponents may chip 1 coin each (need ${threshold}).`,
+      );
+      state.phase = 'chipInWindow';
+      return;
+    }
+    case 'forceSwap': {
+      const target = state.seats[p.target!]!;
+      const drawn = drawCard(state);
+      p.swapInProgress = { target: target.index, drawnCard: drawn };
+      // The actor sees the drawn card via the spyPeek-style ack (we record it
+      // in their peek log briefly so the UI surfaces it). But the target gets
+      // to pick which card to swap — and they don't know what they're getting.
+      appendLog(state, `${by.name} (${characterLabel(p.claimedCharacter)}) forces a swap on ${target.name}.`);
+      state.phase = 'targetSwapPick';
+      return;
+    }
+    case 'wealthRedistribute': {
+      const id = p.claimedCharacter;
+      if (id === 'treasurer' && p.target !== null) {
+        const target = state.seats[p.target]!;
+        const sum = by.coins + target.coins;
+        const half = Math.floor(sum / 2);
+        target.coins = half;
+        by.coins = sum - half;
+        appendLog(state, `${by.name} (Treasurer) equalized coins with ${target.name}.`);
+      } else if (id === 'socialist') {
+        const alive = state.seats.filter((s) => !s.eliminated);
+        const total = alive.reduce((acc, s) => acc + s.coins, 0);
+        const each = Math.floor(total / alive.length);
+        const remainder = total - each * alive.length;
+        for (const s of alive) s.coins = each;
+        by.coins += remainder;
+        appendLog(state, `${by.name} (Socialist) redistributed to ${each} coins each (you keep the remainder of ${remainder}).`);
+      } else if (id === 'worldBank') {
+        for (const s of state.seats) if (!s.eliminated) s.coins += 1;
+        appendLog(state, `${by.name} (World Bank) granted +1 coin to every living player.`);
+      }
+      return endTurn(state);
+    }
+    case 'mayorIncome': {
+      by.coins += 2;
+      appendLog(state, `${by.name} (Mayor) took income (+2).`);
+      return endTurn(state);
+    }
+    case 'priestRevive': {
+      const target = state.seats[p.target!]!;
+      target.tokens.reviveBlessed = true;
+      appendLog(state, `${by.name} (Priest) blessed ${target.name} — one revive token.`);
+      return endTurn(state);
+    }
+    case 'lawyerSwing': {
+      by.coins += 2;
+      by.tokens.reviveBlessed = true;
+      appendLog(state, `${by.name} (Lawyer) took +2 coins and a revive token.`);
+      return endTurn(state);
+    }
+    case 'bishopBless': {
+      by.coins += 1;
+      by.tokens.reviveBlessed = true;
+      appendLog(state, `${by.name} (Bishop) took +1 coin and a revive token.`);
+      return endTurn(state);
+    }
+    case 'peacekeeperShield': {
+      by.tokens.peacekeeping = true;
+      appendLog(state, `${by.name} (Peacekeeper) is now under protection.`);
+      return endTurn(state);
+    }
+    case 'foreignConsularTreaty': {
+      if (!p.treatyPair) {
+        appendLog(state, `${by.name} (Foreign Consular) — no treaty pair selected; turn fizzles.`);
+        return endTurn(state);
+      }
+      const [a, b] = p.treatyPair;
+      const sa = state.seats[a]!;
+      const sb = state.seats[b]!;
+      sa.tokens.treaty = b;
+      sb.tokens.treaty = a;
+      appendLog(state, `${by.name} (Foreign Consular) placed a Treaty between ${sa.name} and ${sb.name}.`);
+      return endTurn(state);
+    }
+    case 'armsDealerSell': {
+      // Open the sell-influence pick phase.
+      appendLog(state, `${by.name} (Arms Dealer) — flip one of your cards for 4 coins + 1 weapon.`);
+      state.phase = 'sellInfluencePick';
+      return;
+    }
     default:
       return endTurn(state);
   }
@@ -334,29 +437,30 @@ function characterLabel(c: CoupCharacter | null): string {
 }
 
 // ============================================================================
-// End-of-turn bookkeeping. Drop pending state, rotate to next living seat.
+// End-of-turn bookkeeping. Drop pending state, rotate to next living seat,
+// and decay tokens that bind to the actor's next turn.
 // ============================================================================
 
 function endTurn(state: CoupPrivateState) {
-  // If exchange resolved, free the offer.
   state.exchangeOffer = null;
-  // Block penalty refunds: assassinations that were blocked don't refund
-  // (the assassin already lost 3 coins to declare). Other actions have no
-  // up-front cost.
+  const finishedBy = state.pending?.by ?? null;
   state.pending = null;
   if (state.phase === 'gameOver') return;
-  // Eliminate the current seat if they've been removed.
+
+  // Token decay model (kept intentionally simple):
+  //   - peacekeeping clears when its HOLDER takes their next turn (handled at
+  //     the top of declareGeneral / declareCharacter, not here, so a
+  //     just-granted token survives until the holder acts).
+  //   - treaty bonds persist until overwritten by a later Foreign Consular
+  //     claim (no time-based decay).
+  void finishedBy;
+
   state.currentSeat = nextLivingAfter(state, state.currentSeat);
   state.phase = 'turnStart';
-  // 10-coin rule: if any player starts their turn with 10+ coins, they MUST
-  // coup. We enforce by setting a flag the UI uses (the host still requires
-  // a `declareGeneral` with 'coup', but the UI hides every other option).
-  // No flag needed — UI reads coins.
 }
 
 // ============================================================================
-// Block check helpers — does the current state's character/block window
-// have any participants left?
+// Block check helpers
 // ============================================================================
 
 function challengeWindowFinished(state: CoupPrivateState, pendingPasses: SeatIndex[], exclude: SeatIndex[]): boolean {
@@ -364,7 +468,6 @@ function challengeWindowFinished(state: CoupPrivateState, pendingPasses: SeatInd
   return participants.every((p) => pendingPasses.includes(p));
 }
 
-// What characters can block the pending action (for the awaitingBlock window)?
 function pendingBlockers(state: CoupPrivateState): CoupCharacter[] {
   const p = state.pending;
   if (!p) return [];
@@ -373,18 +476,24 @@ function pendingBlockers(state: CoupPrivateState): CoupCharacter[] {
       return blockersFor(state.activeCharacters, 'foreignAid');
     }
     if (p.generalId === 'coup') {
-      // Judge in G54+ can block. Not in classic. (Judge not implemented yet,
-      // so this list will be empty.)
+      // Judge / Lawyer / Paramilitary / Guerrilla can block Coup in G54.
       return state.ruleset === 'g54' ? blockersFor(state.activeCharacters, 'coup') : [];
     }
     return [];
   }
-  // Character actions.
   if (p.characterActionId === 'assassinate') {
     return blockersFor(state.activeCharacters, 'assassinate');
   }
-  if (p.characterActionId === 'steal' || p.characterActionId === 'thiefSteal') {
+  if (p.characterActionId === 'steal' || p.characterActionId === 'thiefSteal' || p.characterActionId === 'customSteal') {
     return blockersFor(state.activeCharacters, 'steal');
+  }
+  if (p.characterActionId === 'protectedEliminate') {
+    // Guerrilla: only another Guerrilla blocks. We hand-roll this by checking
+    // if Guerrilla is in the active set.
+    return state.activeCharacters.includes('guerrilla') ? ['guerrilla'] : [];
+  }
+  if (p.characterActionId === 'paramilitaryRiot') {
+    return state.activeCharacters.includes('paramilitary') ? ['paramilitary'] : [];
   }
   return [];
 }
@@ -417,8 +526,8 @@ export const coupModule: GameModule<CoupPrivateState, CoupPublicState, CoupGameA
     if (playerCount < this.minPlayers || playerCount > this.maxPlayers) {
       throw new Error(`Coup requires ${this.minPlayers}-${this.maxPlayers} players (got ${playerCount})`);
     }
-    const setError = validateCharacterSet(opts.characters);
-    if (setError) throw new Error(setError);
+    const result = validateCharacterSetFull(opts.characters, opts.ruleset, opts.expansions.includes('anarchy'));
+    if (result.error) throw new Error(result.error);
     return buildInitialState(
       playerCount,
       opts.characters,
@@ -450,7 +559,7 @@ export const coupModule: GameModule<CoupPrivateState, CoupPublicState, CoupGameA
           inf.revealed ? { char: inf.char, revealed: true } : { char: null, revealed: false },
         ),
         eliminated: s.eliminated,
-        tokens: s.tokens,
+        tokens: { ...s.tokens },
       })),
       currentSeat: state.currentSeat,
       pending: state.pending
@@ -465,6 +574,14 @@ export const coupModule: GameModule<CoupPrivateState, CoupPublicState, CoupGameA
             passes: state.pending.passes,
             loseInfluencePending: state.pending.loseInfluencePending,
             mercenaryPartner: state.pending.mercenaryPartner,
+            treatyPair: state.pending.treatyPair,
+            pileOnPot: state.pending.pileOnPot
+              ? { ...state.pending.pileOnPot, contributors: [...state.pending.pileOnPot.contributors], closed: [...state.pending.pileOnPot.closed] }
+              : null,
+            chipInPot: state.pending.chipInPot
+              ? { ...state.pending.chipInPot, contributors: [...state.pending.chipInPot.contributors], passes: [...state.pending.chipInPot.passes] }
+              : null,
+            swapTarget: state.pending.swapInProgress?.target ?? null,
           }
         : null,
       deckSize: state.deck.length,
@@ -526,22 +643,31 @@ function apply(state: CoupPrivateState, action: CoupGameAction): void {
     case 'ackPeek':
       return ackPeek(state, action.bySeat);
     case 'ackTurn':
-      // No-op; the engine auto-ends turns. Kept for future use (e.g. between
-      // hot-seat turn rotations).
       return;
     case 'spyPickTarget':
-      // Legacy/no-op: spy peek target is supplied at declare time.
       void action;
       return;
+    case 'joinPileOn':
+      return joinPileOn(state, action.bySeat);
+    case 'closePileOn':
+      return closePileOn(state, action.bySeat);
+    case 'chipIn':
+      return chipIn(state, action.bySeat);
+    case 'targetSwapPick':
+      return targetSwapPick(state, action.bySeat, action.cardIndex);
+    case 'sellInfluence':
+      return sellInfluence(state, action.bySeat, action.cardIndex);
   }
 }
 
-// --- Active-turn declarations -------------------------------------------------
+// --- Active-turn declarations ----------------------------------------------
 
 function declareGeneral(state: CoupPrivateState, id: GeneralActionId, target?: SeatIndex): void {
   if (state.phase !== 'turnStart') throw new Error(`Can't declare in phase ${state.phase}`);
   const cur = state.seats[state.currentSeat]!;
-  // 10-coin rule.
+  // Active player's own peacekeeping expires when they start to act. Treaty
+  // bonds persist until a NEW Foreign Consular claim overwrites them.
+  cur.tokens.peacekeeping = false;
   if (cur.coins >= 10 && id !== 'coup') {
     throw new Error('You must coup at 10+ coins.');
   }
@@ -552,7 +678,6 @@ function declareGeneral(state: CoupPrivateState, id: GeneralActionId, target?: S
 
   switch (id) {
     case 'income': {
-      // No challenge, no block — resolve immediately.
       state.pending = pending;
       resolveEffect(state);
       return;
@@ -569,14 +694,10 @@ function declareGeneral(state: CoupPrivateState, id: GeneralActionId, target?: S
     case 'coup': {
       if (target === undefined) throw new Error('Coup requires a target');
       if (cur.coins < 7) throw new Error('Coup costs 7 coins');
-      const tgt = state.seats[target];
-      if (!tgt || tgt.eliminated || target === state.currentSeat) {
-        throw new Error('Invalid coup target');
-      }
+      assertTargetable(state, state.currentSeat, target);
       cur.coins -= 7;
       state.pending = pending;
       if (state.ruleset === 'g54' && isActionBlockable(state)) {
-        // Judge could block in G54 if implemented. Not yet — falls through.
         state.phase = 'awaitingBlock';
       } else {
         resolveEffect(state);
@@ -592,9 +713,8 @@ function declareCharacter(
 ): void {
   if (state.phase !== 'turnStart') throw new Error(`Can't declare in phase ${state.phase}`);
   const cur = state.seats[state.currentSeat]!;
+  cur.tokens.peacekeeping = false;
   if (cur.coins >= 10) throw new Error('You must coup at 10+ coins.');
-  // Validate the claim is in this deck (you can only claim characters that
-  // exist in the active 5-8).
   if (!state.activeCharacters.includes(action.claimedCharacter)) {
     throw new Error(`${characterLabel(action.claimedCharacter)} isn't in this game.`);
   }
@@ -602,13 +722,10 @@ function declareCharacter(
   if (!charDef.action || charDef.action.id !== action.characterActionId) {
     throw new Error(`${charDef.name} can't take that action.`);
   }
-  // Pay up-front cost (e.g. Assassin = 3).
   if (cur.coins < charDef.action.cost) {
     throw new Error(`Not enough coins (need ${charDef.action.cost}).`);
   }
   cur.coins -= charDef.action.cost;
-  // Mercenary requires a partner — they pay 1 also. (Partner can decline by
-  // simply being unable to pay, in which case we error out for now.)
   if (charDef.action.id === 'mercenaryHire') {
     if (action.mercenaryPartner === undefined) throw new Error('Mercenary needs a partner.');
     const partner = state.seats[action.mercenaryPartner];
@@ -627,20 +744,31 @@ function declareCharacter(
   pending.mercenaryPartner = action.mercenaryPartner ?? null;
   pending.inquisitorBranch = action.inquisitorBranch ?? null;
   pending.inquisitorPeekCardIndex = action.inquisitorPeekCardIndex ?? null;
+  pending.treatyPair = action.treatyPair ?? null;
 
-  // Spy / Inquisitor-peek branches need a target card index. Reuse the same
-  // index field for both characters.
   if (charDef.action.id === 'spyPeek') {
     pending.spyPeekCardIndex = action.inquisitorPeekCardIndex ?? 0;
   }
 
+  // Validate target presence + token gates.
+  if (charDef.action.target === 'other') {
+    if (pending.target === null) throw new Error(`${charDef.name} requires a target.`);
+    assertTargetable(state, state.currentSeat, pending.target);
+  }
+  if (charDef.action.target === 'pair') {
+    if (!pending.treatyPair) throw new Error(`${charDef.name} requires a treaty pair.`);
+    const [a, b] = pending.treatyPair;
+    if (a === state.currentSeat || b === state.currentSeat) {
+      throw new Error('Treaty pair must be two other seats.');
+    }
+    if (a === b) throw new Error('Treaty pair must be two distinct seats.');
+    if (state.seats[a]?.eliminated || state.seats[b]?.eliminated) {
+      throw new Error('Treaty seats must be alive.');
+    }
+  }
+
   state.pending = pending;
   appendLog(state, `${cur.name} claims ${charDef.name}.`);
-
-  // Validate target presence for action.target === 'other'.
-  if (charDef.action.target === 'other' && pending.target === null) {
-    throw new Error(`${charDef.name} requires a target.`);
-  }
 
   if (isActionChallengeable(state)) {
     state.phase = 'awaitingChallenge';
@@ -653,7 +781,7 @@ function declareCharacter(
   }
 }
 
-// --- Challenge / block window ------------------------------------------------
+// --- Challenge / block window ----------------------------------------------
 
 function handleChallenge(state: CoupPrivateState, bySeat: SeatIndex): void {
   if (state.phase !== 'awaitingChallenge' && state.phase !== 'awaitingBlockChallenge') {
@@ -663,17 +791,14 @@ function handleChallenge(state: CoupPrivateState, bySeat: SeatIndex): void {
   if (!p) throw new Error('No pending action.');
 
   if (state.phase === 'awaitingChallenge') {
-    // Challenger goes against the active player's claim.
     if (bySeat === p.by) throw new Error("You can't challenge yourself.");
     if (state.seats[bySeat]!.eliminated) throw new Error("Eliminated seats can't challenge.");
-    // Resolve the challenge: does the active player actually hold the claim?
-    return resolveChallenge(state, bySeat, /*targetOfChallenge*/ 'active');
+    return resolveChallenge(state, bySeat, 'active');
   }
-  // awaitingBlockChallenge: challenger goes against the blocker.
   const blocker = p.blocker!;
   if (bySeat === blocker.by) throw new Error("You can't challenge your own block.");
   if (state.seats[bySeat]!.eliminated) throw new Error("Eliminated seats can't challenge.");
-  return resolveChallenge(state, bySeat, /*targetOfChallenge*/ 'blocker');
+  return resolveChallenge(state, bySeat, 'blocker');
 }
 
 function resolveChallenge(
@@ -686,40 +811,29 @@ function resolveChallenge(
   const claimerSeatIdx = against === 'active' ? p.by : p.blocker!.by;
   const claimer = state.seats[claimerSeatIdx]!;
   if (seatHas(claimer, claimedChar)) {
-    // Claim was honest. Challenger loses an influence; claimer reveals + redraws.
     appendLog(
       state,
       `${state.seats[challenger]!.name} challenged — ${claimer.name} reveals ${CHARACTERS[claimedChar].name}. Challenger loses an influence.`,
     );
-    // Swap the revealed-true card back into the deck; draw a new one.
     const idx = claimer.influences.findIndex((i) => !i.revealed && i.char === claimedChar);
     const revealedCard = claimer.influences[idx]!;
-    // Return to deck, shuffle, deal new.
     returnAndShuffle(state, [revealedCard.char]);
     const newCard = drawCard(state);
     revealedCard.char = newCard;
-    // Now the challenger loses an influence.
     if (livingInfluenceCount(state.seats[challenger]!) <= 1) {
       loseAnyInfluence(state.seats[challenger]!);
-      // Check elimination + win.
       checkWin(state);
       if (state.phase === 'gameOver') return;
-      // Challenger lost; the original action / block proceeds.
-      proceedAfterChallengeResolved(state, against, /*claimSuccess*/ true);
+      proceedAfterChallengeResolved(state, against, true);
       return;
     }
     p.loseInfluencePending = { seat: challenger, reason: 'failedChallenge' };
-    // We track WHO needs to lose an influence and WHICH stream to continue
-    // afterwards via a sentinel on the pending: the `passes` list will be
-    // cleared and the next phase chosen in the lose-influence resolver.
-    p.passes = []; // reset window passes
-    // Use a marker on pending to recall the resume target.
+    p.passes = [];
     (p as unknown as { resumeAfterLose: 'continueAction' | 'continueBlock' }).resumeAfterLose =
       against === 'active' ? 'continueAction' : 'continueBlock';
     state.phase = 'loseInfluence';
     return;
   }
-  // Bluff — claimer loses an influence; action fizzles.
   appendLog(
     state,
     `${state.seats[challenger]!.name} challenged — ${claimer.name} did NOT have ${CHARACTERS[claimedChar].name}. Claimer loses an influence.`,
@@ -728,7 +842,7 @@ function resolveChallenge(
     loseAnyInfluence(claimer);
     checkWin(state);
     if (state.phase === 'gameOver') return;
-    proceedAfterChallengeResolved(state, against, /*claimSuccess*/ false);
+    proceedAfterChallengeResolved(state, against, false);
     return;
   }
   p.loseInfluencePending = { seat: claimerSeatIdx, reason: 'lostBluff' };
@@ -738,7 +852,6 @@ function resolveChallenge(
   state.phase = 'loseInfluence';
 }
 
-// Called after the challenger's-loss / claimer's-loss has been picked.
 function proceedAfterChallengeResolved(
   state: CoupPrivateState,
   against: 'active' | 'blocker',
@@ -747,8 +860,6 @@ function proceedAfterChallengeResolved(
   const p = state.pending!;
   if (against === 'active') {
     if (claimSuccess) {
-      // Active claim was honest. Now if the action is blockable, open block
-      // window — otherwise resolve.
       if (isActionBlockable(state)) {
         state.phase = 'awaitingBlock';
         return;
@@ -756,19 +867,15 @@ function proceedAfterChallengeResolved(
       resolveEffect(state);
       return;
     }
-    // Active claim was a bluff. Action fizzles. End turn.
     appendLog(state, `${state.seats[p.by]!.name}'s action fizzles.`);
     endTurn(state);
     return;
   }
-  // against === 'blocker'
   if (claimSuccess) {
-    // Block stands. Original action fizzles.
     appendLog(state, `${state.seats[p.blocker!.by]!.name}'s block stands. Action fizzles.`);
     endTurn(state);
     return;
   }
-  // Block was a bluff. Original action resolves.
   appendLog(state, `Block failed. ${state.seats[p.by]!.name}'s action resolves.`);
   p.blocker = null;
   resolveEffect(state);
@@ -781,7 +888,6 @@ function handlePass(state: CoupPrivateState, bySeat: SeatIndex): void {
     if (bySeat === p.by) throw new Error("Can't pass your own action window.");
     if (!p.passes.includes(bySeat)) p.passes.push(bySeat);
     if (challengeWindowFinished(state, p.passes, [p.by])) {
-      // Window closed — move to block window if blockable, else resolve.
       if (isActionBlockable(state)) {
         p.passes = [];
         state.phase = 'awaitingBlock';
@@ -795,7 +901,6 @@ function handlePass(state: CoupPrivateState, bySeat: SeatIndex): void {
     if (bySeat === p.by) throw new Error("Can't pass your own action window.");
     if (!p.passes.includes(bySeat)) p.passes.push(bySeat);
     if (challengeWindowFinished(state, p.passes, [p.by])) {
-      // Nobody blocked. Resolve.
       resolveEffect(state);
     }
     return;
@@ -804,11 +909,16 @@ function handlePass(state: CoupPrivateState, bySeat: SeatIndex): void {
     if (bySeat === p.blocker!.by) throw new Error("Can't pass your own block window.");
     if (!p.passes.includes(bySeat)) p.passes.push(bySeat);
     if (challengeWindowFinished(state, p.passes, [p.blocker!.by])) {
-      // Block stands. Original action fizzles.
       appendLog(state, `Block by ${state.seats[p.blocker!.by]!.name} stands. Action fizzles.`);
       endTurn(state);
     }
     return;
+  }
+  if (state.phase === 'pileOnWindow') {
+    return passPileOn(state, bySeat);
+  }
+  if (state.phase === 'chipInWindow') {
+    return passChipIn(state, bySeat);
   }
   throw new Error(`Pass not valid in phase ${state.phase}`);
 }
@@ -822,11 +932,16 @@ function declareBlock(state: CoupPrivateState, bySeat: SeatIndex, character: Cou
   if (!validBlockers.includes(character)) {
     throw new Error(`${CHARACTERS[character].name} can't block this action.`);
   }
-  // Steal can only be blocked by the targeted seat (or the active player's
-  // target). Foreign Aid can be blocked by anyone.
+  // Steal can only be blocked by the targeted seat. Foreign Aid can be blocked
+  // by anyone. Assassinate / Soldier-class / Coup the rules vary: in Classic
+  // only the target blocks; in G54 a third party can block a Coup with a
+  // Lawyer/Judge claim ("lawyered up", "judge intercedes"). We keep target-
+  // only for steal+assassinate, but open Coup blocks to anyone (G54).
   if (
     p.kind === 'character' &&
-    (p.characterActionId === 'steal' || p.characterActionId === 'thiefSteal') &&
+    (p.characterActionId === 'steal' ||
+      p.characterActionId === 'thiefSteal' ||
+      p.characterActionId === 'customSteal') &&
     p.target !== bySeat
   ) {
     throw new Error('Only the target of the steal can block it.');
@@ -840,12 +955,9 @@ function declareBlock(state: CoupPrivateState, bySeat: SeatIndex, character: Cou
   state.phase = 'awaitingBlockChallenge';
 }
 
-// --- Reveal / lose / exchange -----------------------------------------------
+// --- Reveal / lose / exchange ----------------------------------------------
 
 function revealCard(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1): void {
-  // Used during challengeReveal — not currently a public phase; we resolve
-  // challenge eagerly in resolveChallenge. Left as a no-op for future
-  // refactors that split the reveal step out.
   void state;
   void bySeat;
   void cardIndex;
@@ -859,17 +971,26 @@ function pickLose(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1):
     throw new Error('Wrong seat for lose-influence.');
   }
   const seat = state.seats[bySeat]!;
-  if (!loseInfluencePick(seat, cardIndex)) {
+  const beforeRevealed = seat.influences[cardIndex]?.revealed ?? true;
+  const blessed = livingInfluenceCount(seat) === 1 && seat.tokens.reviveBlessed;
+  const flipped = loseInfluencePick(seat, cardIndex);
+  if (!flipped && !blessed) {
     throw new Error('Card already revealed.');
   }
-  appendLog(
-    state,
-    `${seat.name} lost ${CHARACTERS[seat.influences[cardIndex]!.char].name} (${p.loseInfluencePending.reason}).`,
-  );
+  if (blessed) {
+    appendLog(state, `${seat.name} was blessed — they keep their last card (revive token spent).`);
+  } else {
+    const cardCharIdx = seat.influences[cardIndex]?.char;
+    if (cardCharIdx && !beforeRevealed) {
+      appendLog(
+        state,
+        `${seat.name} lost ${CHARACTERS[cardCharIdx].name} (${p.loseInfluencePending.reason}).`,
+      );
+    }
+  }
   p.loseInfluencePending = null;
   checkWin(state);
   if ((state.phase as string) === 'gameOver') return;
-  // Resume the appropriate stream.
   const resume = (p as unknown as { resumeAfterLose?: string }).resumeAfterLose;
   delete (p as unknown as { resumeAfterLose?: string }).resumeAfterLose;
   if (resume === 'continueAction') {
@@ -886,7 +1007,6 @@ function pickLose(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1):
     return;
   }
   if (resume === 'continueBlock') {
-    // Block stands; original action fizzles.
     appendLog(state, `Block stands. ${state.seats[p.by]!.name}'s action fizzles.`);
     endTurn(state);
     return;
@@ -897,7 +1017,6 @@ function pickLose(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1):
     resolveEffect(state);
     return;
   }
-  // Default: this was a coup/assassinate-style lose. End the turn.
   endTurn(state);
 }
 
@@ -921,7 +1040,6 @@ function exchangeReturn(state: CoupPrivateState, bySeat: SeatIndex, keepIndices:
     .map((c, i) => ({ c, i }))
     .filter(({ i }) => !seen.has(i))
     .map(({ c }) => c);
-  // Replace the seat's unrevealed influences with the kept cards.
   const seat = state.seats[bySeat]!;
   let cursor = 0;
   for (const inf of seat.influences) {
@@ -939,6 +1057,160 @@ function ackPeek(state: CoupPrivateState, bySeat: SeatIndex): void {
   if (state.phase !== 'spyPeek') throw new Error(`Ack not valid in phase ${state.phase}`);
   const p = state.pending!;
   if (bySeat !== p.by) throw new Error('Only the peeker can ack.');
+  endTurn(state);
+}
+
+// --- New: pile-on (Capitalist / Financier) ----------------------------------
+
+function joinPileOn(state: CoupPrivateState, bySeat: SeatIndex): void {
+  if (state.phase !== 'pileOnWindow') throw new Error(`Join not valid in phase ${state.phase}`);
+  const p = state.pending!;
+  const pot = p.pileOnPot;
+  if (!pot) throw new Error('No pile-on pot.');
+  if (pot.contributors.includes(bySeat)) throw new Error('Already joined.');
+  if (state.seats[bySeat]!.eliminated) throw new Error('Eliminated seats can\'t join.');
+  if (bySeat === p.by) throw new Error('Active seat already in the pot.');
+  // Joiners implicitly claim the same character. We do NOT support per-joiner
+  // challenges in this milestone — when the original claim survives a
+  // challenge (or no challenge was raised), each joiner takes the coins.
+  pot.contributors.push(bySeat);
+  appendLog(state, `${state.seats[bySeat]!.name} piles on (+${pot.coinsEach}).`);
+}
+
+function passPileOn(state: CoupPrivateState, bySeat: SeatIndex): void {
+  const p = state.pending!;
+  const pot = p.pileOnPot;
+  if (!pot) throw new Error('No pile-on pot.');
+  if (!pot.closed.includes(bySeat)) pot.closed.push(bySeat);
+  // Anyone living except active that hasn't already joined or closed.
+  const livingOpponents = livingSeats(state).filter((s) => s !== p.by);
+  const finished = livingOpponents.every((s) => pot.contributors.includes(s) || pot.closed.includes(s));
+  if (finished) closePileOn(state, p.by);
+}
+
+function closePileOn(state: CoupPrivateState, bySeat: SeatIndex): void {
+  if (state.phase !== 'pileOnWindow') throw new Error(`Close not valid in phase ${state.phase}`);
+  const p = state.pending!;
+  if (bySeat !== p.by) throw new Error('Only the opener can close the pile-on.');
+  const pot = p.pileOnPot;
+  if (!pot) throw new Error('No pile-on pot.');
+  for (const s of pot.contributors) {
+    state.seats[s]!.coins += pot.coinsEach;
+  }
+  appendLog(
+    state,
+    `Pile-on resolved: ${pot.contributors.length} contributors each take +${pot.coinsEach}.`,
+  );
+  endTurn(state);
+}
+
+// --- New: chip-in (Protestor / Anarchist) -----------------------------------
+
+function chipIn(state: CoupPrivateState, bySeat: SeatIndex): void {
+  if (state.phase !== 'chipInWindow') throw new Error(`Chip not valid in phase ${state.phase}`);
+  const p = state.pending!;
+  const pot = p.chipInPot;
+  if (!pot) throw new Error('No chip-in pot.');
+  if (bySeat === p.by) throw new Error('Active seat doesn\'t chip in.');
+  if (state.seats[bySeat]!.eliminated) throw new Error('Eliminated seats can\'t chip.');
+  if (pot.contributors.includes(bySeat)) throw new Error('Already chipped.');
+  if (state.seats[bySeat]!.coins < 1) throw new Error('No coin to chip.');
+  state.seats[bySeat]!.coins -= 1;
+  pot.contributors.push(bySeat);
+  // Anarchy / Protestor: paid coins go to treasury (i.e. lost). This matches
+  // the "rally cost" framing in the house rules.
+  appendLog(state, `${state.seats[bySeat]!.name} chipped in.`);
+  if (pot.contributors.length >= pot.threshold) {
+    // Threshold met — target loses an influence.
+    const target = state.seats[p.target!]!;
+    appendLog(state, `Rally threshold reached — ${target.name} loses an influence.`);
+    if (livingInfluenceCount(target) <= 1) {
+      loseAnyInfluence(target);
+      checkWin(state);
+      if ((state.phase as string) !== 'gameOver') endTurn(state);
+      return;
+    }
+    p.loseInfluencePending = { seat: target.index, reason: 'chipIn' };
+    p.chipInPot = null;
+    state.phase = 'loseInfluence';
+  }
+}
+
+function passChipIn(state: CoupPrivateState, bySeat: SeatIndex): void {
+  const p = state.pending!;
+  const pot = p.chipInPot;
+  if (!pot) throw new Error('No chip-in pot.');
+  if (bySeat === p.by) throw new Error('Active seat doesn\'t pass chip-in.');
+  if (!pot.passes.includes(bySeat)) pot.passes.push(bySeat);
+  const livingOpponents = livingSeats(state).filter((s) => s !== p.by);
+  const finished = livingOpponents.every(
+    (s) => pot.contributors.includes(s) || pot.passes.includes(s),
+  );
+  if (finished) {
+    if (pot.contributors.length >= pot.threshold) {
+      const target = state.seats[p.target!]!;
+      if (livingInfluenceCount(target) <= 1) {
+        loseAnyInfluence(target);
+        checkWin(state);
+        if ((state.phase as string) !== 'gameOver') endTurn(state);
+        return;
+      }
+      p.loseInfluencePending = { seat: target.index, reason: 'chipIn' };
+      p.chipInPot = null;
+      state.phase = 'loseInfluence';
+      return;
+    }
+    appendLog(state, `Rally fizzles — only ${pot.contributors.length}/${pot.threshold} chipped in.`);
+    endTurn(state);
+  }
+}
+
+// --- New: forceSwap (Newscaster / Reporter / Producer / Lobbyist / Diplomat)
+
+function targetSwapPick(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1): void {
+  if (state.phase !== 'targetSwapPick') throw new Error(`Swap pick not valid in phase ${state.phase}`);
+  const p = state.pending!;
+  const swap = p.swapInProgress;
+  if (!swap) throw new Error('No swap in progress.');
+  if (bySeat !== swap.target) throw new Error('Only the swap target may pick.');
+  const t = state.seats[swap.target]!;
+  const inf = t.influences[cardIndex];
+  if (!inf || inf.revealed) throw new Error('Pick an unrevealed card.');
+  const returned = inf.char;
+  inf.char = swap.drawnCard;
+  returnAndShuffle(state, [returned]);
+  // Record the swap result as a private peek for the active seat so they can
+  // see what they got.
+  state.privatePeeks[p.by]!.push({
+    byActionId: 'inquisitorPeek',
+    target: swap.target,
+    card: swap.drawnCard,
+    cardIndex: cardIndex,
+  });
+  appendLog(state, `${state.seats[swap.target]!.name} swapped a card with the deck.`);
+  p.swapInProgress = null;
+  endTurn(state);
+}
+
+// --- New: sellInfluence (Arms Dealer) ---------------------------------------
+
+function sellInfluence(state: CoupPrivateState, bySeat: SeatIndex, cardIndex: 0 | 1): void {
+  if (state.phase !== 'sellInfluencePick') throw new Error(`Sell not valid in phase ${state.phase}`);
+  const p = state.pending!;
+  if (bySeat !== p.by) throw new Error('Only the Arms Dealer may sell.');
+  const seat = state.seats[bySeat]!;
+  const inf = seat.influences[cardIndex];
+  if (!inf || inf.revealed) throw new Error('Pick a face-down card.');
+  if (livingInfluenceCount(seat) <= 1) {
+    throw new Error("Can't sell your last influence.");
+  }
+  inf.revealed = true;
+  seat.coins += 4;
+  seat.tokens.weapons = Math.min(3, seat.tokens.weapons + 1);
+  appendLog(
+    state,
+    `${seat.name} (Arms Dealer) sold ${CHARACTERS[inf.char].name} for 4 coins + 1 weapon (now ${seat.tokens.weapons}).`,
+  );
   endTurn(state);
 }
 

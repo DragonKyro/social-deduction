@@ -1,16 +1,30 @@
 import { useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
+import { useNetworkStore } from '@/store/networkStore';
 import { coupModule } from '../module';
 import type { CoupOptions } from '../module';
-import { CHARACTERS, CLASSIC_FIVE, G54_BASE_25, G54_ANARCHY_6 } from '../characters';
+import {
+  CHARACTERS,
+  CLASSIC_FIVE,
+  G54_BASE_25,
+  G54_ANARCHY_6,
+  G54_BALANCED_DEFAULT,
+  G54_ANARCHY_BALANCED_DEFAULT,
+  categoryHistogram,
+} from '../characters';
 import type { CoupCharacter, CoupRuleset } from '../state';
-import { validateCharacterSet } from '../setup';
+import { validateCharacterSetFull, requiredCharacterCount } from '../setup';
 import { CharacterArt, CategoryBadge } from './CharacterArt';
 import styles from './CoupSetup.module.css';
 
 // Local-host setup screen for Coup. The host picks a ruleset preset (classic
 // vs G54 vs G54+Anarchy), edits each player name, then toggles which
-// characters are in this match's deck. Default is the 5 classic characters.
+// characters are in this match's deck.
+//
+// Canonical G54 rules: exactly one character per category, total = 5 (Classic
+// or G54) or 6 (G54+Anarchy). We enforce the total strictly, but allow the
+// host to drift off one-per-category — a warning chip surfaces so they know
+// the game may feel uneven.
 
 interface Props {
   onBack: () => void;
@@ -43,16 +57,24 @@ export function CoupSetup({ onBack }: Props) {
   const [ruleset, setRuleset] = useState<CoupRuleset>('classic');
   const [anarchyOn, setAnarchyOn] = useState(false);
   const [pack, setPack] = useState<PackTab>('classic');
-  // The set of characters that will be in this match's deck.
   const [selected, setSelected] = useState<CoupCharacter[]>(() => CLASSIC_FIVE.slice());
+  const [online, setOnline] = useState(false);
+  const [roomCode, setRoomCode] = useState('');
 
-  const error = useMemo(() => validateCharacterSet(selected), [selected]);
+  const validation = useMemo(
+    () => validateCharacterSetFull(selected, ruleset, anarchyOn),
+    [selected, ruleset, anarchyOn],
+  );
+  const required = requiredCharacterCount(ruleset, anarchyOn);
+  const hist = useMemo(() => categoryHistogram(selected), [selected]);
 
   const toggle = (c: CoupCharacter) => {
-    if (!CHARACTERS[c].implemented) return; // locked out
-    setSelected((cur) =>
-      cur.includes(c) ? cur.filter((x) => x !== c) : cur.length >= 8 ? cur : [...cur, c],
-    );
+    if (!CHARACTERS[c].implemented) return;
+    setSelected((cur) => {
+      if (cur.includes(c)) return cur.filter((x) => x !== c);
+      if (cur.length >= required) return cur; // strict cap
+      return [...cur, c];
+    });
   };
 
   const applyPreset = (preset: 'classic' | 'g54' | 'g54+anarchy') => {
@@ -64,28 +86,37 @@ export function CoupSetup({ onBack }: Props) {
     } else if (preset === 'g54') {
       setRuleset('g54');
       setAnarchyOn(false);
-      // Seed with a playable starter from the G54 pool.
-      setSelected(['banker', 'taxCollector', 'soldier', 'thief', 'inquisitor']);
+      setSelected(G54_BALANCED_DEFAULT.slice());
       setPack('g54');
     } else {
       setRuleset('g54');
       setAnarchyOn(true);
-      setSelected(['banker', 'mercenary', 'thief', 'spy', 'plantationOwner']);
+      setSelected(G54_ANARCHY_BALANCED_DEFAULT.slice());
       setPack('anarchy');
     }
   };
 
   const startGame = () => {
-    if (error) return;
+    if (validation.error) return;
+    const playerNames = Array.from({ length: playerCount }, (_, i) =>
+      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
+    );
     const opts: CoupOptions = {
-      players: Array.from({ length: playerCount }, (_, i) => ({
-        name: (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
-        isAI: false,
-      })),
+      players: playerNames.map((name) => ({ name, isAI: false })),
       ruleset,
       expansions: anarchyOn ? ['anarchy'] : [],
       characters: selected,
     };
+    if (online) {
+      const code = roomCode.trim();
+      if (!code) return;
+      useNetworkStore.getState().hostRoom(code, 'coup', {
+        seatCount: playerCount,
+        names: playerNames,
+        options: opts as unknown as Record<string, unknown>,
+      });
+      return;
+    }
     const config = {
       gameId: 'coup' as const,
       seats: [],
@@ -97,6 +128,13 @@ export function CoupSetup({ onBack }: Props) {
   };
 
   const visibleChars = PACK_CHARS[pack];
+  const baseCats: Array<{ key: string; label: string }> = [
+    { key: 'finance', label: 'Finance' },
+    { key: 'communications', label: 'Communications' },
+    { key: 'force', label: 'Force' },
+    { key: 'specialInterest', label: 'Special Interest' },
+    { key: 'movement', label: 'Movement' },
+  ];
 
   return (
     <div className={styles.root}>
@@ -129,7 +167,7 @@ export function CoupSetup({ onBack }: Props) {
           <span style={{ marginLeft: 12, color: '#94a3b8', fontSize: 12 }}>
             {ruleset === 'classic'
               ? 'Cross-blocking. Captain + Ambassador both block steal.'
-              : 'Same-role only blocking. Captain steal blocked only by Captain.'}
+              : 'Same-role only blocking. Canonical G54 = one character per category.'}
           </span>
         </div>
       </section>
@@ -168,11 +206,15 @@ export function CoupSetup({ onBack }: Props) {
       </section>
 
       <section className={styles.panel}>
-        <h3 className={styles.h3}>Characters in this match</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <h3 className={styles.h3} style={{ margin: 0 }}>Characters in this match</h3>
+          <div style={{ fontSize: 14, color: validation.error ? '#f87171' : '#cbd5e1' }}>
+            <strong>{selected.length}</strong> / {required}
+          </div>
+        </div>
         <p className={styles.subtitle}>
-          Pick 5-8 characters. Three copies of each go into the deck. Default is the five
-          Classic characters. Characters marked &quot;coming soon&quot; are described for
-          reference but can&apos;t be selected yet.
+          Canonical G54 plays with one character from each category (5 total; 6 with Anarchy). You
+          can drift off-balance — we&apos;ll just warn you.
         </p>
         <div className={styles.packTabs}>
           {(['classic', 'g54', 'anarchy'] as PackTab[]).map((t) => (
@@ -196,8 +238,61 @@ export function CoupSetup({ onBack }: Props) {
           ))}
         </div>
 
+        {ruleset === 'g54' && (
+          <div className={styles.poolPreview} style={{ marginTop: 12 }}>
+            <strong>Category balance</strong>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+              {baseCats.map((cat) => {
+                const n = hist[cat.key as keyof typeof hist] ?? 0;
+                const ok = n === 1;
+                return (
+                  <span
+                    key={cat.key}
+                    style={{
+                      padding: '2px 8px',
+                      border: `1px solid ${ok ? '#22c55e' : '#fbbf24'}`,
+                      color: ok ? '#bbf7d0' : '#fde68a',
+                      borderRadius: 4,
+                      fontSize: 11,
+                    }}
+                  >
+                    {cat.label}: {n}
+                  </span>
+                );
+              })}
+              {anarchyOn && (
+                <span
+                  style={{
+                    padding: '2px 8px',
+                    border: `1px solid ${hist.anarchy === 1 ? '#22c55e' : '#fbbf24'}`,
+                    color: hist.anarchy === 1 ? '#bbf7d0' : '#fde68a',
+                    borderRadius: 4,
+                    fontSize: 11,
+                  }}
+                >
+                  Anarchy: {hist.anarchy}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className={styles.poolPreview}>
-          {error && <div className={styles.poolError}>⚠ {error}</div>}
+          {validation.error && <div className={styles.poolError}>⚠ {validation.error}</div>}
+          {!validation.error && validation.warning && (
+            <div
+              style={{
+                background: '#3f2c0a',
+                border: '1px solid #b45309',
+                color: '#fde68a',
+                padding: '6px 10px',
+                borderRadius: 4,
+                marginBottom: 8,
+              }}
+            >
+              ⚠ {validation.warning}
+            </div>
+          )}
           <strong>Selected ({selected.length}):</strong>
           <div className={styles.poolList}>
             {selected.length === 0 && <span style={{ color: '#94a3b8' }}>None</span>}
@@ -214,14 +309,38 @@ export function CoupSetup({ onBack }: Props) {
         </div>
       </section>
 
+      <section className={styles.panel}>
+        <h3 className={styles.h3}>Multiplayer</h3>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={online}
+            onChange={(e) => setOnline(e.target.checked)}
+          />
+          <span>Host an online room (other players join with the room code)</span>
+        </label>
+        {online && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
+            <input
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value)}
+              placeholder="any string (share with friends)"
+              maxLength={32}
+              style={{ padding: 6, minWidth: 240 }}
+            />
+          </div>
+        )}
+      </section>
+
       <footer className={styles.footer}>
         <button
           className={styles.startButton}
-          disabled={!!error}
+          disabled={!!validation.error || (online && !roomCode.trim())}
           onClick={startGame}
-          title={error ?? ''}
+          title={validation.error ?? validation.warning ?? ''}
         >
-          Start game →
+          {online ? 'Open lobby →' : 'Start game →'}
         </button>
       </footer>
     </div>

@@ -10,7 +10,7 @@ A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-pee
 
 ## Status
 
-Three games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), and **Coup** (Classic base + a curated subset of the G54 and Anarchy character pools, with a unified character picker). Secret Hitler and the remaining Avalon / Coup modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
+Three games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), and **Coup** (Classic + full G54 + Anarchy character pools — all 37 characters playable, with one-per-category balance enforcement). Secret Hitler and the remaining Avalon modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
 
 ## Quickstart
 
@@ -59,11 +59,16 @@ Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a 
 7. ✅ Phase 4 — Avalon base box
 8. Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots)
 9. ✅ Phase 5 — Coup classic base game
-10. ✅ Phase 5b/c — Coup G54 + Anarchy (unified picker; ~9 characters implemented, the rest documented but greyed out)
+10. ✅ Phase 5b/c — Coup G54 + Anarchy (all 37 characters playable; one-per-category balance enforced with non-blocking off-balance warning)
 11. Phase 6 — Online multiplayer wiring
 12. Phase 7 — AI for all four games
 13. Phase 8 — In-game chat + phase-gated visibility
 14. Phase 9 — Replay
+
+**Potential future games:**
+- Cross Clues (cooperative word-association)
+- Codenames (party word-association, 2-team)
+- Love Letter (16-card micro deduction)
 
 See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 

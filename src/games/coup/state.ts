@@ -114,6 +114,15 @@ export type CoupPhase =
   | 'loseInfluence'
   | 'exchangePick'
   | 'spyPeek'
+  // Capitalist / Financier pile-on income — opponents may join the pot in turn.
+  | 'pileOnWindow'
+  // Protestor / Anarchist group rally — opponents may chip 1 coin each.
+  | 'chipInWindow'
+  // Newscaster / Reporter / Producer / Lobbyist / Diplomat — target picks
+  // which of their cards to swap with the drawn card.
+  | 'targetSwapPick'
+  // Arms Dealer — active seat flips one of their own cards for coins/tokens.
+  | 'sellInfluencePick'
   | 'turnEnd'
   | 'gameOver';
 
@@ -130,11 +139,22 @@ export interface CoupSeatState {
   influences: CoupInfluence[];
   coins: number;
   eliminated: boolean;
-  // G54 tokens — scaffolded; characters that grant them aren't wired yet, so
-  // these stay default.
+  // G54 / Anarchy tokens. Token decay happens in endTurn:
+  //   - peacekeeping: granted by Peacekeeper, expires when its holder's NEXT
+  //     turn starts (so the holder is untargetable until they next act).
+  //   - treaty: set to the partner's SeatIndex by Foreign Consular. While
+  //     non-null, the two paired seats can't target each other. Cleared
+  //     when the granter's next turn ends.
+  //   - weapons: granted by Arms Dealer (sellInfluence). Each weapon token
+  //     can be spent to ignore a challenge OR force-eliminate at a discount;
+  //     we currently honor it as a steal-bonus (house rule, see characters.ts).
+  //   - reviveBlessed: granted by Priest. If the holder is about to be
+  //     eliminated, the token is spent and they keep one influence (host rule).
   tokens: {
     peacekeeping: boolean;
     treaty: SeatIndex | null;
+    weapons: number;
+    reviveBlessed: boolean;
   };
 }
 
@@ -169,11 +189,45 @@ export interface CoupPendingAction {
   inquisitorBranch: 'exchange' | 'peek' | null;
   inquisitorPeekCardIndex: 0 | 1 | null;
   spyPeekCardIndex: 0 | 1 | null;
+  // Foreign Consular treaty pair — two seats picked at declare time. After the
+  // claim is honest, both seats' tokens.treaty get set to the other.
+  treatyPair: [SeatIndex, SeatIndex] | null;
+  // Pile-on pot (Capitalist / Financier). `contributors` includes the original
+  // claimer; `coinsEach` is what each contributor will receive when resolved.
+  pileOnPot: {
+    contributors: SeatIndex[];
+    coinsEach: number;
+    closed: SeatIndex[];
+  } | null;
+  // Group rally pot (Protestor / Anarchist). Each contributor pays 1 coin;
+  // when contributors meets the threshold, target loses an influence.
+  chipInPot: {
+    contributors: SeatIndex[];
+    threshold: number;
+    passes: SeatIndex[];
+  } | null;
+  // Force-swap (Newscaster / Reporter / Producer / Lobbyist / Diplomat). The
+  // drawn card is shown to the active seat as a peek; the target then picks
+  // one of their face-down cards to swap with it.
+  swapInProgress: {
+    target: SeatIndex;
+    drawnCard: CoupCharacter;
+  } | null;
   // After a challenge resolves, we remember who needs to lose an influence
   // and why (for the UI: "you failed your challenge of Duke").
   loseInfluencePending: {
     seat: SeatIndex;
-    reason: 'failedChallenge' | 'lostBluff' | 'assassinate' | 'coup' | 'mercenary' | 'soldier' | 'thiefPenalty';
+    reason:
+      | 'failedChallenge'
+      | 'lostBluff'
+      | 'assassinate'
+      | 'coup'
+      | 'mercenary'
+      | 'soldier'
+      | 'guerrilla'
+      | 'paramilitary'
+      | 'thiefPenalty'
+      | 'chipIn';
   } | null;
 }
 
@@ -237,6 +291,8 @@ export interface CoupPublicSeatState {
   tokens: {
     peacekeeping: boolean;
     treaty: SeatIndex | null;
+    weapons: number;
+    reviveBlessed: boolean;
   };
 }
 
@@ -253,6 +309,21 @@ export interface CoupPublicPendingAction {
   // must lose an influence" while we wait on the loseInfluence pick.
   loseInfluencePending: { seat: SeatIndex; reason: string } | null;
   mercenaryPartner: SeatIndex | null;
+  treatyPair: [SeatIndex, SeatIndex] | null;
+  pileOnPot: {
+    contributors: SeatIndex[];
+    coinsEach: number;
+    closed: SeatIndex[];
+  } | null;
+  chipInPot: {
+    contributors: SeatIndex[];
+    threshold: number;
+    passes: SeatIndex[];
+  } | null;
+  // We surface "a swap is in flight on target X" publicly so the UI can show
+  // the right banner. The drawn card itself stays in private state — the
+  // target shouldn't know what they're choosing between.
+  swapTarget: SeatIndex | null;
 }
 
 export interface CoupPublicState {

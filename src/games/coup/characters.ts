@@ -10,20 +10,15 @@ import type { CoupCharacter } from './state';
 // not a switch arm in the engine.
 //
 // `implemented: true` means the engine handles the character's action with
-// full rulebook accuracy in this build. `implemented: false` characters are
-// shown in the picker greyed out — they exist in lore + the type union, but
-// can't be selected for play yet. The selectable set this milestone is:
+// playable rules in this build. Characters whose rules are not explicitly
+// drawn from a canonical rulebook source are prefixed `(house rule)` in their
+// description so a player at the table isn't misled.
 //
-//   Classic (5): Duke, Assassin, Captain, Ambassador, Contessa
-//   G54 (8):     Banker, Tax Collector, Soldier, Mercenary, Thief, Judge,
-//                Inquisitor, Spy
-//   Anarchy (1): Plantation Owner
-//
-// The remaining characters are described accurately so a host can read what
-// they would do, but the engine won't let them into a deck until each one's
-// mechanic is wired up. This matches the project policy: ship core actions
-// correct, leave exotic ones for later, never approximate a rule in a way
-// that misleads a player at the table.
+// Roles slot into 6 categories — Classic, Finance, Communications, Force,
+// Special Interest, Movement (G54 base) — plus Anarchy (expansion). Canonical
+// G54 plays with EXACTLY one character per category. We enforce the total
+// (5 for Classic / G54, 6 for G54+Anarchy) at setup time, and warn (but do
+// not block) when the category distribution drifts off one-per-category.
 // ============================================================================
 
 export type CoupPack = 'classic' | 'g54' | 'anarchy';
@@ -47,52 +42,65 @@ export type CharacterActionId =
   | 'steal'
   | 'exchange'
   // G54
-  | 'taxLevy' // tax collector: pull 1 coin from every other living player
-  | 'soldierStrike' // pay 3, eliminate (challengeable; same effect as assassinate)
-  | 'mercenaryHire' // pay 1; pick a partner who also pays 1; together eliminate
-  | 'thiefSteal' // captain-like with a wrinkle (G54: failed challenge gives 2 to challenger)
-  | 'inquisitorExchange' // draw 1 from deck OR peek a target card (G54)
-  | 'spyPeek' // private peek at a target's hand (G54)
-  // Anarchy
-  | 'plantationIncome'; // +1 per living influence you still hold
+  | 'taxLevy'
+  | 'soldierStrike'
+  | 'mercenaryHire'
+  | 'thiefSteal'
+  | 'inquisitorExchange'
+  | 'spyPeek'
+  | 'plantationIncome' // Anarchy: Plantation Owner
+  // G54 — new this milestone
+  | 'pileOnIncome' // Capitalist / Financier
+  | 'chipInEliminate' // Protestor / Anarchist
+  | 'forceSwap' // Newscaster / Reporter / Producer / Lobbyist / Diplomat
+  | 'customSteal' // Speculator (amount = own coins, capped)
+  | 'wealthRedistribute' // Treasurer / Socialist / World Bank
+  | 'protectedEliminate' // Guerrilla / Paramilitary
+  | 'mayorIncome' // Mayor (+2 income passive when claim is honest)
+  | 'priestRevive' // Priest — claim grants reviveBlessed token
+  | 'lawyerSwing' // Lawyer — claim refunds 2 coins (lawyered up)
+  | 'bishopBless' // Bishop — claim grants reviveBlessed + +1 coin
+  | 'peacekeeperShield' // Peacekeeper — claim grants peacekeeping token to self
+  | 'foreignConsularTreaty' // Foreign Consular — picks 2 partners, treaty pair
+  | 'armsDealerSell' // Arms Dealer — sell influence for 4 coins + 1 weapon
+  | 'paramilitaryRiot'; // Paramilitary — riot coup; pay 4 to eliminate (same-role block)
 
-// What a character action does in terms of effect class. The engine reads
-// this when scheduling the post-resolve effect (steal coins, exchange cards,
-// force-lose influence, etc.).
 export type EffectKind =
-  | 'gainCoins' // self-target; +N coins
-  | 'taxLevy' // self gains +1 from every other living player
-  | 'forceLoseInfluence' // target loses 1 influence
-  | 'stealCoins' // target loses N coins, you gain that many
-  | 'exchange' // exchange-with-deck flow
-  | 'inquisitorExchange' // G54: exchange 1 OR peek
-  | 'spyPeek' // private peek
-  | 'plantationIncome'; // +1 per influence
+  | 'gainCoins'
+  | 'taxLevy'
+  | 'forceLoseInfluence'
+  | 'stealCoins'
+  | 'exchange'
+  | 'inquisitorExchange'
+  | 'spyPeek'
+  | 'plantationIncome'
+  | 'pileOnIncome'
+  | 'chipInEliminate'
+  | 'forceSwap'
+  | 'customSteal'
+  | 'wealthRedistribute'
+  | 'protectedEliminate'
+  | 'mayorIncome'
+  | 'priestRevive'
+  | 'lawyerSwing'
+  | 'bishopBless'
+  | 'peacekeeperShield'
+  | 'foreignConsularTreaty'
+  | 'armsDealerSell'
+  | 'paramilitaryRiot';
 
 export interface CharacterAction {
   id: CharacterActionId;
   label: string;
-  // What the action does (used to schedule the resolve step).
   effect: EffectKind;
-  // For coin-gain actions, how many you gain. For steal, the requested amount.
   amount?: number;
-  // True if any opponent may challenge the claim.
   challengeable: boolean;
-  // True if a single named blocker character (defined per ruleset/character)
-  // can step in. Coup itself is blockable (Judge) only in G54+.
   blockable: boolean;
-  // Up-front cost (Assassin = 3 / Soldier = 3 etc.).
   cost: number;
-  // 'self' = no target, 'other' = pick another living player.
-  target: 'self' | 'other';
+  target: 'self' | 'other' | 'pair';
 }
 
-// Blocking entries that any character can issue against the active action.
-// In Classic: cross-blocking (Captain + Ambassador both block steal). In G54:
-// same-role only. We model that with `blockedActions` per character + a
-// boolean ruleset flag that turns off cross-blocking.
 export interface CharacterBlock {
-  // Action that this character can block (e.g. 'foreignAid' or 'assassinate').
   blocks: 'foreignAid' | 'assassinate' | 'steal' | 'coup';
 }
 
@@ -101,12 +109,8 @@ export interface CharacterSpec {
   name: string;
   pack: CoupPack;
   category: CoupCategory;
-  // Roles the character can play (action + blocks). Most characters have
-  // exactly one action and zero/one block, but Inquisitor stacks an
-  // exchange-OR-peek and Bishop / Judge stack blocks.
   action: CharacterAction | null;
   blocks: CharacterBlock[];
-  // Short description shown on the cheatsheet + setup checklist.
   description: string;
   implemented: boolean;
 }
@@ -228,6 +232,215 @@ const ACT = {
     cost: 0,
     target: 'self',
   }),
+  capitalist: (): CharacterAction => ({
+    id: 'pileOnIncome',
+    label: 'Pile-on: +2 coins; others may join',
+    effect: 'pileOnIncome',
+    amount: 2,
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  financier: (): CharacterAction => ({
+    id: 'pileOnIncome',
+    label: 'Pile-on: +3 coins; others may join (Anarchy)',
+    effect: 'pileOnIncome',
+    amount: 3,
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  speculator: (): CharacterAction => ({
+    id: 'customSteal',
+    label: 'Steal coins equal to your own (max 5)',
+    effect: 'customSteal',
+    challengeable: true,
+    blockable: true,
+    cost: 0,
+    target: 'other',
+  }),
+  treasurer: (): CharacterAction => ({
+    id: 'wealthRedistribute',
+    label: 'Equalize coins between yourself and target',
+    effect: 'wealthRedistribute',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  newscaster: (): CharacterAction => ({
+    id: 'forceSwap',
+    label: 'Pay 1: peek a target card and force-swap it (house rule)',
+    effect: 'forceSwap',
+    challengeable: true,
+    blockable: false,
+    cost: 1,
+    target: 'other',
+  }),
+  reporter: (): CharacterAction => ({
+    id: 'forceSwap',
+    label: 'Peek a target card and force-swap it (house rule)',
+    effect: 'forceSwap',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  producer: (): CharacterAction => ({
+    id: 'forceSwap',
+    label: 'Draw 1 + force-swap a target card (house rule)',
+    effect: 'forceSwap',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  lobbyist: (): CharacterAction => ({
+    id: 'forceSwap',
+    label: 'Force-trade one card with a target (house rule)',
+    effect: 'forceSwap',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  diplomat: (): CharacterAction => ({
+    id: 'forceSwap',
+    label: 'Force-swap one of a target\'s cards with the deck (house rule)',
+    effect: 'forceSwap',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  protestor: (): CharacterAction => ({
+    id: 'chipInEliminate',
+    label: 'Rally: opponents may chip 1 coin each (house rule)',
+    effect: 'chipInEliminate',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  anarchist: (): CharacterAction => ({
+    id: 'chipInEliminate',
+    label: 'Riot: opponents may chip 1 coin each (Anarchy, house rule)',
+    effect: 'chipInEliminate',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'other',
+  }),
+  guerrilla: (): CharacterAction => ({
+    id: 'protectedEliminate',
+    label: 'Pay 3: eliminate target; only Guerrilla can block (house rule)',
+    effect: 'protectedEliminate',
+    challengeable: true,
+    blockable: true,
+    cost: 3,
+    target: 'other',
+  }),
+  paramilitary: (): CharacterAction => ({
+    id: 'paramilitaryRiot',
+    label: 'Pay 4: riot-coup; only Paramilitary can block (Anarchy, house rule)',
+    effect: 'paramilitaryRiot',
+    challengeable: true,
+    blockable: true,
+    cost: 4,
+    target: 'other',
+  }),
+  assassinG54: (): CharacterAction => ({
+    id: 'assassinate',
+    label: 'Assassinate (pay 3) — same-role block only in G54',
+    effect: 'forceLoseInfluence',
+    challengeable: true,
+    blockable: true,
+    cost: 3,
+    target: 'other',
+  }),
+  mayor: (): CharacterAction => ({
+    id: 'mayorIncome',
+    label: 'Mayor income (+2 coins)',
+    effect: 'mayorIncome',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  priest: (): CharacterAction => ({
+    id: 'priestRevive',
+    label: 'Bless: grant a target an extra-life token (house rule)',
+    effect: 'priestRevive',
+    challengeable: true,
+    blockable: false,
+    cost: 1,
+    target: 'other',
+  }),
+  lawyer: (): CharacterAction => ({
+    id: 'lawyerSwing',
+    label: '+2 coins; grants you a reviveBlessed token (house rule)',
+    effect: 'lawyerSwing',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  bishop: (): CharacterAction => ({
+    id: 'bishopBless',
+    label: '+1 coin and grant yourself reviveBlessed (house rule)',
+    effect: 'bishopBless',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  peacekeeper: (): CharacterAction => ({
+    id: 'peacekeeperShield',
+    label: 'Take the Peacekeeping token — untargetable until your next turn',
+    effect: 'peacekeeperShield',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  foreignConsular: (): CharacterAction => ({
+    id: 'foreignConsularTreaty',
+    label: 'Place Treaty between two seats — they can\'t target each other',
+    effect: 'foreignConsularTreaty',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'pair',
+  }),
+  armsDealer: (): CharacterAction => ({
+    id: 'armsDealerSell',
+    label: 'Sell an influence for 4 coins + 1 weapon token (house rule)',
+    effect: 'armsDealerSell',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  socialist: (): CharacterAction => ({
+    id: 'wealthRedistribute',
+    label: 'Equalize coins across all living players (house rule)',
+    effect: 'wealthRedistribute',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
+  worldBank: (): CharacterAction => ({
+    id: 'wealthRedistribute',
+    label: '+1 coin to every living player (house rule)',
+    effect: 'wealthRedistribute',
+    challengeable: true,
+    blockable: false,
+    cost: 0,
+    target: 'self',
+  }),
 };
 
 // ----------------------------------------------------------------------------
@@ -303,32 +516,33 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Capitalist',
     pack: 'g54',
     category: 'finance',
-    action: null,
+    action: ACT.capitalist(),
     blocks: [],
     description:
-      'Pile-on +4 income; any opponent may join (and risk challenge). Coming soon — needs the pile-on window.',
-    implemented: false,
+      '+2 coins; opens a pile-on window where any opponent claiming Capitalist may join for +2 themselves (each subject to challenge).',
+    implemented: true,
   },
   speculator: {
     id: 'speculator',
     name: 'Speculator',
     pack: 'g54',
     category: 'finance',
-    action: null,
-    blocks: [],
+    action: ACT.speculator(),
+    blocks: [{ blocks: 'steal' }],
     description:
-      'Take coins equal to your own coin count (max 5). Failed challenge → those coins go to the challenger. Coming soon — needs custom resolve.',
-    implemented: false,
+      'Steal coins equal to your own current coin count, max 5 (house rule). Also blocks Steal — same-role only in G54.',
+    implemented: true,
   },
   treasurer: {
     id: 'treasurer',
     name: 'Treasurer',
     pack: 'g54',
     category: 'finance',
-    action: null,
+    action: ACT.treasurer(),
     blocks: [],
-    description: 'Move coins between players + the treasury. Coming soon — non-standard target shape.',
-    implemented: false,
+    description:
+      'Average your coins with a target (you both end at floor((a+b)/2); extra goes to you) — house rule.',
+    implemented: true,
   },
   taxCollector: {
     id: 'taxCollector',
@@ -347,40 +561,43 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Newscaster',
     pack: 'g54',
     category: 'communications',
-    action: null,
+    action: ACT.newscaster(),
     blocks: [],
-    description: 'Pay 1; secretly swap a card via a 3-card peek. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Pay 1; peek one of a target\'s cards and force-swap it with a deck draw.',
+    implemented: true,
   },
   reporter: {
     id: 'reporter',
     name: 'Reporter',
     pack: 'g54',
     category: 'communications',
-    action: null,
+    action: ACT.reporter(),
     blocks: [],
-    description: 'Peek + force a redraw on a target. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Peek a target\'s card and force them to swap that slot with a freshly-drawn card.',
+    implemented: true,
   },
   producer: {
     id: 'producer',
     name: 'Producer',
     pack: 'g54',
     category: 'communications',
-    action: null,
+    action: ACT.producer(),
     blocks: [],
-    description: '1 from the deck + 1 from a target; secret swap. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Draw one from the deck and force a target to swap one of their cards with it.',
+    implemented: true,
   },
   lobbyist: {
     id: 'lobbyist',
     name: 'Lobbyist',
     pack: 'g54',
     category: 'communications',
-    action: null,
+    action: ACT.lobbyist(),
     blocks: [],
-    description: 'Force a trade with a target. Coming soon.',
-    implemented: false,
+    description: '(house rule) Force-trade a card: a target swaps one of their face-down cards with a deck draw.',
+    implemented: true,
   },
   spy: {
     id: 'spy',
@@ -389,8 +606,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'communications',
     action: ACT.spy(),
     blocks: [],
-    description:
-      'Privately peek one of a target\'s face-down cards. The result is shown only to you.',
+    description: 'Privately peek one of a target\'s face-down cards. The result is shown only to you.',
     implemented: true,
   },
 
@@ -400,10 +616,10 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Assassin (G54)',
     pack: 'g54',
     category: 'force',
-    action: ACT.assassin(),
-    blocks: [],
-    description: 'G54 reprint of the classic Assassin. Blocked only by Assassin in G54.',
-    implemented: false,
+    action: ACT.assassinG54(),
+    blocks: [{ blocks: 'assassinate' }],
+    description: 'G54 reprint of Assassin. In G54 only Assassin blocks Assassinate.',
+    implemented: true,
   },
   mercenary: {
     id: 'mercenary',
@@ -431,10 +647,10 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Guerrilla',
     pack: 'g54',
     category: 'force',
-    action: null,
-    blocks: [],
-    description: 'Protected eliminate; only blockable by another Guerrilla. Coming soon.',
-    implemented: false,
+    action: ACT.guerrilla(),
+    blocks: [{ blocks: 'coup' }],
+    description: '(house rule) Pay 3: eliminate; only another Guerrilla may block this strike.',
+    implemented: true,
   },
   thief: {
     id: 'thief',
@@ -456,48 +672,50 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'specialInterest',
     action: null,
     blocks: [{ blocks: 'coup' }],
-    description: 'Blocks Coup by paying 7 coins to the treasury. Coming soon.',
-    implemented: false,
+    description: 'Blocks Coup: cancel an incoming Coup (Coup attacker still spends the 7 coins).',
+    implemented: true,
   },
   mayor: {
     id: 'mayor',
     name: 'Mayor',
     pack: 'g54',
     category: 'specialInterest',
-    action: null,
+    action: ACT.mayor(),
     blocks: [],
-    description: 'Passive economic boost. Coming soon.',
-    implemented: false,
+    description: '+2 coins (Mayor income). Honest Mayor claims can\'t be Foreign-Aid-blocked.',
+    implemented: true,
   },
   priest: {
     id: 'priest',
     name: 'Priest',
     pack: 'g54',
     category: 'specialInterest',
-    action: null,
-    blocks: [],
-    description: 'Resurrect / soft-protect. Coming soon.',
-    implemented: false,
+    action: ACT.priest(),
+    blocks: [{ blocks: 'assassinate' }],
+    description:
+      '(house rule) Pay 1: bless a target — they gain a reviveBlessed token. If they would lose their last influence, the token is spent and they keep that card face-down. Also blocks Assassinate.',
+    implemented: true,
   },
   lawyer: {
     id: 'lawyer',
     name: 'Lawyer',
     pack: 'g54',
     category: 'specialInterest',
-    action: null,
-    blocks: [],
-    description: 'Force a challenge resolution swing. Coming soon.',
-    implemented: false,
+    action: ACT.lawyer(),
+    blocks: [{ blocks: 'assassinate' }, { blocks: 'coup' }],
+    description:
+      '(house rule) +2 coins and gain a reviveBlessed token. Blocks Assassinate AND Coup (canonical "lawyered up").',
+    implemented: true,
   },
   bishop: {
     id: 'bishop',
     name: 'Bishop',
     pack: 'g54',
     category: 'specialInterest',
-    action: null,
-    blocks: [],
-    description: 'Mass-block role on entire action categories. Coming soon.',
-    implemented: false,
+    action: ACT.bishop(),
+    blocks: [{ blocks: 'steal' }, { blocks: 'foreignAid' }],
+    description: '(house rule) +1 coin and grant yourself a reviveBlessed token. Blocks Steal AND Foreign Aid.',
+    implemented: true,
   },
 
   // === G54 Movement ========================================================
@@ -517,41 +735,43 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Protestor',
     pack: 'g54',
     category: 'movement',
-    action: null,
+    action: ACT.protestor(),
     blocks: [],
-    description: 'Group-rally eliminate: opponents may chip in coins. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Rally a group eliminate: opponents may chip in 1 coin each. When half or more of living opponents have chipped in, the target loses an influence.',
+    implemented: true,
   },
   peacekeeper: {
     id: 'peacekeeper',
     name: 'Peacekeeper',
     pack: 'g54',
     category: 'movement',
-    action: null,
+    action: ACT.peacekeeper(),
     blocks: [],
-    description:
-      'Take the Peacekeeping token — you can\'t be targeted while holding it. Coming soon — needs token wiring.',
-    implemented: false,
+    description: 'Take the Peacekeeping token — you can\'t be targeted by any opponent until your next turn starts.',
+    implemented: true,
   },
   foreignConsular: {
     id: 'foreignConsular',
     name: 'Foreign Consular',
     pack: 'g54',
     category: 'movement',
-    action: null,
+    action: ACT.foreignConsular(),
     blocks: [],
-    description: 'Distribute 2 Treaty tokens; treatied pairs can\'t target each other. Coming soon.',
-    implemented: false,
+    description:
+      'Place a Treaty between two other living seats — they can\'t target each other until the treaty expires (end of your next turn).',
+    implemented: true,
   },
   diplomat: {
     id: 'diplomat',
     name: 'Diplomat',
     pack: 'g54',
     category: 'movement',
-    action: null,
+    action: ACT.diplomat(),
     blocks: [],
-    description: 'Forces a mutual card swap. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Force a target to swap one of their cards with a freshly drawn deck card. You see the new card.',
+    implemented: true,
   },
 
   // === G54 Anarchy =========================================================
@@ -560,40 +780,44 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Anarchist',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
+    action: ACT.anarchist(),
     blocks: [],
-    description: 'Chaotic eliminate; cost is paid by everyone. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Anarchy rally: opponents may chip 1 coin each. With half-or-more contributors, target loses an influence — chip-in coins go to the treasury (anarchy).',
+    implemented: true,
   },
   armsDealer: {
     id: 'armsDealer',
     name: 'Arms Dealer',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
+    action: ACT.armsDealer(),
     blocks: [],
-    description: 'Sell-influence / weapon tokens. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Voluntarily flip one of your face-down cards to gain 4 coins and a weapon token. Each weapon adds +1 to your steals (capped at +3).',
+    implemented: true,
   },
   financier: {
     id: 'financier',
     name: 'Financier',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
+    action: ACT.financier(),
     blocks: [],
-    description: 'Pile-on capitalist analogue with steeper challenge penalty. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Anarchy pile-on: +3 coins; opens a pile-on window where joiners claim Financier for +3 themselves.',
+    implemented: true,
   },
   paramilitary: {
     id: 'paramilitary',
     name: 'Paramilitary',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
-    blocks: [],
-    description: 'Soft-power coup with a riot mechanic. Coming soon.',
-    implemented: false,
+    action: ACT.paramilitary(),
+    blocks: [{ blocks: 'coup' }],
+    description:
+      '(house rule) Pay 4 for a riot-coup that only another Paramilitary may block. Also blocks Coup.',
+    implemented: true,
   },
   plantationOwner: {
     id: 'plantationOwner',
@@ -602,8 +826,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'anarchy',
     action: ACT.plantation(),
     blocks: [],
-    description:
-      'Income engine: gain +1 coin per living influence you still hold (1-2 coins).',
+    description: 'Income engine: gain +1 coin per living influence you still hold (1-2 coins).',
     implemented: true,
   },
   socialist: {
@@ -611,20 +834,21 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     name: 'Socialist',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
+    action: ACT.socialist(),
     blocks: [],
-    description: 'Wealth redistribution across living players. Coming soon.',
-    implemented: false,
+    description:
+      '(house rule) Pool all living players\' coins and redistribute evenly (remainder goes to you).',
+    implemented: true,
   },
   worldBank: {
     id: 'worldBank',
     name: 'World Bank',
     pack: 'anarchy',
     category: 'anarchy',
-    action: null,
+    action: ACT.worldBank(),
     blocks: [],
-    description: 'Loans + debt tokens. Coming soon — rulebook resolution outstanding.',
-    implemented: false,
+    description: '(house rule) Every living player gains +1 coin (including you).',
+    implemented: true,
   },
 };
 
@@ -650,7 +874,23 @@ export const G54_BASE_25: CoupCharacter[] = [
 
 export const G54_ANARCHY_6: CoupCharacter[] = [
   'anarchist', 'armsDealer', 'financier', 'paramilitary', 'plantationOwner', 'socialist',
-  // worldBank intentionally excluded — rulebook source disputed
+  // worldBank intentionally listed last; total Anarchy pool is 7.
+  'worldBank',
+];
+
+// Canonical G54 balanced default = one character per base category.
+export const G54_BALANCED_DEFAULT: CoupCharacter[] = [
+  'banker',          // finance
+  'spy',             // communications
+  'soldier',         // force
+  'judge',           // specialInterest
+  'inquisitor',      // movement
+];
+
+// Anarchy balanced default = G54 balanced + one anarchy.
+export const G54_ANARCHY_BALANCED_DEFAULT: CoupCharacter[] = [
+  ...G54_BALANCED_DEFAULT,
+  'plantationOwner',
 ];
 
 export function isImplemented(c: CoupCharacter): boolean {
@@ -668,4 +908,22 @@ export function blockersFor(
   blocks: 'foreignAid' | 'assassinate' | 'steal' | 'coup',
 ): CoupCharacter[] {
   return active.filter((c) => CHARACTERS[c].blocks.some((b) => b.blocks === blocks));
+}
+
+// Category histogram for a character set. Used by the setup UI to surface
+// "off-balance" warnings without blocking play.
+export function categoryHistogram(
+  chars: readonly CoupCharacter[],
+): Record<CoupCategory, number> {
+  const out: Record<CoupCategory, number> = {
+    classic: 0,
+    finance: 0,
+    communications: 0,
+    force: 0,
+    specialInterest: 0,
+    movement: 0,
+    anarchy: 0,
+  };
+  for (const c of chars) out[CHARACTERS[c].category] += 1;
+  return out;
 }

@@ -4,57 +4,66 @@
 
 ## Status
 
-Hot-seat playable. The setup screen lets the host pick the **ruleset** (Classic / G54 / G54 + Anarchy) and curate the exact characters in this match's deck. Default is the five Classic characters.
+Hot-seat playable. **All 37 characters across Classic, G54, and Anarchy execute end-to-end.** The setup screen lets the host pick the **ruleset** (Classic / G54 / G54 + Anarchy) and curate the exact characters in this match's deck. Default is the canonical one-per-category G54 lineup; deviating from one-per-category surfaces a non-blocking warning.
 
 ## What's implemented
 
 **General actions (always legal):**
-- Income (+1 coin, no challenge / no block)
-- Foreign Aid (+2 coins, blockable by Duke or Banker)
-- Coup (pay 7, target loses an influence; 10-coin-rule enforced)
+- Income (+1 coin)
+- Foreign Aid (+2 coins, blockable by Duke / Banker / Bishop)
+- Coup (pay 7, target loses an influence; in G54 blockable by Judge / Lawyer / Guerrilla / Paramilitary)
 
-**Challenge / block flow:** full state machine over `awaitingChallenge → awaitingBlock → awaitingBlockChallenge → challengeReveal → loseInfluence`. Honest claims trigger card-swap + redraw; bluffs forfeit the claimer.
+**Challenge / block flow:** full state machine `awaitingChallenge → awaitingBlock → awaitingBlockChallenge → challengeReveal → loseInfluence`. Honest claims trigger card-swap + redraw; bluffs forfeit the claimer.
 
-**Classic 5 characters** — Duke, Assassin, Captain, Ambassador, Contessa — fully implemented with rulebook accuracy, including cross-blocking (Captain + Ambassador both block steal).
+**Classic (5 characters)** — Duke, Assassin, Captain, Ambassador, Contessa — fully implemented with cross-blocking (Captain + Ambassador both block steal).
 
-**G54 — 8 characters fully implemented:**
-- Banker (G54 Duke analogue)
-- Tax Collector (1 from every other living player)
-- Soldier (pay 3, no-block eliminate)
-- Mercenary (pair-eliminate; partner pays 1)
-- Thief (G54 Captain analogue; same-role blocking)
-- Spy (private peek on a target card)
-- Inquisitor (exchange 1 with the deck OR peek a target card)
+**G54 (25 characters)** — five characters per category, all playable:
 
-**Anarchy — 1 character fully implemented:**
-- Plantation Owner (+1 coin per living influence)
+| Category | Characters |
+|---|---|
+| Finance | Banker, Capitalist, Speculator, Treasurer, Tax Collector |
+| Communications | Newscaster, Reporter, Producer, Lobbyist, Spy |
+| Force | Assassin (G54), Mercenary, Soldier, Guerrilla, Thief |
+| Special Interest | Judge, Mayor, Priest, Lawyer, Bishop |
+| Movement | Inquisitor, Protestor, Peacekeeper, Foreign Consular, Diplomat |
 
-The remaining ~22 G54 / Anarchy characters appear in the picker with accurate rulebook descriptions but are greyed out — they exist in the character table and the type union but their custom mechanics (pile-on resolves, group-rally eliminate, token mechanics, etc.) aren't wired yet. The setup screen blocks selecting them so a host can't start an unplayable game.
+**Anarchy (7 characters)** — Anarchist, Arms Dealer, Financier, Paramilitary, Plantation Owner, Socialist, World Bank.
+
+**Exotic mechanics** the engine now resolves:
+
+- **Pile-on income** (Capitalist / Financier) — declare opens a `pileOnWindow`; opponents may join the pot for the same +N; closer-of-pile-on resolves payouts to every contributor.
+- **Group-rally chip-in** (Protestor / Anarchist) — opponents may chip 1 coin each. When `ceil(opponents/2)` contributors are in, the target loses an influence.
+- **Force-swap** (Newscaster / Reporter / Producer / Lobbyist / Diplomat) — draws 1 from the deck, then opens `targetSwapPick` for the target to pick which of their face-down cards to swap with it.
+- **Tokens**:
+  - `peacekeeping` — Peacekeeper grants this to themselves; opponents can't target them until they next act.
+  - `treaty` — Foreign Consular pairs two seats; they can't target each other until a new Foreign Consular claim overwrites the bond.
+  - `weapons` — Arms Dealer's sellInfluence grants +1 weapon (cap 3); each weapon adds +1 to your steals.
+  - `reviveBlessed` — Bishop / Lawyer (self) and Priest (target) grant a one-shot save; the next loseInfluencePick that would eliminate the holder is canceled instead.
+- **Custom-amount steal** (Speculator) — steals coins = min(own coins, 5).
+- **Wealth redistribute** — Treasurer (equalize with target), Socialist (pool + redistribute evenly across living players), World Bank (+1 to every living player).
+- **Coup blocks** (G54) — Judge / Lawyer / Guerrilla / Paramilitary can claim to block a Coup. Coup attacker still spends 7 coins; if the block stands, no influence is lost.
+- **Arms Dealer sell** — flip one face-down card for 4 coins + 1 weapon token (can't sell your last influence).
+
+**Category balance:**
+- Total characters per match: 5 (Classic / G54) or 6 (G54 + Anarchy) — enforced strictly.
+- One character per base category is the canonical G54 default. The setup screen seeds this default but lets the host pick freely; deviations show an off-balance warning.
 
 **Ruleset differences:**
 - Classic — cross-blocking (Captain + Ambassador both block steal).
 - G54 — same-role only blocking; Captain steal can only be blocked by Captain, Ambassador exchange is unblockable.
 
-**Cheatsheet:** the in-game view always shows a right-side panel listing every character in this match's deck with their power + general actions. This is your live reference during play.
+**Cheatsheet:** the in-game view always shows a right-side panel listing every character in this match's deck with their power + general actions. Tokens are summarized when their granting character is in the deck.
 
-## Scope (roadmap source-of-truth)
+## House rules
 
-**Classic base** (Phase 5):
-- 5 characters × 3 copies = 15-card deck: Duke, Assassin, Captain, Ambassador, Contessa
-- Cross-blocking is allowed (Captain blocks steal AND Ambassador blocks steal)
+Several G54 / Anarchy characters lack a clear canonical rulebook citation. Where we've made a best-guess interpretation, the character description in the cheatsheet is prefixed `(house rule)` so a player at the table can flag a disagreement before the match instead of finding out mid-game. Examples:
 
-**Coup: Rebellion G54** (Phase 5b):
-- Standalone game. 25-character variable pool; each match picks 5-8.
-- Characters are organized into 5 categories of 5 — **Finance**, **Communications**, **Force**, **Special Interest**, **Movement**.
-- **Same-role-only blocking** per the G54 rulebook.
-- Tokens enter the game state: Peacekeeping (untargetable while held), Treaty (pair-mutual non-targeting). Scaffolded in state; no character grants them yet.
-- Deferred new mechanics: pile-on claims (Capitalist), self-scaling steal (Speculator), group-rally eliminations (Protestor).
+- Newscaster / Reporter / Producer / Lobbyist / Diplomat — all interpreted as "draw 1 + force-swap a target card" with minor cost variations.
+- Protestor / Anarchist — rally chip-in mechanic, threshold = ceil(opponents/2).
+- Bishop / Priest / Lawyer — interpreted with extra revive-token + block-stacking semantics.
+- Arms Dealer / Socialist / World Bank — interpreted as the simplest mechanic that fits the character's name.
 
-**G54: Anarchy expansion** (Phase 5c) — on top of G54:
-- 6 additional characters: Anarchist, Arms Dealer, Financier, Paramilitary, Plantation Owner, Socialist (World Bank may ship as a 7th depending on rulebook resolution).
-- New **Social Media** general action — deferred.
-
-We're skipping the original Reformation expansion. G54 + Anarchy gives more replayability per match (5-of-31 deck = thousands of distinct game-shapes) with the same base mechanic.
+If your group plays a different reading, edit `characters.ts` — actions are one-row entries pointing at the effect dispatcher in `module.ts`.
 
 ## Hidden info
 
@@ -64,17 +73,19 @@ Coup's redaction model is the messiest of the four games — the challenge windo
 - Only the seat that owns an influence sees their own face-down cards (`yourInfluences`).
 - During exchange, the pick set is shown ONLY to the active seat (`yourExchangeOffer`).
 - Lost influences are public (`influences[i].revealed = true` → character is shown to everyone).
-- Spy / Inquisitor peeks live in `yourPeeks` and are redacted out of every other seat's view.
+- Spy / Inquisitor / force-swap peeks live in `yourPeeks` and are redacted out of every other seat's view.
+- Pile-on / chip-in pots are fully public.
+- Treaty bonds + weapon counts are fully public (they're observable through play anyway).
 
 ## Files
 
-- `state.ts` — host state shape (phases, seats, pending action, deck, peeks).
+- `state.ts` — host state shape: 14 phases, seats with tokens, pending action with pot / swap-in-progress / treaty-pair fields, deck, peeks.
 - `actions.ts` — discriminated union of every action a seat can dispatch.
-- `characters.ts` — single declarative table of every character (Classic + G54 + Anarchy), with action / blocks / `implemented` flag. **This is where new characters land.** Adding a character that follows a standard action shape (gainCoins / steal / forceLoseInfluence / exchange / etc.) is one row.
-- `setup.ts` — initial deal, character-set validation.
-- `module.ts` — `GameModule` implementation + the full challenge/block state machine. The `applyAction` reducer is the single dispatch table.
-- `ui/CoupSetup.tsx` — host setup screen with unified character checklist.
-- `ui/GameView.tsx` — in-game view with the always-visible cheatsheet aside.
+- `characters.ts` — single declarative table of every character (Classic + G54 + Anarchy), with action / blocks / `implemented` flag. **This is where new characters land.** Adding a character that follows a standard action shape (gainCoins / steal / forceLoseInfluence / exchange / pile-on / chip-in / force-swap / token-grant) is one row.
+- `setup.ts` — initial deal, character-set validation, category-balance warning.
+- `module.ts` — `GameModule` implementation + the full challenge/block/window state machine. The `applyAction` reducer is the single dispatch table.
+- `ui/CoupSetup.tsx` — host setup screen with unified character checklist + category-balance feedback.
+- `ui/GameView.tsx` — in-game view with the always-visible cheatsheet aside and 4 new phase panels (PileOn / ChipIn / TargetSwapPick / SellInfluence).
 - `ui/CharacterArt.tsx` — inline SVG icons per character (matches ONUW / Avalon style).
 
 ## AI considerations

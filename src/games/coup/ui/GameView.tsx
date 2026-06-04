@@ -167,7 +167,9 @@ function PhaseRouter({
   const isWindowPhase =
     view.phase === 'awaitingChallenge' ||
     view.phase === 'awaitingBlock' ||
-    view.phase === 'awaitingBlockChallenge';
+    view.phase === 'awaitingBlockChallenge' ||
+    view.phase === 'pileOnWindow' ||
+    view.phase === 'chipInWindow';
 
   if (!isWindowPhase && !localIsActor && actorSeat !== null) {
     const next = view.seats[actorSeat]!;
@@ -200,6 +202,14 @@ function PhaseRouter({
       return <ExchangePanel view={view} dispatch={dispatch} />;
     case 'spyPeek':
       return <SpyPeekPanel view={view} dispatch={dispatch} />;
+    case 'pileOnWindow':
+      return <PileOnPanel view={view} localSeat={localSeat} dispatch={dispatch} />;
+    case 'chipInWindow':
+      return <ChipInPanel view={view} localSeat={localSeat} dispatch={dispatch} />;
+    case 'targetSwapPick':
+      return <TargetSwapPickPanel view={view} dispatch={dispatch} />;
+    case 'sellInfluencePick':
+      return <SellInfluencePanel view={view} dispatch={dispatch} />;
     default:
       return null;
   }
@@ -219,7 +229,13 @@ function currentActor(view: CoupPublicState): number | null {
       return p?.loseInfluencePending?.seat ?? null;
     case 'exchangePick':
     case 'spyPeek':
+    case 'sellInfluencePick':
       return p?.by ?? null;
+    case 'targetSwapPick':
+      return p?.swapTarget ?? null;
+    case 'pileOnWindow':
+    case 'chipInWindow':
+      return null; // every seat may act
     default:
       return null;
   }
@@ -250,6 +266,8 @@ function TurnStartPanel({
   const [mercenaryPartner, setMercenaryPartner] = useState<number | null>(null);
   const [inquisitorBranch, setInquisitorBranch] = useState<'exchange' | 'peek'>('exchange');
   const [peekCardIndex, setPeekCardIndex] = useState<0 | 1>(0);
+  const [treatyA, setTreatyA] = useState<number | null>(null);
+  const [treatyB, setTreatyB] = useState<number | null>(null);
 
   const reset = () => {
     setMode('idle');
@@ -258,6 +276,8 @@ function TurnStartPanel({
     setMercenaryPartner(null);
     setInquisitorBranch('exchange');
     setPeekCardIndex(0);
+    setTreatyA(null);
+    setTreatyB(null);
   };
 
   if (!localIsCurrent) {
@@ -303,6 +323,7 @@ function TurnStartPanel({
   if (mode === 'character' && claim) {
     const charAct = characterAction(claim)!;
     const needsTarget = charAct.target === 'other';
+    const needsPair = charAct.target === 'pair';
     const eligible = view.seats.filter((s) => !s.eliminated && s.index !== view.currentSeat);
 
     return (
@@ -386,6 +407,43 @@ function TurnStartPanel({
           </div>
         )}
 
+        {needsPair && (
+          <div style={{ marginTop: 8 }}>
+            <p className={styles.subtitle}>Pick the first treaty partner:</p>
+            <div className={styles.targetGrid}>
+              {eligible.map((s) => (
+                <button
+                  key={s.index}
+                  className={styles.targetBtn}
+                  style={treatyA === s.index ? { borderColor: '#60a5fa' } : undefined}
+                  onClick={() => setTreatyA(s.index)}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+            {treatyA !== null && (
+              <>
+                <p className={styles.subtitle} style={{ marginTop: 8 }}>Pick the second treaty partner:</p>
+                <div className={styles.targetGrid}>
+                  {eligible
+                    .filter((s) => s.index !== treatyA)
+                    .map((s) => (
+                      <button
+                        key={s.index}
+                        className={styles.targetBtn}
+                        style={treatyB === s.index ? { borderColor: '#60a5fa' } : undefined}
+                        onClick={() => setTreatyB(s.index)}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <div className={styles.actions} style={{ marginTop: 12 }}>
           <button className={styles.muted} onClick={reset}>
             Cancel
@@ -394,6 +452,7 @@ function TurnStartPanel({
             className={styles.primary}
             disabled={
               (needsTarget && target === null) ||
+              (needsPair && (treatyA === null || treatyB === null)) ||
               (charAct.id === 'mercenaryHire' && mercenaryPartner === null) ||
               cur.coins < charAct.cost
             }
@@ -411,6 +470,8 @@ function TurnStartPanel({
                     : charAct.id === 'spyPeek'
                       ? peekCardIndex
                       : undefined,
+                treatyPair:
+                  needsPair && treatyA !== null && treatyB !== null ? [treatyA, treatyB] : undefined,
               });
               reset();
             }}
@@ -577,14 +638,25 @@ function BlockWindow({
     if (p.kind === 'general' && p.generalId === 'foreignAid') {
       return blocks.some((b) => b.blocks === 'foreignAid');
     }
+    if (p.kind === 'general' && p.generalId === 'coup') {
+      return blocks.some((b) => b.blocks === 'coup');
+    }
     if (p.kind === 'character' && p.characterActionId === 'assassinate') {
       return blocks.some((b) => b.blocks === 'assassinate');
     }
     if (
       p.kind === 'character' &&
-      (p.characterActionId === 'steal' || p.characterActionId === 'thiefSteal')
+      (p.characterActionId === 'steal' ||
+        p.characterActionId === 'thiefSteal' ||
+        p.characterActionId === 'customSteal')
     ) {
       return blocks.some((b) => b.blocks === 'steal');
+    }
+    if (p.kind === 'character' && p.characterActionId === 'protectedEliminate') {
+      return c === 'guerrilla';
+    }
+    if (p.kind === 'character' && p.characterActionId === 'paramilitaryRiot') {
+      return c === 'paramilitary';
     }
     return false;
   });
@@ -594,7 +666,9 @@ function BlockWindow({
     if (p.kind === 'character' && p.characterActionId === 'assassinate' && p.target !== me) return false;
     if (
       p.kind === 'character' &&
-      (p.characterActionId === 'steal' || p.characterActionId === 'thiefSteal') &&
+      (p.characterActionId === 'steal' ||
+        p.characterActionId === 'thiefSteal' ||
+        p.characterActionId === 'customSteal') &&
       p.target !== me
     ) {
       return false;
@@ -805,6 +879,259 @@ function SpyPeekPanel({
 }
 
 // ============================================================================
+// Phase: pileOnWindow — Capitalist / Financier pot. Opponents may join.
+// ============================================================================
+
+function PileOnPanel({
+  view,
+  localSeat,
+  dispatch,
+}: {
+  view: CoupPublicState;
+  localSeat: number | null;
+  dispatch: (a: CoupGameAction) => void;
+}) {
+  const p = view.pending!;
+  const pot = p.pileOnPot!;
+  const opener = view.seats[p.by]!;
+  const me = localSeat;
+  const canJoin =
+    me !== null &&
+    me !== p.by &&
+    !view.seats[me]!.eliminated &&
+    !pot.contributors.includes(me) &&
+    !pot.closed.includes(me);
+  const isOpener = me === p.by;
+  return (
+    <div className={styles.panel}>
+      <h3 style={{ marginTop: 0 }}>Pile-on — +{pot.coinsEach} coins each</h3>
+      <p className={styles.subtitle}>
+        {opener.name} opened a {CHARACTERS[p.claimedCharacter!].name} pile-on. Any other living seat
+        may claim the same character to take +{pot.coinsEach} themselves.
+      </p>
+      <p className={styles.subtitle}>
+        Joined: {pot.contributors.map((s) => view.seats[s]?.name).join(', ')}
+      </p>
+      <div className={styles.actions}>
+        <button
+          className={styles.primary}
+          disabled={!canJoin}
+          onClick={() => dispatch({ type: 'joinPileOn', bySeat: me! })}
+        >
+          Join (+{pot.coinsEach}){me !== null ? ` as ${view.seats[me]?.name}` : ''}
+        </button>
+        <button
+          className={styles.muted}
+          disabled={!canJoin}
+          onClick={() => dispatch({ type: 'pass', bySeat: me! })}
+        >
+          Pass
+        </button>
+        {isOpener && (
+          <button
+            className={styles.danger}
+            onClick={() => dispatch({ type: 'closePileOn', bySeat: me! })}
+          >
+            Close pile-on (resolve)
+          </button>
+        )}
+      </div>
+      <SeatSwitcher view={view} />
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase: chipInWindow — Protestor / Anarchist group-rally.
+// ============================================================================
+
+function ChipInPanel({
+  view,
+  localSeat,
+  dispatch,
+}: {
+  view: CoupPublicState;
+  localSeat: number | null;
+  dispatch: (a: CoupGameAction) => void;
+}) {
+  const p = view.pending!;
+  const pot = p.chipInPot!;
+  const target = view.seats[p.target!]!;
+  const me = localSeat;
+  const canChip =
+    me !== null &&
+    me !== p.by &&
+    !view.seats[me]!.eliminated &&
+    !pot.contributors.includes(me) &&
+    !pot.passes.includes(me) &&
+    view.seats[me]!.coins >= 1;
+  const canPass = me !== null && me !== p.by && !pot.contributors.includes(me) && !pot.passes.includes(me);
+
+  return (
+    <div className={styles.panel}>
+      <h3 style={{ marginTop: 0 }}>Rally against {target.name}</h3>
+      <p className={styles.subtitle}>
+        Chip in 1 coin to push the rally. Need {pot.threshold} contributors total.
+      </p>
+      <div
+        style={{
+          height: 12,
+          background: '#0b0f17',
+          border: '1px solid #334155',
+          borderRadius: 4,
+          marginBottom: 8,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.min(100, (pot.contributors.length / pot.threshold) * 100)}%`,
+            height: '100%',
+            background: '#f97316',
+          }}
+        />
+      </div>
+      <p className={styles.subtitle}>
+        {pot.contributors.length} / {pot.threshold} —{' '}
+        {pot.contributors.map((s) => view.seats[s]?.name).join(', ') || 'nobody yet'}
+      </p>
+      <div className={styles.actions}>
+        <button
+          className={styles.primary}
+          disabled={!canChip}
+          onClick={() => dispatch({ type: 'chipIn', bySeat: me! })}
+        >
+          Chip in 1 coin
+        </button>
+        <button
+          className={styles.muted}
+          disabled={!canPass}
+          onClick={() => dispatch({ type: 'pass', bySeat: me! })}
+        >
+          Pass
+        </button>
+      </div>
+      <SeatSwitcher view={view} />
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase: targetSwapPick — target picks which face-down card to swap.
+// ============================================================================
+
+function TargetSwapPickPanel({
+  view,
+  dispatch,
+}: {
+  view: CoupPublicState;
+  dispatch: (a: CoupGameAction) => void;
+}) {
+  const p = view.pending!;
+  const targetIdx = p.swapTarget;
+  if (targetIdx === null) return null;
+  const target = view.seats[targetIdx]!;
+  const isMe = view.yourSeat === targetIdx;
+  if (!isMe) {
+    return (
+      <div className={styles.panel}>
+        <h3 style={{ marginTop: 0 }}>Waiting on {target.name} to pick a card to swap…</h3>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.panel}>
+      <h3 style={{ marginTop: 0 }}>Pick a card to swap</h3>
+      <p className={styles.subtitle}>
+        {view.seats[p.by]?.name} (as {CHARACTERS[p.claimedCharacter!].name}) is force-swapping one of
+        your cards with a freshly drawn deck card. You won&apos;t know what you got until you look.
+      </p>
+      <div className={styles.exchangeRow}>
+        {view.yourInfluences.map((inf, i) => {
+          if (inf.revealed) {
+            return (
+              <div key={i} className={styles.exchangeCard}>
+                <CharacterArt character={inf.char} size={56} faded />
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Revealed</span>
+              </div>
+            );
+          }
+          return (
+            <button
+              key={i}
+              className={styles.exchangeCard}
+              onClick={() =>
+                dispatch({
+                  type: 'targetSwapPick',
+                  bySeat: targetIdx,
+                  cardIndex: i as 0 | 1,
+                })
+              }
+            >
+              <CharacterArt character={inf.char} size={56} />
+              <span style={{ fontSize: 11 }}>Swap {CHARACTERS[inf.char].name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase: sellInfluencePick — Arms Dealer flips one of their own cards.
+// ============================================================================
+
+function SellInfluencePanel({
+  view,
+  dispatch,
+}: {
+  view: CoupPublicState;
+  dispatch: (a: CoupGameAction) => void;
+}) {
+  const p = view.pending!;
+  const me = view.yourSeat;
+  if (me === null || me !== p.by) {
+    return (
+      <div className={styles.panel}>
+        <h3 style={{ marginTop: 0 }}>Waiting on Arms Dealer pick…</h3>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.panel}>
+      <h3 style={{ marginTop: 0 }}>Sell an influence</h3>
+      <p className={styles.subtitle}>
+        Flip one of your face-down cards. Gain 4 coins and 1 weapon token. Can&apos;t sell your last
+        influence.
+      </p>
+      <div className={styles.exchangeRow}>
+        {view.yourInfluences.map((inf, i) => {
+          if (inf.revealed) {
+            return (
+              <div key={i} className={styles.exchangeCard}>
+                <CharacterArt character={inf.char} size={56} faded />
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Already revealed</span>
+              </div>
+            );
+          }
+          return (
+            <button
+              key={i}
+              className={styles.exchangeCard}
+              onClick={() => dispatch({ type: 'sellInfluence', bySeat: me, cardIndex: i as 0 | 1 })}
+            >
+              <CharacterArt character={inf.char} size={56} />
+              <span style={{ fontSize: 11 }}>Sell {CHARACTERS[inf.char].name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // Helper: seat switcher — used during challenge / block windows so the local
 // device can "be" any seat. In real online play this would be replaced by the
 // real seat-binding flow.
@@ -867,12 +1194,19 @@ function Cheatsheet({ view }: { view: CoupPublicState }) {
       />
       <CheatGeneralRow
         title="Foreign Aid"
-        desc="+2 coins. No challenge. Blockable by Duke / Banker."
+        desc="+2 coins. No challenge. Blockable by Duke / Banker / Bishop."
       />
       <CheatGeneralRow
         title="Coup"
-        desc="Pay 7 coins. Target loses an influence. No challenge or block (Classic). At 10+ coins you MUST Coup."
+        desc="Pay 7 coins. Target loses an influence. In G54 it can be blocked by Judge / Lawyer / Guerrilla / Paramilitary. At 10+ coins you MUST Coup."
       />
+      {(view.activeCharacters.includes('peacekeeper') ||
+        view.activeCharacters.includes('foreignConsular')) && (
+        <CheatGeneralRow
+          title="Tokens"
+          desc="Peacekeeping = target is untargetable. Treaty = bonded pair can't target each other. Weapons = +1 steal each (cap 3). Bless = saves the last influence once."
+        />
+      )}
       {view.activeCharacters.map((c) => {
         const spec = CHARACTERS[c];
         return (

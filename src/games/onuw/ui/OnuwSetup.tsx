@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
+import { useNetworkStore } from '@/store/networkStore';
 import { onuwModule } from '../module';
 import type { OnuwOptions } from '../module';
 import {
@@ -57,6 +58,8 @@ export function OnuwSetup({ onBack }: Props) {
   ]);
   const [pack, setPack] = useState<PackTab>('base');
   const [pool, setPool] = useState<OnuwRoleId[]>(() => RECOMMENDED_POOLS[5]!.slice());
+  const [online, setOnline] = useState(false);
+  const [roomCode, setRoomCode] = useState('');
 
   const neededPool = playerCount + 3;
   const error = useMemo(() => validateRolePool(playerCount, pool), [playerCount, pool]);
@@ -97,16 +100,26 @@ export function OnuwSetup({ onBack }: Props) {
 
   const startGame = () => {
     if (error) return;
+    const playerNames = Array.from({ length: playerCount }, (_, i) =>
+      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
+    );
     const opts: OnuwOptions = {
-      players: Array.from({ length: playerCount }, (_, i) => ({
-        name: (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
-        isAI: false,
-      })),
+      players: playerNames.map((name) => ({ name, isAI: false })),
       rolePool: pool,
       artifactPool: [],
       dayDurationSec: 300,
       allowNoLynch: true,
     };
+    if (online) {
+      const code = roomCode.trim();
+      if (!code) return;
+      useNetworkStore.getState().hostRoom(code, 'onuw', {
+        seatCount: playerCount,
+        names: playerNames,
+        options: opts as unknown as Record<string, unknown>,
+      });
+      return;
+    }
     const config = {
       gameId: 'onuw' as const,
       seats: [],
@@ -219,14 +232,38 @@ export function OnuwSetup({ onBack }: Props) {
         </div>
       </section>
 
+      <section className={styles.panel}>
+        <h3 className={styles.h3}>Multiplayer</h3>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={online}
+            onChange={(e) => setOnline(e.target.checked)}
+          />
+          <span>Host an online room (other players join with the room code)</span>
+        </label>
+        {online && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
+            <input
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value)}
+              placeholder="any string (share with friends)"
+              maxLength={32}
+              style={{ padding: 6, minWidth: 240 }}
+            />
+          </div>
+        )}
+      </section>
+
       <footer className={styles.footer}>
         <button
           className={styles.startButton}
-          disabled={!!error}
+          disabled={!!error || (online && !roomCode.trim())}
           onClick={startGame}
           title={error ?? ''}
         >
-          Start game →
+          {online ? 'Open lobby →' : 'Start game →'}
         </button>
       </footer>
     </div>

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
+import { useNetworkStore } from '@/store/networkStore';
 import { avalonModule } from '../module';
 import { ROLES, BASE_OPTIONAL_SPECIAL_ROLES } from '../roles';
 import { alignmentSplit, questTrack } from '../quest-tracks';
@@ -37,6 +38,8 @@ export function AvalonSetup({ onBack }: Props) {
     const cfg = avalonModule.defaultConfig(5);
     return (cfg.gameOptions as unknown as AvalonOptions).specialRoles;
   });
+  const [online, setOnline] = useState(false);
+  const [roomCode, setRoomCode] = useState('');
 
   const split = alignmentSplit(playerCount);
 
@@ -92,16 +95,26 @@ export function AvalonSetup({ onBack }: Props) {
   const evilInPool = previewPool.filter((r) => ROLES[r].alignment === 'evil').length;
 
   const startGame = () => {
+    const playerNames = Array.from({ length: playerCount }, (_, i) =>
+      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
+    );
     const opts: AvalonOptions = {
-      players: Array.from({ length: playerCount }, (_, i) => ({
-        name: (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
-        isAI: false,
-      })),
+      players: playerNames.map((name) => ({ name, isAI: false })),
       specialRoles: trimmedSpecials,
       ladyOfTheLake: false,
       excalibur: false,
       twoLancelots: false,
     };
+    if (online) {
+      const code = roomCode.trim();
+      if (!code) return;
+      useNetworkStore.getState().hostRoom(code, 'avalon', {
+        seatCount: playerCount,
+        names: playerNames,
+        options: opts as unknown as Record<string, unknown>,
+      });
+      return;
+    }
     const config = {
       gameId: 'avalon' as const,
       seats: [],
@@ -220,9 +233,37 @@ export function AvalonSetup({ onBack }: Props) {
         </div>
       </section>
 
+      <section className={styles.panel}>
+        <h3 className={styles.h3}>Multiplayer</h3>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={online}
+            onChange={(e) => setOnline(e.target.checked)}
+          />
+          <span>Host an online room (other players join with the room code)</span>
+        </label>
+        {online && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
+            <input
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value)}
+              placeholder="any string (share with friends)"
+              maxLength={32}
+              style={{ padding: 6, minWidth: 240 }}
+            />
+          </div>
+        )}
+      </section>
+
       <footer className={styles.footer}>
-        <button className={styles.startButton} onClick={startGame}>
-          Start game →
+        <button
+          className={styles.startButton}
+          disabled={online && !roomCode.trim()}
+          onClick={startGame}
+        >
+          {online ? 'Open lobby →' : 'Start game →'}
         </button>
       </footer>
     </div>
