@@ -10,7 +10,7 @@ A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-pee
 
 ## Status
 
-Project scaffold (Phase 0). The engine contract, network plumbing, store layout, and per-game stubs are in place; no game is playable yet. See [CLAUDE.md](./CLAUDE.md) for the architecture and roadmap.
+Three games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), and **Coup** (Classic base + a curated subset of the G54 and Anarchy character pools, with a unified character picker). Secret Hitler and the remaining Avalon / Coup modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
 
 ## Quickstart
 
@@ -51,20 +51,19 @@ Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a 
 ## Roadmap
 
 1. ✅ Phase 0 — Project scaffold
-2. Phase 0b — Home menu + solo flow
-3. Phase 1 — ONUW base (11 roles)
-4. Phase 2 — ONUW Daybreak expansion
-5. Phase 2b — ONUW Bonus Roles pack (16 roles + artifacts)
+2. ✅ Phase 0b — Home menu + solo flow
+3. ✅ Phase 1 — ONUW base (11 roles)
+4. ✅ Phase 2 — ONUW Daybreak expansion
+5. ✅ Phase 2b — ONUW Bonus Roles pack (16 roles + artifacts)
 6. Phase 3 — Secret Hitler base game
-7. Phase 4 — Avalon base box
+7. ✅ Phase 4 — Avalon base box
 8. Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots)
-9. Phase 5 — Coup classic base game
-10. Phase 5b — Coup: Rebellion G54 (25 characters, pick 5 per match)
-11. Phase 5c — G54: Anarchy expansion (+6 characters)
-12. Phase 6 — Online multiplayer wiring
-13. Phase 7 — AI for all four games
-14. Phase 8 — In-game chat + phase-gated visibility
-15. Phase 9 — Replay
+9. ✅ Phase 5 — Coup classic base game
+10. ✅ Phase 5b/c — Coup G54 + Anarchy (unified picker; ~9 characters implemented, the rest documented but greyed out)
+11. Phase 6 — Online multiplayer wiring
+12. Phase 7 — AI for all four games
+13. Phase 8 — In-game chat + phase-gated visibility
+14. Phase 9 — Replay
 
 See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 

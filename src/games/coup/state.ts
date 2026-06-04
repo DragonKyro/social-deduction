@@ -1,4 +1,5 @@
 import type { SeatIndex } from '@/engine/types';
+import type { CharacterActionId } from './characters';
 
 // ============================================================================
 // Coup — host state
@@ -17,180 +18,241 @@ import type { SeatIndex } from '@/engine/types';
 //      the G54 rulebook. Wider replay space is the point.
 //
 // G54 also supports the **Anarchy** expansion (`expansions: ['anarchy']`)
-// which adds 6 more characters and one new general action ("Social Media").
+// which adds 6 more characters and one new general action ("Social Media",
+// not yet wired).
 //
 // Both rulesets share the same challenge/block state machine and the same
 // turn loop. The only differences are (a) which characters are legal in
 // the deck and (b) whether cross-blocking applies — both expressed as
-// rule data in the character/action tables under `rules/`, not as
-// `if (ruleset === 'g54')` branches sprinkled through the engine.
+// rule data in the character table, not as `if (ruleset === 'g54')`
+// branches sprinkled through the engine.
 
 export type CoupRuleset = 'classic' | 'g54';
 
 // ----------------------------------------------------------------------------
-// Classic (base) characters
+// Character id union — see characters.ts for the rules table.
 // ----------------------------------------------------------------------------
 
 export type ClassicCharacter =
-  | 'duke' // tax (+3 coins) / blocks foreign-aid
-  | 'assassin' // pay 3 to force a player to lose 1 influence
-  | 'captain' // steal 2 coins / blocks captain steal
-  | 'ambassador' // exchange 2 cards from the deck / blocks captain steal (classic only)
-  | 'contessa'; // blocks assassinations
-
-// ----------------------------------------------------------------------------
-// G54 characters — 25-card variable pool
-//
-// Each G54 match picks 5 of these (random or curated). Characters are
-// organized into 5 categories (Finance, Communications, Force, Special
-// Interest, Movement) of 5 each, mirroring the printed deck. Picking
-// across categories is what makes G54 sessions feel different from each
-// other — a Finance-heavy table plays nothing like a Force-heavy one.
-//
-// Ability details land in `rules/g54Characters.ts` (Phase 5). The shape
-// here is just the id union so the type-level deck and AI references
-// resolve.
-// ----------------------------------------------------------------------------
+  | 'duke'
+  | 'assassin'
+  | 'captain'
+  | 'ambassador'
+  | 'contessa';
 
 export type G54Character =
   // Finance
-  | 'banker' // +3 from treasury (similar to Duke)
-  | 'capitalist' // +4 from treasury; everyone may pile-on claim
-  | 'speculator' // take coins = your current coins (max 5); failed challenge gives all to challenger
-  | 'treasurer' // moves coins between treasury / other players
-  | 'taxCollector' // levies a coin from every other player
-
+  | 'banker' | 'capitalist' | 'speculator' | 'treasurer' | 'taxCollector'
   // Communications
-  | 'newscaster' // pay 1; secretly swap from a 3-card deck draw
-  | 'reporter' // peek + force a redraw
-  | 'producer' // 1 card from deck + 1 from target; secret swap
-  | 'lobbyist' // forced trade with a target
-  | 'spy' // private peek at a target's hand
-
+  | 'newscaster' | 'reporter' | 'producer' | 'lobbyist' | 'spy'
   // Force
-  | 'assassinG54' // assassinate (same as classic Assassin; renamed to disambiguate)
-  | 'mercenary' // hire-to-kill at lower cost / shared payment
-  | 'soldier' // cheap eliminate at higher coin cost vs. coup
-  | 'guerrilla' // protected eliminate; blockable only by Guerrilla
-  | 'thief' // steal-with-consequences variant on Captain
-
+  | 'assassinG54' | 'mercenary' | 'soldier' | 'guerrilla' | 'thief'
   // Special Interest
-  | 'judge' // blocks Coup at a price
-  | 'mayor' // gives self a passive economic boost
-  | 'priest' // resurrect / soft-protect role
-  | 'lawyer' // forces a challenge resolution swing
-  | 'bishop' // mass-block role on certain action categories
-
+  | 'judge' | 'mayor' | 'priest' | 'lawyer' | 'bishop'
   // Movement
-  | 'inquisitor' // exchange 1 from deck OR look at a card of another player
-  | 'protestor' // group-rally: any opponent may chip in coins to eliminate target
-  | 'peacekeeper' // takes a Peacekeeping token; can't be targeted while held
-  | 'foreignConsular' // distributes 2 Treaty tokens; treatied players can't target each other
-  | 'diplomat'; // forces a peaceful card swap; mutual exchange
-
-// ----------------------------------------------------------------------------
-// G54 — Anarchy expansion characters
-// ----------------------------------------------------------------------------
+  | 'inquisitor' | 'protestor' | 'peacekeeper' | 'foreignConsular' | 'diplomat';
 
 export type G54AnarchyCharacter =
-  | 'anarchist' // chaotic eliminate; cost paid in coins from all players
-  | 'armsDealer' // sell-influence / weapon-tokens (anarchy markets)
-  | 'financier' // pile-on capitalist analogue, larger upside / steeper challenge penalty
-  | 'paramilitary' // soft-power coup analogue with a riot mechanic
-  | 'plantationOwner' // income engine that scales with influences
-  | 'socialist' // wealth redistribution: average pool across living players
-  | 'worldBank'; // loans / debt tokens (BGG-listed; some retailers omit)
+  | 'anarchist' | 'armsDealer' | 'financier' | 'paramilitary' | 'plantationOwner' | 'socialist' | 'worldBank';
 
-// Discriminated character id used everywhere downstream. The deck shape
-// is `Array<CoupCharacter>` and rule tables key off `CoupCharacter`.
 export type CoupCharacter = ClassicCharacter | G54Character | G54AnarchyCharacter;
 
 // ----------------------------------------------------------------------------
-// G54 general actions
-//
-// Both rulesets ship Income + Coup. G54 + Anarchy adds Social Media (a new
-// general action — no character claim, but has its own challenge window).
+// General actions (always legal regardless of deck).
 // ----------------------------------------------------------------------------
 
-export type CoupAction =
-  // General (always legal)
-  | 'income' // +1 coin
-  | 'foreignAid' // +2 coins (Duke / Banker blocks)
-  | 'coup' // pay 7, force target to lose influence
-  // General — Anarchy only
-  | 'socialMedia' // anarchy general action; mechanics in rules/g54Anarchy.ts
-  // Character-keyed (host validates legality vs. the active deck)
-  | 'characterAction';
+export type GeneralActionId =
+  | 'income' // +1 coin, no challenge
+  | 'foreignAid' // +2 coins, no challenge but blockable by Duke / Banker
+  | 'coup'; // pay 7, force loss-influence, no challenge no block
+
+// Phases of a single turn. The challenge/block sub-machine runs as follows:
+//
+//   turnStart
+//     → declareAction (general or character claim)
+//       general: income → resolve immediately
+//                foreignAid → awaitingBlock
+//                coup → loseInfluence (target picks)
+//       character: awaitingChallenge
+//
+//   awaitingChallenge
+//     - any opponent challenges → challengeReveal (claimer picks a card to show)
+//     - everyone passes → if action is also blockable, awaitingBlock; else resolve
+//
+//   awaitingBlock
+//     - a blocker claims → awaitingBlockChallenge (the blocker is now the claimer)
+//     - everyone passes → resolve the original action
+//
+//   awaitingBlockChallenge
+//     - any opponent challenges the BLOCKER → challengeReveal (block-context)
+//     - everyone passes → block stands; original action fizzles → end of turn
+//
+//   challengeReveal
+//     - claimer reveals a matching card → challenger loses an influence; new card drawn
+//     - claimer reveals a non-matching card → claimer loses that influence; action fizzles
+//
+//   loseInfluence
+//     - the seat selected to lose picks one of their face-down cards to flip
+//
+//   exchangePick
+//     - active seat is offered N cards (deck + hand); picks which to keep, returns rest
+//
+//   spyPeek
+//     - active seat (Spy) sees a target's card privately; they ack to continue
+//
+//   turnEnd
+//     - bookkeeping; immediately rolls to next seat's turnStart
+// ----------------------------------------------------------------------------
 
 export type CoupPhase =
   | 'setup'
-  | 'turnStart' // active player picks an action
-  | 'awaitingChallenge' // an action was claimed; window for any opponent to challenge
-  | 'awaitingBlock' // action was uncontested; window for an opponent to claim a blocker
-  | 'challengeReveal' // the challenged player picks a card to reveal
-  | 'loseInfluence' // someone needs to lose a card (coup, assassination, failed challenge, failed block)
-  | 'exchangePick' // ambassador/inquisitor draws X; picks which to return
+  | 'turnStart'
+  | 'awaitingChallenge'
+  | 'awaitingBlock'
+  | 'awaitingBlockChallenge'
+  | 'challengeReveal'
+  | 'loseInfluence'
+  | 'exchangePick'
+  | 'spyPeek'
+  | 'turnEnd'
   | 'gameOver';
+
+export interface CoupInfluence {
+  // Identity of the face-down card. Stays private (host state) unless
+  // `revealed` is true.
+  char: CoupCharacter;
+  revealed: boolean;
+}
 
 export interface CoupSeatState {
   index: SeatIndex;
-  influences: Array<{ char: CoupCharacter; revealed: boolean }>;
+  name: string;
+  influences: CoupInfluence[];
   coins: number;
   eliminated: boolean;
-  // G54: Peacekeeping / Treaty tokens belong to the seat that holds them.
+  // G54 tokens — scaffolded; characters that grant them aren't wired yet, so
+  // these stay default.
   tokens: {
     peacekeeping: boolean;
-    treaty: SeatIndex | null; // pair-partner of the treaty; null = no treaty
+    treaty: SeatIndex | null;
   };
 }
 
+// Pending action mid-turn. Lives during challenge/block windows.
 export interface CoupPendingAction {
   by: SeatIndex;
-  // The CHARACTER being claimed (if any). Null for general actions like
-  // income / coup that don't require a claim.
+  // null for general actions like income/coup. Otherwise the character the
+  // active player CLAIMS to have. The engine compares this against the
+  // active deck (must be present) and against the seat's hand at challenge
+  // time.
   claimedCharacter: CoupCharacter | null;
-  // Concrete action being attempted. For G54 the host resolves the
-  // character-keyed action via `rules/g54Characters.ts`.
-  actionId: string;
+  // What kind of action this is (general or character-keyed).
+  kind: 'general' | 'character';
+  generalId: GeneralActionId | null;
+  characterActionId: CharacterActionId | null;
   target: SeatIndex | null;
-  // Block claim, if any.
-  blocker: { by: SeatIndex; character: CoupCharacter } | null;
-  challenger: SeatIndex | null;
+  // Block claim, if any. Set when phase = awaitingBlockChallenge or after
+  // a block resolves.
+  blocker: {
+    by: SeatIndex;
+    character: CoupCharacter;
+  } | null;
+  // Track who has explicitly passed in the current challenge / block window
+  // so the host knows when the window can close.
+  passes: SeatIndex[];
+  // Auxiliary state for resolving specific actions:
+  //   - mercenaryPartner: chosen partner seat (the 2nd "+1 coin" payer)
+  //   - inquisitorVictim: target seat when the Inquisitor chooses "peek" branch
+  //   - inquisitorPeek: which of the target's cards was inspected (host-side)
+  //   - spyPeekCard: which of the spy target's cards was peeked
+  mercenaryPartner: SeatIndex | null;
+  inquisitorBranch: 'exchange' | 'peek' | null;
+  inquisitorPeekCardIndex: 0 | 1 | null;
+  spyPeekCardIndex: 0 | 1 | null;
+  // After a challenge resolves, we remember who needs to lose an influence
+  // and why (for the UI: "you failed your challenge of Duke").
+  loseInfluencePending: {
+    seat: SeatIndex;
+    reason: 'failedChallenge' | 'lostBluff' | 'assassinate' | 'coup' | 'mercenary' | 'soldier' | 'thiefPenalty';
+  } | null;
+}
+
+// Exchange (Ambassador / Inquisitor) presents a card set to the active seat.
+// Host stores the offer so it can validate the seat's return.
+export interface CoupExchangeOffer {
+  // The cards the player is presented with (their current hand + drawn cards).
+  cards: CoupCharacter[];
+  // How many they must keep (their pre-action living influence count).
+  keepCount: number;
+}
+
+// Per-seat private peek log (spy / inquisitor). Lives host-side and is
+// surfaced in viewFor only to the seat that owns the peek.
+export interface CoupPrivatePeek {
+  byActionId: 'spyPeek' | 'inquisitorPeek';
+  target: SeatIndex;
+  // The character that was peeked.
+  card: CoupCharacter;
+  // Which slot (0/1) of the target's hand was peeked.
+  cardIndex: 0 | 1;
 }
 
 export interface CoupPrivateState {
   phase: CoupPhase;
   ruleset: CoupRuleset;
-  // Anarchy on/off. Only meaningful when `ruleset === 'g54'`.
   expansions: Array<'anarchy'>;
-  // The 5 characters chosen for this match (G54). For classic this is
-  // the fixed base-5. Drives action legality + UI.
+  // The character set in play this match. Must be exactly 5 for Classic; 5+
+  // for G54 (we allow up to 8 in the picker for variety). The deck = 3 of each.
   activeCharacters: CoupCharacter[];
   seats: CoupSeatState[];
-  // The shuffled deck of remaining cards. Strict secrecy: peers never see
-  // the deck. Reshuffles use seeded RNG.
   deck: CoupCharacter[];
   currentSeat: SeatIndex;
   pending: CoupPendingAction | null;
-  // During exchange (Ambassador / Inquisitor) the active seat sees their 2
-  // dealt + their 2 current cards. Stored host-side for validation.
-  exchangeOffer: CoupCharacter[] | null;
+  exchangeOffer: CoupExchangeOffer | null;
+  // Append-only public log of resolved actions / events. The UI renders the
+  // last few entries so players see what happened.
+  log: string[];
+  // Private peeks held per seat. Stays host-side; redacted into viewFor.
+  privatePeeks: Record<SeatIndex, CoupPrivatePeek[]>;
   seed: number;
+  rngCursor: number;
   winnerSeat: SeatIndex | null;
 }
 
-// === Public view ===
+// ============================================================================
+// Public view (per seat). Hidden card identities show as `null`.
+// ============================================================================
+
+export interface CoupPublicInfluence {
+  char: CoupCharacter | null;
+  revealed: boolean;
+}
 
 export interface CoupPublicSeatState {
   index: SeatIndex;
   name: string;
   coins: number;
-  influences: Array<{ char: CoupCharacter | null; revealed: boolean }>;
+  influences: CoupPublicInfluence[];
   eliminated: boolean;
   tokens: {
     peacekeeping: boolean;
     treaty: SeatIndex | null;
   };
+}
+
+export interface CoupPublicPendingAction {
+  by: SeatIndex;
+  claimedCharacter: CoupCharacter | null;
+  kind: 'general' | 'character';
+  generalId: GeneralActionId | null;
+  characterActionId: CharacterActionId | null;
+  target: SeatIndex | null;
+  blocker: { by: SeatIndex; character: CoupCharacter } | null;
+  passes: SeatIndex[];
+  // We mirror the loseInfluence pending bit publicly so the UI can show "X
+  // must lose an influence" while we wait on the loseInfluence pick.
+  loseInfluencePending: { seat: SeatIndex; reason: string } | null;
+  mercenaryPartner: SeatIndex | null;
 }
 
 export interface CoupPublicState {
@@ -200,10 +262,14 @@ export interface CoupPublicState {
   activeCharacters: CoupCharacter[];
   seats: CoupPublicSeatState[];
   currentSeat: SeatIndex;
-  pending: CoupPendingAction | null;
+  pending: CoupPublicPendingAction | null;
   deckSize: number;
+  log: string[];
   winnerSeat: SeatIndex | null;
 
-  yourInfluences: Array<{ char: CoupCharacter; revealed: boolean }>;
-  yourExchangeOffer: CoupCharacter[] | null;
+  // Per-seat redacted slots.
+  yourSeat: SeatIndex | null;
+  yourInfluences: CoupInfluence[];
+  yourExchangeOffer: CoupExchangeOffer | null;
+  yourPeeks: CoupPrivatePeek[];
 }

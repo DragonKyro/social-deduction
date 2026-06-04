@@ -91,9 +91,8 @@ See each game's README:
 - [ ] Phase 3 — Secret Hitler base game (5-10p)
 - [ ] Phase 4 — Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
 - [ ] Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots — independent, stackable)
-- [ ] Phase 5 — Coup classic base game (5 characters, challenge/block state machine)
-- [ ] Phase 5b — Coup: Rebellion G54 (25-character pool; pick 5 per match; same-role-only blocking; Peacekeeping/Treaty tokens)
-- [ ] Phase 5c — G54: Anarchy expansion (+6 characters + Social Media general action)
+- [x] Phase 5 — Coup classic base game (5 characters, challenge/block state machine, exchange, lose-influence)
+- [x] Phase 5b/c — Coup: G54 + Anarchy as a unified picker. Classic, G54 (25-character pool), and Anarchy (+6 characters) all share one setup screen and one character-rules table at `src/games/coup/characters.ts`. ~9 characters fully implemented across G54/Anarchy (Banker, Tax Collector, Soldier, Mercenary, Thief, Spy, Inquisitor, Plantation Owner — plus the classic 5). The remaining ~22 characters are present in the picker with accurate rulebook descriptions but greyed out — their custom mechanics (pile-on / group-rally / token mechanics / exotic resolves) aren't wired yet. Same-role-only blocking applies in G54 mode; Classic keeps cross-blocking. Peacekeeping/Treaty token state is scaffolded but no character grants them yet. Social Media general action deferred.
 - [ ] Phase 6 — Online multiplayer wiring (Trystero, host-redacted views, lobby, rejoin)
 - [ ] Phase 7 — AI for all four games (one heuristic level per game)
 - [ ] Phase 8 — In-game chat + phase-gated visibility (night-silence, dead-spectate, etc.)

@@ -3,16 +3,18 @@ import { GAMES } from '@/engine/registry';
 import type { GameId } from '@/engine/types';
 import { AvalonSetup } from '@/games/avalon/ui/AvalonSetup';
 import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
+import { CoupSetup } from '@/games/coup/ui/CoupSetup';
 import { GameTileArt } from './GameTileArt';
 import styles from './HomeMenu.module.css';
 
 // Top-level home menu. Picks a game and routes into the appropriate
-// per-game setup screen. Currently wired: Avalon and ONUW.
+// per-game setup screen. Currently wired: Avalon, ONUW, and Coup.
 
 type Stage =
   | { kind: 'menu' }
   | { kind: 'avalon-setup' }
-  | { kind: 'onuw-setup' };
+  | { kind: 'onuw-setup' }
+  | { kind: 'coup-setup' };
 
 export function HomeMenu() {
   const [stage, setStage] = useState<Stage>({ kind: 'menu' });
@@ -24,13 +26,17 @@ export function HomeMenu() {
   if (stage.kind === 'onuw-setup') {
     return <OnuwSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
+  if (stage.kind === 'coup-setup') {
+    return <CoupSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
 
   const pick = (id: GameId) => {
     if (id === 'avalon') setStage({ kind: 'avalon-setup' });
     else if (id === 'onuw') setStage({ kind: 'onuw-setup' });
+    else if (id === 'coup') setStage({ kind: 'coup-setup' });
   };
 
-  const wired: GameId[] = ['onuw', 'avalon'];
+  const wired: GameId[] = ['onuw', 'avalon', 'coup'];
 
   return (
     <main className={styles.root}>
