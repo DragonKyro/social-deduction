@@ -5,7 +5,7 @@ A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-pee
 **Games:**
 - 🐺 **One Night Ultimate Werewolf** (with planned Daybreak + Bonus Roles)
 - 🗳️ **Secret Hitler**
-- ⚔️ **The Resistance: Avalon** (with planned Lady of the Lake, Excalibur, Two Lancelots)
+- ⚔️ **Avalon** (with planned Lady of the Lake, Excalibur, Two Lancelots)
 - 🎭 **Coup** (with planned Rebellion G54 + Anarchy)
 
 ## Status
@@ -36,7 +36,7 @@ src/
   games/
     onuw/           # One Night Ultimate Werewolf
     secret-hitler/  # Secret Hitler
-    avalon/         # The Resistance: Avalon
+    avalon/         # Avalon
     coup/           # Coup
   net/              # Trystero room binding, identity, typed channels
   store/            # Zustand: gameStore, networkStore

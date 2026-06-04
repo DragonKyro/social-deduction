@@ -1,0 +1,149 @@
+.root {
+  padding: 24px;
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #cbd5e1;
+}
+
+.subtitle {
+  margin: 0 0 12px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.countControls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.countActive {
+  background: #2563eb;
+  border-color: #1e40af;
+}
+
+.nameGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.nameRow {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.seatNumber {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #1f2937;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
+
+.roleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.roleCard {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 10px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  cursor: pointer;
+  text-align: left;
+}
+
+.roleCard:hover:not(:disabled) {
+  background: #2a3441;
+}
+
+.roleCardOn {
+  border-color: #60a5fa;
+  background: #1e293b;
+}
+
+.roleCardLocked {
+  border-color: #fbbf24;
+  background: #1e293b;
+  cursor: default;
+  opacity: 1;
+}
+
+.poolPreview {
+  margin-top: 14px;
+  padding: 12px;
+  background: #0b0f17;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+  font-size: 13px;
+}
+
+.questPreview {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.questPreviewTile {
+  width: 64px;
+  height: 64px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.startButton {
+  background: #16a34a;
+  border-color: #15803d;
+  padding: 12px 24px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.startButton:hover {
+  background: #22c55e;
+}

@@ -4,7 +4,7 @@ Context for Claude working in this repo.
 
 ## What this is
 
-A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **The Resistance: Avalon**, and **Coup**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
+A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, and **Coup**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
 
 The Catan project one directory up (`../catan/`) is the inspirational reference for the engine / store / net layering. Read its CLAUDE.md for the patterns we're echoing — they're proven against 6 expansions there. **One critical difference: this app is host-authoritative with redacted per-peer views, not full-state replication.** Catan can replicate the full state because Catan has no hidden information beyond dev cards (and even those leak from action logs); social deduction breaks if every peer holds every role. See the "Hidden info model" section below.
 
@@ -58,7 +58,7 @@ What this means for new code:
 See each game's README:
 - `src/games/onuw/README.md` — One Night Ultimate Werewolf
 - `src/games/secret-hitler/README.md` — Secret Hitler
-- `src/games/avalon/README.md` — The Resistance: Avalon
+- `src/games/avalon/README.md` — Avalon
 - `src/games/coup/README.md` — Coup
 
 ## Conventions
@@ -89,7 +89,7 @@ See each game's README:
 - [ ] Phase 2 — ONUW Daybreak expansion (10 expansion roles incl. Doppelganger)
 - [ ] Phase 2b — ONUW Bonus Roles pack (16 consolidated bonus roles + 6 artifact tokens + #11/#12 seat tokens)
 - [ ] Phase 3 — Secret Hitler base game (5-10p)
-- [ ] Phase 4 — The Resistance: Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
+- [ ] Phase 4 — Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
 - [ ] Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots — independent, stackable)
 - [ ] Phase 5 — Coup classic base game (5 characters, challenge/block state machine)
 - [ ] Phase 5b — Coup: Rebellion G54 (25-character pool; pick 5 per match; same-role-only blocking; Peacekeeping/Treaty tokens)

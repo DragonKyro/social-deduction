@@ -1,4 +1,4 @@
-# The Resistance: Avalon
+# Avalon
 
 5-10 player team-based social deduction. Good (Loyal Servants of Arthur) and evil (Minions of Mordred) compete across 5 quests. Each quest's leader proposes a team; the whole table votes to approve or reject. If approved, team members privately play a success or fail card. Three successful quests = good wins (then the Assassin gets one shot at identifying Merlin). Three failed quests OR 5 rejected proposals in a row = evil wins.
 
