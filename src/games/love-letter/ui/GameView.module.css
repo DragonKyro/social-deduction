@@ -1,0 +1,505 @@
+.root {
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 14px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: #fce7f3;
+}
+
+.subtitle {
+  margin: 0;
+  color: #f9a8d4;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.secondaryButton {
+  background: #1f2937;
+  color: #e2e8f0;
+  padding: 10px 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #ec4899;
+  color: #fdf2f8;
+  font-weight: 700;
+  padding: 10px 18px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.primaryButton:disabled {
+  background: #334155;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   Board grid
+   ============================================================================ */
+
+.boardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.seatPanel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.seatPanel.active {
+  border-color: #f472b6;
+  background: #18102633;
+  box-shadow: 0 0 0 1px #f472b6 inset;
+}
+
+.seatPanel.localSeat {
+  outline: 2px solid #fbbf24;
+  outline-offset: -1px;
+}
+
+.seatPanel.eliminatedSeat {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.seatHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.seatName {
+  font-weight: 700;
+  color: #fdf2f8;
+  font-size: 16px;
+}
+
+.youTag {
+  color: #fbbf24;
+  font-size: 11px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.seatStatusRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.statusBad {
+  background: #7f1d1d;
+  color: #fee2e2;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.statusGood {
+  background: #14532d;
+  color: #d1fae5;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.statusActive {
+  background: #831843;
+  color: #fce7f3;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.seatTokens {
+  text-align: right;
+}
+
+.tokenCount {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fef3c7;
+}
+
+.tokenLabel {
+  color: #94a3b8;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.handRow,
+.discardRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.handLabel,
+.discardLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.handHidden {
+  display: flex;
+  gap: 4px;
+}
+
+.cardBack {
+  width: 22px;
+  height: 32px;
+  background: linear-gradient(135deg, #831843, #be185d);
+  border: 1px solid #f472b6;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.handEmpty,
+.discardEmpty {
+  color: #475569;
+  font-size: 12px;
+}
+
+.yourHand {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.discardList {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.passButton {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+/* ============================================================================
+   Card pips
+   ============================================================================ */
+
+.cardPip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid;
+}
+
+.cardPipLarge {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.cardPipRank {
+  font-weight: 800;
+}
+
+.cardPipName {
+  font-weight: 600;
+}
+
+.cardP1 {
+  background: #4c1d95;
+  border-color: #7c3aed;
+  color: #ede9fe;
+}
+.cardP2 {
+  background: #1e3a8a;
+  border-color: #3b82f6;
+  color: #dbeafe;
+}
+.cardP3 {
+  background: #134e4a;
+  border-color: #14b8a6;
+  color: #ccfbf1;
+}
+.cardP4 {
+  background: #14532d;
+  border-color: #22c55e;
+  color: #ecfdf5;
+}
+.cardP5 {
+  background: #92400e;
+  border-color: #f59e0b;
+  color: #fef3c7;
+}
+.cardP6 {
+  background: #7c2d12;
+  border-color: #f97316;
+  color: #ffedd5;
+}
+.cardP7 {
+  background: #831843;
+  border-color: #ec4899;
+  color: #fdf2f8;
+}
+.cardP8 {
+  background: #be185d;
+  border-color: #fb7185;
+  color: #fff1f2;
+}
+
+/* ============================================================================
+   Face-up row
+   ============================================================================ */
+
+.faceUpRow {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  background: #0b1220;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.faceUpLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+}
+
+.faceUpValue {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.faceUpRowCards {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* ============================================================================
+   Phase panels
+   ============================================================================ */
+
+.actionPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.actionRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.subPanelLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.chip {
+  background: #1f2937;
+  color: #e2e8f0;
+  padding: 6px 12px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chip.chipActive {
+  background: #831843;
+  border-color: #ec4899;
+  color: #fce7f3;
+}
+
+.chip.chipPrimary {
+  background: #ec4899;
+  color: #fdf2f8;
+  border-color: #fb7185;
+  font-weight: 700;
+}
+
+.cardChoice {
+  background: #1f2937;
+  border: 2px solid #334155;
+  border-radius: 10px;
+  padding: 12px 16px;
+  min-width: 180px;
+  text-align: left;
+  color: #f1f5f9;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+}
+
+.cardChoice:hover {
+  border-color: #f472b6;
+}
+
+.cardChoiceDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cardChoiceRank {
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.cardChoiceName {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #fce7f3;
+}
+
+.cardChoiceDesc {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+.effectPanel {
+  background: #18102622;
+  border-color: #831843;
+}
+
+.peekBox {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #4c1d95, #6b21a8);
+  border-radius: 10px;
+}
+
+/* ============================================================================
+   Round over + game over
+   ============================================================================ */
+
+.finalHandsList {
+  display: grid;
+  gap: 6px;
+}
+
+.finalHandRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  background: #0b1220;
+  border-radius: 8px;
+}
+
+.finalHandName {
+  font-weight: 700;
+  color: #fdf2f8;
+  width: 90px;
+}
+
+.gameOverPanel {
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: linear-gradient(135deg, #831843, #4c1d95);
+  border: 1px solid #ec4899;
+  border-radius: 12px;
+  gap: 8px;
+  text-align: center;
+}
+
+.gameOverLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: #fbcfe8;
+}
+
+.gameOverWinner {
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff1f2;
+}
+
+.gameOverSub {
+  font-size: 13px;
+  color: #fbcfe8;
+}
+
+.gameOverTokens {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  justify-content: center;
+}
+
+.gameOverTokenChip {
+  background: #0b1220cc;
+  border: 1px solid #831843;
+  color: #fef3c7;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}

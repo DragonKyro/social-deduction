@@ -1,0 +1,309 @@
+.root {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.questTrack {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.questTile {
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 10px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  position: relative;
+}
+
+.questTile.success {
+  background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+  border-color: #60a5fa;
+}
+
+.questTile.fail {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+  border-color: #fca5a5;
+}
+
+.questTile.current {
+  outline: 2px solid #fbbf24;
+  outline-offset: 3px;
+}
+
+.questNumber {
+  font-size: 11px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.teamSize {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.failsRequired {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-size: 10px;
+  color: #fbbf24;
+}
+
+.seatGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.seat {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  cursor: default;
+}
+
+.seat.selectable {
+  cursor: pointer;
+}
+
+.seat.selectable:hover {
+  border-color: #60a5fa;
+}
+
+.seat.selected {
+  border-color: #fbbf24;
+  background: #374151;
+}
+
+.seat.leader {
+  border-color: #fbbf24;
+}
+
+.seat.you {
+  outline: 1px dashed #60a5fa;
+  outline-offset: -1px;
+}
+
+.seatAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #0b0f17;
+  border: 1px solid #334155;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.seatName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.seatMeta {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.seatVote {
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.seatVote.approve {
+  color: #4ade80;
+}
+
+.seatVote.reject {
+  color: #f87171;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.primary {
+  background: #2563eb;
+  border-color: #1e40af;
+}
+
+.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.danger {
+  background: #b91c1c;
+  border-color: #7f1d1d;
+}
+
+.danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.success {
+  background: #15803d;
+  border-color: #166534;
+}
+
+.success:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.roleReveal {
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  place-items: center;
+}
+
+.roleName {
+  font-size: 28px;
+  margin: 8px 0 4px;
+}
+
+.roleAlignment {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.roleAlignment.good {
+  color: #60a5fa;
+}
+
+.roleAlignment.evil {
+  color: #f87171;
+}
+
+.knownList {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.knownItem {
+  padding: 6px 10px;
+  background: #0b0f17;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rejectMeter {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.rejectDot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #1f2937;
+  border: 1px solid #334155;
+}
+
+.rejectDot.filled {
+  background: #dc2626;
+  border-color: #fca5a5;
+}
+
+.questHistory {
+  display: grid;
+  gap: 6px;
+}
+
+.questHistoryRow {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: #0b0f17;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+}
+
+.banner {
+  font-size: 13px;
+  color: #fbbf24;
+  text-align: center;
+  padding: 8px;
+  background: rgba(251, 191, 36, 0.08);
+  border-radius: 6px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.coverScreen {
+  position: fixed;
+  inset: 0;
+  background: #0b0f17;
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+
+.coverInner {
+  max-width: 480px;
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+}
+
+.gameOverBanner {
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  border-radius: 12px;
+}
+
+.gameOverBanner.good {
+  background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+}
+
+.gameOverBanner.evil {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+}

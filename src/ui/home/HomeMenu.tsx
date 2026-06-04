@@ -1,0 +1,199 @@
+import { useState } from 'react';
+import { GAMES } from '@/engine/registry';
+import type { GameId } from '@/engine/types';
+import { getDisplayName, setDisplayName } from '@/net';
+import { useNetworkStore } from '@/store/networkStore';
+import { AvalonSetup } from '@/games/avalon/ui/AvalonSetup';
+import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
+import { SecretHitlerSetup } from '@/games/secret-hitler/ui/SecretHitlerSetup';
+import { CoupSetup } from '@/games/coup/ui/CoupSetup';
+import { CodenamesSetup } from '@/games/codenames/ui/CodenamesSetup';
+import { CrossCluesSetup } from '@/games/cross-clues/ui/CrossCluesSetup';
+import { LoveLetterSetup } from '@/games/love-letter/ui/LoveLetterSetup';
+import { SkullSetup } from '@/games/skull/ui/SkullSetup';
+import { LiarsDiceSetup } from '@/games/liars-dice/ui/LiarsDiceSetup';
+import { LiarsPokerSetup } from '@/games/liars-poker/ui/LiarsPokerSetup';
+import { CockroachPokerSetup } from '@/games/cockroach-poker/ui/CockroachPokerSetup';
+import { GameTileArt } from './GameTileArt';
+import styles from './HomeMenu.module.css';
+
+// Top-level home menu. Picks a game and routes into the appropriate
+// per-game setup screen. Currently wired: Avalon, ONUW, and Coup.
+
+type Stage =
+  | { kind: 'menu' }
+  | { kind: 'avalon-setup' }
+  | { kind: 'onuw-setup' }
+  | { kind: 'secret-hitler-setup' }
+  | { kind: 'coup-setup' }
+  | { kind: 'codenames-setup' }
+  | { kind: 'cross-clues-setup' }
+  | { kind: 'love-letter-setup' }
+  | { kind: 'skull-setup' }
+  | { kind: 'liars-dice-setup' }
+  | { kind: 'liars-poker-setup' }
+  | { kind: 'cockroach-poker-setup' }
+  | { kind: 'join-online' };
+
+export function HomeMenu() {
+  const [stage, setStage] = useState<Stage>({ kind: 'menu' });
+  const games = Object.values(GAMES) as Array<{ id: GameId; displayName: string }>;
+
+  if (stage.kind === 'avalon-setup') {
+    return <AvalonSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'onuw-setup') {
+    return <OnuwSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'secret-hitler-setup') {
+    return <SecretHitlerSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'coup-setup') {
+    return <CoupSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'codenames-setup') {
+    return <CodenamesSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'cross-clues-setup') {
+    return <CrossCluesSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'love-letter-setup') {
+    return <LoveLetterSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'skull-setup') {
+    return <SkullSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'liars-dice-setup') {
+    return <LiarsDiceSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'liars-poker-setup') {
+    return <LiarsPokerSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'cockroach-poker-setup') {
+    return <CockroachPokerSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'join-online') {
+    return <JoinOnline onBack={() => setStage({ kind: 'menu' })} />;
+  }
+
+  const pick = (id: GameId) => {
+    if (id === 'avalon') setStage({ kind: 'avalon-setup' });
+    else if (id === 'onuw') setStage({ kind: 'onuw-setup' });
+    else if (id === 'secret-hitler') setStage({ kind: 'secret-hitler-setup' });
+    else if (id === 'coup') setStage({ kind: 'coup-setup' });
+    else if (id === 'codenames') setStage({ kind: 'codenames-setup' });
+    else if (id === 'cross-clues') setStage({ kind: 'cross-clues-setup' });
+    else if (id === 'love-letter') setStage({ kind: 'love-letter-setup' });
+    else if (id === 'skull') setStage({ kind: 'skull-setup' });
+    else if (id === 'liars-dice') setStage({ kind: 'liars-dice-setup' });
+    else if (id === 'liars-poker') setStage({ kind: 'liars-poker-setup' });
+    else if (id === 'cockroach-poker') setStage({ kind: 'cockroach-poker-setup' });
+  };
+
+  const wired: GameId[] = [
+    'onuw',
+    'avalon',
+    'secret-hitler',
+    'coup',
+    'codenames',
+    'cross-clues',
+    'love-letter',
+    'skull',
+    'liars-dice',
+    'liars-poker',
+    'cockroach-poker',
+  ];
+
+  return (
+    <main className={styles.root}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>
+          <span className={styles.titleAccent}>Social</span> Deduction
+        </h1>
+        <p className={styles.tagline}>Lies, votes, and bad alibis. Pick your poison.</p>
+      </div>
+      <div className={styles.grid}>
+        {games.map((g) => {
+          const enabled = wired.includes(g.id);
+          return (
+            <button
+              key={g.id}
+              disabled={!enabled}
+              onClick={() => pick(g.id)}
+              className={`${styles.tile} ${enabled ? '' : styles.tileDisabled}`}
+            >
+              <GameTileArt id={g.id} />
+              <div className={styles.tileInfo}>
+                <span className={styles.tileName}>{g.displayName}</span>
+                {!enabled && <span className={styles.tileBadge}>coming soon</span>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ textAlign: 'center', marginTop: 12 }}>
+        <button
+          onClick={() => setStage({ kind: 'join-online' })}
+          style={{ padding: '10px 18px', fontSize: 14 }}
+        >
+          Join an online room →
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function JoinOnline({ onBack }: { onBack: () => void }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState(getDisplayName());
+  const joinRoom = useNetworkStore((s) => s.joinRoom);
+
+  const submit = () => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    setDisplayName(name.trim() || 'Player');
+    joinRoom(trimmed);
+  };
+
+  return (
+    <main style={{ padding: 24, maxWidth: 480, margin: '0 auto' }}>
+      <button onClick={onBack}>← Back</button>
+      <h1 style={{ marginTop: 16 }}>Join an online room</h1>
+      <p style={{ color: '#94a3b8' }}>
+        Enter the room code shared by your host. You'll see the game lobby once
+        the host's signal reaches you (usually within a few seconds).
+      </p>
+      <label style={{ display: 'grid', gap: 6, marginBottom: 12 }}>
+        <span style={{ fontSize: 13, color: '#cbd5e1' }}>Display name</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={20}
+          style={{ padding: 8 }}
+        />
+      </label>
+      <label style={{ display: 'grid', gap: 6, marginBottom: 16 }}>
+        <span style={{ fontSize: 13, color: '#cbd5e1' }}>Room code</span>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          maxLength={32}
+          placeholder="must match the host's"
+          style={{ padding: 8 }}
+        />
+      </label>
+      <button
+        onClick={submit}
+        disabled={!code.trim()}
+        style={{
+          background: '#10b981',
+          color: 'white',
+          padding: '10px 18px',
+          fontWeight: 700,
+        }}
+      >
+        Join →
+      </button>
+    </main>
+  );
+}

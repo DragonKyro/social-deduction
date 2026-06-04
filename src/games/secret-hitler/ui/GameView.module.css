@@ -1,0 +1,442 @@
+.root {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+/* ===== Boards ===== */
+
+.boards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.boardCard {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.boardCard.liberal {
+  background: linear-gradient(135deg, #082f49, #0c4a6e);
+  border-color: #0284c7;
+}
+
+.boardCard.fascist {
+  background: linear-gradient(135deg, #450a0a, #7f1d1d);
+  border-color: #b91c1c;
+}
+
+.boardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.boardName {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+
+.boardTrack {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.boardSlot {
+  flex: 1;
+  min-width: 32px;
+  height: 44px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.boardSlot.lit.liberal {
+  background: #0ea5e9;
+  border-color: #38bdf8;
+}
+
+.boardSlot.lit.fascist {
+  background: #dc2626;
+  border-color: #fca5a5;
+}
+
+.boardSlot.win {
+  border-color: #fbbf24;
+}
+
+.boardSlotPower {
+  font-size: 9px;
+  color: #fef9c3;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: absolute;
+  bottom: 2px;
+  font-weight: 700;
+}
+
+/* Election tracker dots — sit between the boards */
+.electionMeter {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.electionDots {
+  display: flex;
+  gap: 4px;
+}
+
+.electionDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #334155;
+  border: 1px solid #475569;
+}
+
+.electionDot.filled {
+  background: #fbbf24;
+  border-color: #fde68a;
+}
+
+/* ===== Seats ===== */
+
+.seatGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.seat {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  cursor: default;
+  position: relative;
+}
+
+.seat.selectable {
+  cursor: pointer;
+}
+
+.seat.selectable:hover {
+  border-color: #60a5fa;
+}
+
+.seat.selected {
+  border-color: #fbbf24;
+  background: #374151;
+}
+
+.seat.president {
+  border-color: #fbbf24;
+}
+
+.seat.chancellor {
+  border-color: #38bdf8;
+}
+
+.seat.you {
+  outline: 1px dashed #60a5fa;
+  outline-offset: -1px;
+}
+
+.seat.dead {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
+.seatAvatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #0b0f17;
+  border: 1px solid #334155;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: #94a3b8;
+}
+
+.seatName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.seatMeta {
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.seatTag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.seatTag.president {
+  background: #fbbf24;
+  color: #1f2937;
+}
+
+.seatTag.chancellor {
+  background: #38bdf8;
+  color: #1f2937;
+}
+
+.seatTag.dead {
+  background: #4b5563;
+  color: #f3f4f6;
+}
+
+.seatTag.investigatedLib {
+  background: #0ea5e9;
+  color: white;
+}
+
+.seatTag.investigatedFasc {
+  background: #b91c1c;
+  color: white;
+}
+
+.seatTag.vote {
+  font-weight: 700;
+}
+
+.seatTag.ja {
+  background: #15803d;
+  color: white;
+}
+
+.seatTag.nein {
+  background: #b91c1c;
+  color: white;
+}
+
+/* ===== Actions & cover screens ===== */
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.primary {
+  background: #2563eb;
+  border-color: #1e40af;
+}
+
+.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.danger {
+  background: #b91c1c;
+  border-color: #7f1d1d;
+}
+
+.danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.success {
+  background: #15803d;
+  border-color: #166534;
+}
+
+.success:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.coverScreen {
+  position: fixed;
+  inset: 0;
+  background: #0b0f17;
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+
+.coverInner {
+  max-width: 480px;
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+}
+
+.roleReveal {
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  place-items: center;
+  padding: 32px 16px;
+}
+
+.roleName {
+  font-size: 32px;
+  margin: 4px 0;
+}
+
+.roleParty {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.roleParty.liberal {
+  color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.1);
+  border: 1px solid #0ea5e9;
+}
+
+.roleParty.fascist {
+  color: #f87171;
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid #dc2626;
+}
+
+.knownList {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.knownItem {
+  padding: 6px 10px;
+  background: #0b0f17;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ===== Cards (policies) ===== */
+
+.cardRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.policyCard {
+  width: 100px;
+  height: 150px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.policyCard.selected {
+  outline: 3px solid #fbbf24;
+  outline-offset: 2px;
+}
+
+.policyCard.policyLiberal {
+  background: linear-gradient(135deg, #082f49, #0ea5e9);
+  border: 2px solid #38bdf8;
+  color: white;
+}
+
+.policyCard.policyFascist {
+  background: linear-gradient(135deg, #450a0a, #dc2626);
+  border: 2px solid #f87171;
+  color: white;
+}
+
+.policyCardLabel {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.policyCard.passive {
+  cursor: default;
+}
+
+/* ===== Banners ===== */
+
+.gameOverBanner {
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  border-radius: 12px;
+}
+
+.gameOverBanner.liberal {
+  background: linear-gradient(135deg, #082f49, #0c4a6e);
+  border: 2px solid #0ea5e9;
+}
+
+.gameOverBanner.fascist {
+  background: linear-gradient(135deg, #7f1d1d, #b91c1c);
+  border: 2px solid #fca5a5;
+}
+
+.log {
+  display: grid;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.logRow {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: #0b0f17;
+  border-radius: 4px;
+  border: 1px solid #1f2937;
+}

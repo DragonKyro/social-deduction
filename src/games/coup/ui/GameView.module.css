@@ -1,0 +1,307 @@
+.root {
+  padding: 18px;
+  max-width: 1240px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+}
+
+.main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.aside {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.title {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.panel {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.coverScreen {
+  position: fixed;
+  inset: 0;
+  background: #0b0f17;
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+
+.coverInner {
+  max-width: 540px;
+  text-align: center;
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.primary {
+  background: #2563eb;
+  border-color: #1e40af;
+}
+
+.danger {
+  background: #b91c1c;
+  border-color: #7f1d1d;
+}
+
+.success {
+  background: #15803d;
+  border-color: #166534;
+}
+
+.muted {
+  background: #1f2937;
+  border-color: #334155;
+}
+
+.seatGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.seat {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #1f2937;
+  border: 2px solid #334155;
+}
+
+.seatActive {
+  border-color: #fbbf24;
+}
+
+.seatYou {
+  outline: 1px dashed #60a5fa;
+  outline-offset: -1px;
+}
+
+.seatDead {
+  background: #2a1a1a;
+  border-color: #7f1d1d;
+  opacity: 0.7;
+}
+
+.seatHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.seatName {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.seatCoins {
+  font-size: 12px;
+  color: #fbbf24;
+}
+
+.seatInfluences {
+  display: flex;
+  gap: 6px;
+}
+
+.influenceCard {
+  width: 40px;
+  height: 50px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #475569;
+  font-weight: 700;
+}
+
+.influenceCardRevealed {
+  background: #450a0a;
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.actionRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.actionBtn {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 2px;
+  padding: 6px 10px;
+  background: #1f2937;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: #334155;
+  border-color: #60a5fa;
+}
+
+.actionBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actionBtnLabel {
+  font-weight: 700;
+}
+
+.actionBtnSub {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.log {
+  max-height: 280px;
+  overflow-y: auto;
+  font-size: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.logLine {
+  padding: 4px 6px;
+  background: #0b0f17;
+  border: 1px solid #1f2937;
+  border-radius: 4px;
+  color: #cbd5e1;
+}
+
+.cheatsheet {
+  display: grid;
+  gap: 6px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.cheatRow {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 6px;
+  background: #0b0f17;
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.cheatName {
+  font-weight: 700;
+  font-size: 12.5px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.cheatDesc {
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.gameOverBanner {
+  font-size: 28px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #14532d, #16a34a);
+}
+
+.targetGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.targetBtn {
+  padding: 8px 10px;
+  background: #1f2937;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.targetBtn:hover:not(:disabled) {
+  background: #2a3441;
+  border-color: #60a5fa;
+}
+
+.exchangeRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.exchangeCard {
+  padding: 8px;
+  background: #1f2937;
+  border: 2px solid #334155;
+  border-radius: 6px;
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  place-items: center;
+}
+
+.exchangeCard.selected {
+  border-color: #60a5fa;
+  background: #1e293b;
+}
+
+@media (max-width: 980px) {
+  .root {
+    grid-template-columns: 1fr;
+  }
+  .aside {
+    order: -1;
+  }
+}

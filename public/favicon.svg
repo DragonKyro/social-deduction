@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#7f1d1d"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="10" fill="url(#bg)"/>
+  <!-- Moon -->
+  <circle cx="46" cy="20" r="9" fill="#fef3c7"/>
+  <circle cx="50" cy="18" r="8" fill="#1e1b4b"/>
+  <!-- Wolf head -->
+  <g transform="translate(12,18)">
+    <path d="M0 18 L8 6 L12 12 L20 12 L24 6 L32 18 L30 32 Q16 38 2 32 Z" fill="#0b0f17" stroke="#dc2626" stroke-width="1.5"/>
+    <circle cx="10" cy="20" r="1.6" fill="#dc2626"/>
+    <circle cx="22" cy="20" r="1.6" fill="#dc2626"/>
+    <polygon points="14,24 16,30 18,24" fill="#dc2626"/>
+  </g>
+</svg>
