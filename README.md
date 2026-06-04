@@ -2,18 +2,7 @@
 
 A multi-game social-deduction app, hosted on GitHub Pages and played peer-to-peer with friends. AI seats supported.
 
-**Games:**
-- 🐺 **One Night Ultimate Werewolf** (with planned Daybreak + Bonus Roles)
-- 🗳️ **Secret Hitler**
-- ⚔️ **Avalon** (with planned Lady of the Lake, Excalibur, Two Lancelots)
-- 🎭 **Coup** (with planned Rebellion G54 + Anarchy)
-- 🕵️ **Codenames** (party word-association)
-- 🧭 **Cross Clues** (cooperative word-association)
-- 💌 **Love Letter** (16-card micro deduction)
-
-## Status
-
-Six games are playable in hot-seat / solo mode: **One Night Ultimate Werewolf** (base + Daybreak + Bonus Roles), **Avalon** (base box), **Coup** (Classic + full G54 + Anarchy — all 37 characters), **Codenames**, **Cross Clues**, and **Love Letter** (base 16-card set). Secret Hitler and the remaining Avalon modules are stubbed. Online multiplayer is deferred to Phase 6. See [CLAUDE.md](./CLAUDE.md) for the full architecture and roadmap.
+**Games:** One Night Ultimate Werewolf · Secret Hitler · Avalon · Coup · Codenames · Cross Clues · Love Letter · Skull · Liar's Dice · Liar's Poker · Cockroach Poker
 
 ## Quickstart
 
@@ -40,10 +29,14 @@ src/
     onuw/           # One Night Ultimate Werewolf
     secret-hitler/  # Secret Hitler
     avalon/         # Avalon
-    coup/           # Coup
+    coup/           # Coup (Classic + G54 + Anarchy)
     codenames/      # Codenames
     cross-clues/    # Cross Clues
     love-letter/    # Love Letter
+    skull/          # Skull
+    liars-dice/     # Liar's Dice
+    liars-poker/    # Liar's Poker
+    cockroach-poker/# Cockroach Poker
   net/              # Trystero room binding, identity, typed channels
   store/            # Zustand: gameStore, networkStore
   ui/
@@ -53,32 +46,6 @@ src/
 ```
 
 Per-game folders each contain `state.ts`, `actions.ts`, `module.ts`, `ai.ts`, a `ui/` subfolder, and a `README.md` covering scope + hidden-info nuances.
-
-## Roadmap
-
-1. ✅ Phase 0 — Project scaffold
-2. ✅ Phase 0b — Home menu + solo flow
-3. ✅ Phase 1 — ONUW base (11 roles)
-4. ✅ Phase 2 — ONUW Daybreak expansion
-5. ✅ Phase 2b — ONUW Bonus Roles pack (16 roles + artifacts)
-6. Phase 3 — Secret Hitler base game
-7. ✅ Phase 4 — Avalon base box
-8. Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots)
-9. ✅ Phase 5 — Coup classic base game
-10. ✅ Phase 5b/c — Coup G54 + Anarchy (all 37 characters playable; one-per-category balance enforced with non-blocking off-balance warning)
-11. ✅ Phase 10 — Cross Clues (coop)
-12. ✅ Phase 11 — Codenames (party word-association)
-13. ✅ Phase 12 — Love Letter (16-card micro deduction)
-14. Phase 13 — Skull (bidding/bluffing, 3-6p)
-15. Phase 14 — Liar's Dice (dice bidding, 2-8p)
-16. Phase 15 — Liar's Poker (serial-number bluffing, 2-10p)
-17. Phase 16 — Cockroach Poker (creature-card bluffing, 2-6p)
-18. Phase 6 — Online multiplayer wiring
-19. Phase 7 — AI for all games
-20. Phase 8 — In-game chat + phase-gated visibility
-21. Phase 9 — Replay
-
-See [CLAUDE.md](./CLAUDE.md#roadmap) for the full plan.
 
 ## Non-goals
 

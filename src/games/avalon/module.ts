@@ -1,5 +1,6 @@
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { AvalonAction } from './actions';
+import { aiChooseAction } from './ai';
 import { ROLES, BASE_OPTIONAL_SPECIAL_ROLES } from './roles';
 import { questTrack, MAX_REJECTED_PROPOSALS } from './quest-tracks';
 import { buildRolePool, dealRoles, pickStartingLeader, buildRoleKnowledge } from './setup';
@@ -369,6 +370,8 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
   isFinished(state: AvalonPrivateState): boolean {
     return state.phase === 'gameOver';
   },
+
+  aiChooseAction,
 
   defaultConfig(playerCount: number): GameConfig {
     // Default special-role recipe: Percival + Morgana first, then Mordred at

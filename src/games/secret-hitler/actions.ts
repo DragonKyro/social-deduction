@@ -1,16 +1,25 @@
 import type { SeatIndex } from '@/engine/types';
 import type { ShPolicy } from './state';
 
+// Secret Hitler action union. Every action carries `bySeat` so the host can
+// validate the sender against their seat assignment.
+
 export type ShAction =
-  | { type: 'nominateChancellor'; chancellor: SeatIndex }
-  | { type: 'castVote'; vote: 'ja' | 'nein' }
-  | { type: 'presidentDiscard'; policy: ShPolicy; remaining: [ShPolicy, ShPolicy] }
-  | { type: 'chancellorEnact'; policy: ShPolicy }
-  | { type: 'requestVeto' }
-  | { type: 'respondVeto'; accept: boolean }
-  | { type: 'execInvestigate'; target: SeatIndex }
-  | { type: 'execSpecialElection'; nextPresident: SeatIndex }
-  | { type: 'execPeekTop3' }
-  | { type: 'execExecute'; target: SeatIndex }
-  | { type: 'concedeChancellorTopDeck' } // election tracker = 3 forces top-deck enact
-  | { type: 'advanceTurn' };
+  | { type: 'ackRoleReveal'; bySeat: SeatIndex }
+  | { type: 'nominateChancellor'; bySeat: SeatIndex; chancellor: SeatIndex }
+  | { type: 'castVote'; bySeat: SeatIndex; vote: 'ja' | 'nein' }
+  | { type: 'ackElectionReveal'; bySeat: SeatIndex }
+  | { type: 'presidentDiscard'; bySeat: SeatIndex; discardIndex: 0 | 1 | 2 }
+  | { type: 'chancellorEnact'; bySeat: SeatIndex; enactIndex: 0 | 1 }
+  | { type: 'chancellorRequestVeto'; bySeat: SeatIndex }
+  | { type: 'presidentRespondVeto'; bySeat: SeatIndex; accept: boolean }
+  | { type: 'ackPolicyReveal'; bySeat: SeatIndex }
+  | { type: 'ackTopDeckReveal'; bySeat: SeatIndex }
+  | { type: 'execInvestigate'; bySeat: SeatIndex; target: SeatIndex }
+  | { type: 'ackInvestigateReveal'; bySeat: SeatIndex }
+  | { type: 'execSpecialElection'; bySeat: SeatIndex; nextPresident: SeatIndex }
+  | { type: 'ackPeek'; bySeat: SeatIndex }
+  | { type: 'execExecute'; bySeat: SeatIndex; target: SeatIndex };
+
+// Helper type referenced by tests.
+export type ShPolicySlot = ShPolicy;

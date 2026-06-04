@@ -111,17 +111,39 @@ export function aiChooseAction(
       if (myStackSize > 0 && !state.ownStackCleared) {
         return { type: 'flipNext', bySeat: seat };
       }
-      // Choose an opponent's stack. Pick the seat with the largest pile (most
-      // information) — biased away from someone who placed last (they're
-      // suspicious). Avoid skull placements heuristically by preferring
-      // earlier placers.
+      // Choose an opponent's stack. Posterior on skull placement:
+      //  - A seat that placed a disk and then PASSED on bidding may have placed
+      //    a skull (they're hoping the bidder hits it).
+      //  - A seat that opened the bid trusts their own bottom disk = rose, so
+      //    THEIR first-placed (bottom) disk is much safer.
+      //  - Each player has 1 skull and 3 roses; track placedSkulls vs total
+      //    placed to get a per-seat skull-density estimate.
       const candidates = state.seats
         .map((s) => s.index)
         .filter((i) => i !== seat && state.players[i]!.stack.length > 0);
       if (candidates.length === 0) return null;
-      // Deterministic: lowest-index candidate.
-      const fromSeat = candidates[0]!;
-      return { type: 'flipNext', bySeat: seat, fromSeat };
+      const scored = candidates.map((i) => {
+        const p = state.players[i]!;
+        const placed = p.stack.length;
+        const skullsLeft = p.remaining.skulls; // not yet placed
+        const skullPlaced = 1 - skullsLeft; // 0 or 1
+        // Density: among the disks they placed, the chance the TOP card is
+        // a skull. Top is the LAST placed; risk-averse opponents place their
+        // skull middle/bottom. Use uniform prior modulated by whether they
+        // bid (bidders trust their bottom): we DON'T have full bid history,
+        // so we approximate with skullPlaced / placed.
+        const density = placed > 0 ? skullPlaced / placed : 0;
+        // Add small jitter so multiple AIs vary.
+        const j =
+          rngInt(
+            makeRng((state.seed ^ (seat * 41) ^ (i * 17)) >>> 0),
+            100,
+          ) / 100;
+        return { i, score: 1 - density + j * 0.2 };
+      });
+      // Pick highest-safety candidate.
+      scored.sort((a, b) => b.score - a.score);
+      return { type: 'flipNext', bySeat: seat, fromSeat: scored[0]!.i };
     }
 
     case 'roundOver': {

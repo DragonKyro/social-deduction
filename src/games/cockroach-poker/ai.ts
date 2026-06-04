@@ -35,18 +35,31 @@ function pickPassTarget(
   state: CockroachPokerPrivateState,
   selfSeat: SeatIndex,
   blockedSeats: SeatIndex[],
+  card: Creature | null,
 ): SeatIndex | null {
   const candidates = aliveSeats(state).filter(
     (i) => i !== selfSeat && !blockedSeats.includes(i),
   );
   if (candidates.length === 0) return null;
-  // Pick the seat with the highest total row count (most pressure).
-  candidates.sort((a, b) => {
-    const sa = sumRow(state.players[a]!.row);
-    const sb = sumRow(state.players[b]!.row);
-    return sb - sa;
+  // Weight each candidate by how close they are to losing on THIS card (3+
+  // already → highest priority target). Then break ties by total row count
+  // (overall pressure), then by a per-seat jitter so we don't always hit
+  // the same seat first.
+  const scored = candidates.map((i) => {
+    const p = state.players[i]!;
+    const onCreature = card ? p.row[card] : 0;
+    // Strong preference for seats already at 3 on this creature.
+    const lossWeight = onCreature >= 3 ? 100 : onCreature * 5;
+    const total = sumRow(p.row);
+    const jitter =
+      rngInt(
+        makeRng((state.seed ^ (selfSeat * 41) ^ (i * 23)) >>> 0),
+        100,
+      ) / 100;
+    return { i, score: lossWeight + total + jitter };
   });
-  return candidates[0]!;
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]!.i;
 }
 
 function sumRow(row: Record<Creature, number>): number {
@@ -95,7 +108,7 @@ export function aiChooseAction(
       const claim = willLie
         ? otherCreatures[rngFor(state, seat ^ 13) % otherCreatures.length]!
         : chosen;
-      const target = pickPassTarget(state, seat, []);
+      const target = pickPassTarget(state, seat, [], chosen);
       if (target === null) return null;
       return {
         type: 'startPass',
@@ -120,21 +133,31 @@ export function aiChooseAction(
         (i) => i !== seat && !p.seenBy.includes(i),
       );
       if (myCount >= 3 && passOptions.length > 0) {
-        // Pass on. Pick a target with low row counts.
-        const target = pickPassTarget(state, seat, p.seenBy);
+        // Must rid: pass it on, picking target by row pressure.
+        const target = pickPassTarget(state, seat, p.seenBy, card);
         if (target !== null) {
-          // Lie about the card to maximize pressure on target.
+          // Lie about the card to maximize pressure on target — 70% lie,
+          // 30% truth (so we're not fully predictable).
           const r = rngFor(state, seat ^ 23);
-          const claim =
-            r < 70
-              ? CREATURES.filter((c) => c !== card)[
-                  r % (CREATURES.length - 1)
-                ]!
-              : card;
+          const others = CREATURES.filter((c) => c !== card);
+          const claim = r < 70 ? others[r % others.length]! : card;
           return { type: 'peekAndPass', bySeat: seat, claim, target };
         }
       }
-      // Otherwise: call correctly based on what we know.
+      // Tactical pass-on opportunity: if we have NO copies of this card and
+      // can deflect to someone with many, do it (their row pressure suffers).
+      if (myCount === 0 && passOptions.length > 0) {
+        const r = rngFor(state, seat ^ 47);
+        if (r < 30) {
+          const target = pickPassTarget(state, seat, p.seenBy, card);
+          if (target !== null) {
+            const others = CREATURES.filter((c) => c !== card);
+            const claim = r < 15 ? others[r % others.length]! : card;
+            return { type: 'peekAndPass', bySeat: seat, claim, target };
+          }
+        }
+      }
+      // Otherwise: call correctly based on what we know (we peeked).
       return {
         type: 'decide',
         bySeat: seat,

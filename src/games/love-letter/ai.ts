@@ -55,21 +55,11 @@ function pickTarget(
 function chooseGuardGuess(
   state: LoveLetterPrivateState,
   seat: SeatIndex,
+  target: SeatIndex,
 ): Rank {
-  // Rotate through 2..8 deterministically based on round + seat. We DON'T
-  // peek at the target's actual card here — the AI is intentionally weak.
-  // Skip 1 (illegal). Skip already-fully-discarded ranks if all copies are
-  // visible (no chance of being held). Falls back to 5 if everything else
-  // is impossible.
-  const seen = new Map<Rank, number>();
-  for (const p of Object.values(state.players)) {
-    for (const c of p.discard) {
-      seen.set(c, (seen.get(c) ?? 0) + 1);
-    }
-  }
-  for (const c of state.setAsideFaceUp) {
-    seen.set(c, (seen.get(c) ?? 0) + 1);
-  }
+  // Probability the target holds rank `r`: among the unseen cards (deck +
+  // target's hand), what fraction are rank `r`? We don't peek at target.
+  // Skip 1 (illegal to guess Guard).
   const counts: Record<Rank, number> = {
     1: 5,
     2: 2,
@@ -80,14 +70,41 @@ function chooseGuardGuess(
     7: 1,
     8: 1,
   };
-  const order: Rank[] = [5, 6, 8, 3, 4, 7, 2];
-  const rng = makeRng(state.seed ^ (state.roundNumber * 17) ^ seat);
-  const offset = rngInt(rng, order.length);
-  for (let i = 0; i < order.length; i++) {
-    const rank = order[(i + offset) % order.length]!;
-    if ((seen.get(rank) ?? 0) < counts[rank]) return rank;
+  // Count seen cards (discards + setAsideFaceUp + my own hand).
+  const seen = new Map<Rank, number>();
+  for (const p of Object.values(state.players)) {
+    for (const c of p.discard) seen.set(c, (seen.get(c) ?? 0) + 1);
   }
-  return 5;
+  for (const c of state.setAsideFaceUp) seen.set(c, (seen.get(c) ?? 0) + 1);
+  // Subtract our own held cards so we don't double-count.
+  for (const c of state.players[seat]!.hand) {
+    seen.set(c, (seen.get(c) ?? 0) + 1);
+  }
+
+  // Among target's most-recent discards: if their last play was high (6,7,8),
+  // they almost certainly drew a fresh card last turn. We can't infer much.
+  // Heuristic boost: if target hasn't played a Priest/Baron/King (5,6) but
+  // those remain in circulation, slightly weight that they hold them.
+
+  // Score each rank 2..8 by P(target holds it). Probability ∝ (unseen copies).
+  const ranked: Array<{ rank: Rank; p: number }> = [];
+  for (let r = 2 as Rank; r <= 8; r = (r + 1) as Rank) {
+    const remaining = counts[r] - (seen.get(r) ?? 0);
+    if (remaining <= 0) continue;
+    // Weight higher ranks slightly more — they're harder to guess randomly,
+    // so a correct guess is more valuable. (We don't see the target's card
+    // either way; the EV equation is the same per-guess.)
+    ranked.push({ rank: r, p: remaining });
+  }
+  if (ranked.length === 0) return 5;
+
+  // Randomize among the TOP-2 by probability to avoid being predictable.
+  ranked.sort((a, b) => b.p - a.p);
+  const rng = makeRng(
+    (state.seed ^ (state.roundNumber * 17) ^ (seat * 23) ^ target) >>> 0,
+  );
+  const top = ranked.slice(0, Math.min(2, ranked.length));
+  return top[rngInt(rng, top.length)]!.rank;
 }
 
 // Decide which of the two held cards to play. Returns the rank to discard.
@@ -150,7 +167,7 @@ export function aiChooseAction(
         // No valid targets — engine should already have resolved noTargets.
         return null;
       }
-      const guess = chooseGuardGuess(state, seat);
+      const guess = chooseGuardGuess(state, seat, target);
       return { type: 'guardGuess', bySeat: seat, target, guess };
     }
 

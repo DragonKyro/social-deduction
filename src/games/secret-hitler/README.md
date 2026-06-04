@@ -4,7 +4,7 @@
 
 ## Scope
 
-**Base game** ships first. Track lengths + executive powers depend on player count:
+Base game (5–10 players). Track lengths + executive powers depend on player count:
 
 | Players | Liberals | Fascists (incl. Hitler) | Fascist powers |
 |---|---|---|---|
@@ -15,13 +15,31 @@
 | 9 | 5 | 4 | invest, invest, special, exec, exec |
 | 10 | 6 | 4 | invest, invest, special, exec, exec |
 
-**Variants** (Phase 3+):
-- Rebalanced 6p (community house-rule)
+Veto unlocks at 5 enacted fascist policies. Election tracker maxes at 3 (force top-deck enact, no power, term limits reset). Term limits: last-elected chancellor always; last-elected president unless ≤5 alive.
 
 ## Hidden info
 
-Two layers of hidden info make this game stricter than ONUW:
-1. **Roles** — fascists know each other and know Hitler (except in 5-6p Hitler doesn't know fascists). Encoded in `yourPartyKnowledge`.
-2. **Policy hand** — only the president sees their 3-card draw, only the chancellor sees the 2 cards passed to them. `yourLegislativeHand` is the redaction slot; everyone else only sees deck/discard sizes.
+Two layers of redaction:
+1. **Roles** — fascists know each other and Hitler. At 5-6 players Hitler also sees the fascists (small-table rule). At 7+ Hitler is blind. Encoded in `yourPartyKnowledge`.
+2. **Policy hand** — only the president sees their 3-card draw; only the chancellor sees the 2 cards passed to them. `yourLegislativeHand` is the redaction slot.
 
-The host enforces deck integrity (no peer ever holds the deck order). When the deck reshuffles, the new order is determined by seeded RNG so a future replay can reconstruct it.
+Executive-power results are also private to the actor:
+- `yourPendingInvestigationResult` flashes the investigated player's party (Hitler reads as Fascist) to the investigating president once.
+- `yourInvestigations` keeps the persistent list for the investigator.
+- `yourPeek` shows the next 3 policies only to the peeking president; the deck order is not consumed.
+
+The host never sends another peer's view — that's the chokepoint per the engine contract.
+
+## State machine
+
+`setup → nomination → electionVote → electionReveal → legislativePresident → legislativeChancellor → (vetoRequested?) → policyReveal → (execInvestigate/execSpecialElection/execPeek/execExecute → respective reveal/ack)? → nomination`
+
+A failed election at tracker=3 force-enacts the top card via `topDeckReveal`, clears term limits, and rotates.
+
+## Reshuffles
+
+Deck reshuffles when fewer than 3 cards remain (or 1 for top-deck force enact). The shuffle is seeded by `seed ^ 0xc1ea_ca11 + reshuffleCount * 0x9e3779b1` so replays are deterministic. The deck is never broadcast — peers only see `policyDeckSize` / `policyDiscardSize`.
+
+## AI
+
+Heuristic AI in `ai.ts`. Liberals enact liberals + try to vote down suspect governments; fascists discard liberal policies and vote up fascist chancellors. Hitler stays quiet at small tables.

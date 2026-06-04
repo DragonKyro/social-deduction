@@ -1,5 +1,6 @@
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { OnuwAction } from './actions';
+import { aiChooseAction } from './ai';
 import { ROLES } from './roles';
 import { buildInitialPrivate, validateRolePool } from './setup';
 import {
@@ -675,6 +676,8 @@ export const onuwModule: GameModule<OnuwPrivateState, OnuwPublicState, OnuwActio
   isFinished(state: OnuwPrivateState): boolean {
     return state.phase === 'gameOver';
   },
+
+  aiChooseAction,
 
   defaultConfig(playerCount: number): GameConfig {
     const baseRoles: OnuwRoleId[] = ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker'];

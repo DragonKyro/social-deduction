@@ -183,6 +183,14 @@ function hostApplyActionAndBroadcast(
   if (!claimedSeat || claimedSeat.uuid !== envelope.byUuid || claimedSeat.isAI) {
     return;
   }
+  // Defense against action-payload spoofing: every game's action shape carries
+  // a `bySeat` field that the per-game reducer trusts. A peer that owns seat 2
+  // could otherwise submit an envelope with `envelope.bySeat=2` but
+  // `action.bySeat=5` to act as another player. Enforce equality.
+  const actionBySeat = (envelope.action as { bySeat?: SeatIndex } | null)?.bySeat;
+  if (typeof actionBySeat === 'number' && actionBySeat !== envelope.bySeat) {
+    return;
+  }
   hostApplyAndBroadcastInternal(envelope);
 }
 

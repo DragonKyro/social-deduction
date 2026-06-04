@@ -118,17 +118,36 @@ function nextRaise(
     }
   }
 
-  // Filter to those whose probability beats the threshold.
-  const scored = candidates
-    .map((c) => ({ bid: c, p: pBidTrue(state, ownSeat, c).atLeast }))
-    .filter((x) => x.p >= 0.5);
-  if (scored.length === 0) {
-    // Fall back: cheapest legal raise.
+  // Score all candidates.
+  const scored = candidates.map((c) => ({
+    bid: c,
+    p: pBidTrue(state, ownSeat, c).atLeast,
+  }));
+  const safe = scored.filter((x) => x.p >= 0.5);
+
+  // Bluff mixer: with some probability, place a slightly LESS safe bid (a
+  // semi-bluff). This breaks the rule "the bot only bids when ≥50% safe",
+  // which is exploitable. Bluff rate scales with how many dice remain (more
+  // dice → less risky to bluff; opponents have less posterior info).
+  const ownDice = state.players[ownSeat]!.diceCount;
+  const bluffP = Math.min(0.3, 0.06 + 0.04 * (totalDice - ownDice));
+  const j = rngInt(makeRng((state.seed ^ (ownSeat * 71) ^ (state.roundNumber * 13)) >>> 0), 100) / 100;
+  const wantBluff = j < bluffP;
+
+  if (wantBluff) {
+    // Pick a semi-safe (0.3-0.5) candidate if one exists.
+    const semi = scored.filter((x) => x.p >= 0.3 && x.p < 0.5);
+    if (semi.length > 0) {
+      semi.sort((a, b) => b.p - a.p);
+      return semi[0]!.bid;
+    }
+  }
+
+  if (safe.length === 0) {
     return candidates[0] ?? null;
   }
-  // Pick the one with the highest probability — prefers cheaper raises.
-  scored.sort((a, b) => b.p - a.p);
-  return scored[0]!.bid;
+  safe.sort((a, b) => b.p - a.p);
+  return safe[0]!.bid;
 }
 
 export function aiChooseAction(

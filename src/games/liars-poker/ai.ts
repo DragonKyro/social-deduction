@@ -187,19 +187,43 @@ export function aiChooseAction(
           return { type: 'callLiar', bySeat: seat };
         }
       }
-      // Pick the cheapest legal raise.
       const candidates = generateCandidates(state, seat).filter(
         (c) => prev === null || compareClaim(prev, c) === -1,
       );
-      // Sort by relative strength ascending — cheapest raise first.
-      const ranked = candidates
-        .map((c) => ({
-          claim: c,
-          p: pClaimTrue(state, seat, c),
-        }))
-        .filter((x) => x.p >= 0.5);
-      if (ranked.length === 0) {
-        // Nothing safe — must call if there's a claim, else open a low bluff.
+      const scored = candidates.map((c) => ({
+        claim: c,
+        p: pClaimTrue(state, seat, c),
+      }));
+
+      // Bluff mixer: with small probability, leap to a much stronger (but
+      // less safe) claim. Punishes opponents who learn the "always pick
+      // weakest safe claim" pattern. Bluff rate scales with own card count
+      // (more cards = more cover for a bluff).
+      const me = state.players[seat]!;
+      const bluffP = Math.min(
+        0.22,
+        0.06 + 0.04 * (me.cardCount || state.cardsPerPlayer),
+      );
+      const jr = makeRng(
+        (state.seed ^ (seat * 0x9e37) ^ (state.roundNumber * 53)) >>> 0,
+      );
+      const j = rngInt(jr, 100) / 100;
+      const wantBluff = j < bluffP;
+
+      const safe = scored.filter((x) => x.p >= 0.5);
+      const semi = scored.filter((x) => x.p >= 0.25 && x.p < 0.5);
+
+      if (wantBluff && semi.length > 0) {
+        // Sort by strength descending — pick a STRONGER claim than necessary.
+        semi.sort((a, b) =>
+          prev === null
+            ? compareClaim(b.claim, a.claim)
+            : compareClaim(b.claim, a.claim),
+        );
+        return { type: 'placeClaim', bySeat: seat, claim: semi[0]!.claim };
+      }
+
+      if (safe.length === 0) {
         if (prev !== null) {
           return { type: 'callLiar', bySeat: seat };
         }
@@ -209,15 +233,9 @@ export function aiChooseAction(
           claim: { kind: 'highCard', rank: 7 as CardRank },
         };
       }
-      // Pick the WEAKEST safe claim (cheapest raise that still meets the
-      // threshold). Sort by compareClaim ascending: lower-ranked first.
-      ranked.sort((a, b) => {
-        if (prev === null) {
-          return compareClaim(a.claim, b.claim);
-        }
-        return compareClaim(a.claim, b.claim);
-      });
-      return { type: 'placeClaim', bySeat: seat, claim: ranked[0]!.claim };
+      // Pick the WEAKEST safe claim.
+      safe.sort((a, b) => compareClaim(a.claim, b.claim));
+      return { type: 'placeClaim', bySeat: seat, claim: safe[0]!.claim };
     }
 
     case 'gameOver':

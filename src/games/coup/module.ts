@@ -1,6 +1,7 @@
 import { makeRng, rngShuffle } from '@/engine/rng';
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { CoupGameAction } from './actions';
+import { aiChooseAction } from './ai';
 import { CHARACTERS, blockersFor } from './characters';
 import { buildInitialState, validateCharacterSetFull } from './setup';
 import type {
@@ -598,6 +599,8 @@ export const coupModule: GameModule<CoupPrivateState, CoupPublicState, CoupGameA
   isFinished(state: CoupPrivateState): boolean {
     return state.phase === 'gameOver';
   },
+
+  aiChooseAction,
 
   defaultConfig(playerCount: number): GameConfig {
     const options: CoupOptions = {

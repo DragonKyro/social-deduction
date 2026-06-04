@@ -5,6 +5,7 @@ import { getDisplayName, setDisplayName } from '@/net';
 import { useNetworkStore } from '@/store/networkStore';
 import { AvalonSetup } from '@/games/avalon/ui/AvalonSetup';
 import { OnuwSetup } from '@/games/onuw/ui/OnuwSetup';
+import { SecretHitlerSetup } from '@/games/secret-hitler/ui/SecretHitlerSetup';
 import { CoupSetup } from '@/games/coup/ui/CoupSetup';
 import { CodenamesSetup } from '@/games/codenames/ui/CodenamesSetup';
 import { CrossCluesSetup } from '@/games/cross-clues/ui/CrossCluesSetup';
@@ -23,6 +24,7 @@ type Stage =
   | { kind: 'menu' }
   | { kind: 'avalon-setup' }
   | { kind: 'onuw-setup' }
+  | { kind: 'secret-hitler-setup' }
   | { kind: 'coup-setup' }
   | { kind: 'codenames-setup' }
   | { kind: 'cross-clues-setup' }
@@ -42,6 +44,9 @@ export function HomeMenu() {
   }
   if (stage.kind === 'onuw-setup') {
     return <OnuwSetup onBack={() => setStage({ kind: 'menu' })} />;
+  }
+  if (stage.kind === 'secret-hitler-setup') {
+    return <SecretHitlerSetup onBack={() => setStage({ kind: 'menu' })} />;
   }
   if (stage.kind === 'coup-setup') {
     return <CoupSetup onBack={() => setStage({ kind: 'menu' })} />;
@@ -74,6 +79,7 @@ export function HomeMenu() {
   const pick = (id: GameId) => {
     if (id === 'avalon') setStage({ kind: 'avalon-setup' });
     else if (id === 'onuw') setStage({ kind: 'onuw-setup' });
+    else if (id === 'secret-hitler') setStage({ kind: 'secret-hitler-setup' });
     else if (id === 'coup') setStage({ kind: 'coup-setup' });
     else if (id === 'codenames') setStage({ kind: 'codenames-setup' });
     else if (id === 'cross-clues') setStage({ kind: 'cross-clues-setup' });
@@ -87,6 +93,7 @@ export function HomeMenu() {
   const wired: GameId[] = [
     'onuw',
     'avalon',
+    'secret-hitler',
     'coup',
     'codenames',
     'cross-clues',

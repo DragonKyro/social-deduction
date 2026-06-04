@@ -90,27 +90,26 @@ See each game's README:
 
 ## Roadmap
 
-- [x] Phase 0 — Project scaffold (this commit)
-- [ ] Phase 0b — Home menu wiring, solo + lobby flow, persistent identity
-- [ ] Phase 1 — One Night Ultimate Werewolf base game (11 base roles, night order, day vote, hot-seat)
-- [ ] Phase 2 — ONUW Daybreak expansion (10 expansion roles incl. Doppelganger)
-- [ ] Phase 2b — ONUW Bonus Roles pack (16 consolidated bonus roles + 6 artifact tokens + #11/#12 seat tokens)
-- [ ] Phase 3 — Secret Hitler base game (5-10p)
-- [ ] Phase 4 — Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
-- [ ] Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots — independent, stackable)
-- [x] Phase 5 — Coup classic base game (5 characters, challenge/block state machine, exchange, lose-influence)
-- [x] Phase 5b/c — Coup: G54 + Anarchy as a unified picker. Classic, G54 (25-character pool), and Anarchy (+7 characters) all share one setup screen and one character-rules table at `src/games/coup/characters.ts`. **All 37 characters playable** end-to-end. Engine handles pile-on (Capitalist / Financier), group-rally chip-in (Protestor / Anarchist), force-swap (Newscaster / Reporter / Producer / Lobbyist / Diplomat), token grants (Peacekeeping / Treaty / weapons / reviveBlessed), custom-amount steal (Speculator), expanded block tables (Bishop / Lawyer / Judge / Paramilitary / Guerrilla coup-block), and wealth redistribution (Treasurer / Socialist / World Bank). Same-role-only blocking applies in G54 mode; Classic keeps cross-blocking. **Category balance**: canonical G54 is one character per base category (Finance / Comms / Force / Special Interest / Movement; +1 Anarchy with the expansion). Setup enforces total character count strictly (5 / 5 / 6) and surfaces a non-blocking warning when distribution drifts off one-per-category. Characters whose canonical rulebook source is unclear are prefixed `(house rule)` in their description so a player at the table isn't misled. Social Media general action still deferred.
-- [ ] Phase 6 — Online multiplayer wiring (Trystero, host-redacted views, lobby, rejoin)
-- [ ] Phase 7 — AI for all four games (one heuristic level per game)
+- [x] Phase 0 — Project scaffold
+- [x] Phase 0b — Home menu wiring, solo + lobby flow, persistent identity
+- [x] Phase 1 — One Night Ultimate Werewolf base game (11 base roles, night order, day vote, hot-seat)
+- [x] Phase 2 — ONUW Daybreak expansion (10 expansion roles incl. Doppelganger)
+- [x] Phase 2b — ONUW Bonus Roles pack (16 consolidated bonus roles + 6 artifact tokens)
+- [x] Phase 3 — Secret Hitler base game (5–10p)
+- [x] Phase 4 — Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
+- [ ] Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots) — scaffolded only
+- [x] Phase 5/5b/c — Coup Classic + G54 + Anarchy as a unified picker. All 37 characters playable end-to-end. Engine handles pile-on (Capitalist / Financier), group-rally chip-in (Protestor / Anarchist), force-swap (Newscaster / Reporter / Producer / Lobbyist / Diplomat), token grants (Peacekeeping / Treaty / weapons / reviveBlessed), custom-amount steal (Speculator), expanded block tables (Bishop / Lawyer / Judge / Paramilitary / Guerrilla coup-block), and wealth redistribution (Treasurer / Socialist / World Bank). Same-role-only blocking applies in G54 mode; Classic keeps cross-blocking. Category balance enforced strictly on total count; non-blocking warning when distribution drifts off one-per-category. House-rule characters prefixed `(house rule)` in their description. Social Media general action still deferred.
+- [x] Phase 6 — Online multiplayer wiring (Trystero, host-redacted views, lobby, rejoin)
+- [x] Phase 7 — Heuristic AI for all 11 games. Probability-driven where applicable (binomial for Liar's Dice, Monte-Carlo for Liar's Poker, Bayesian-prior bluff scheduler for Coup, suspicion-graph for Secret Hitler / Avalon). All AIs that bluff include randomized action-mixing so they're not exploitable by pattern-recognition.
 - [ ] Phase 8 — In-game chat + phase-gated visibility (night-silence, dead-spectate, etc.)
 - [ ] Phase 9 — Game history / replay (host records action log, redacted per-seat replay)
 - [x] Phase 10 — Cross Clues (coop word game): 5×5 secret-word grid, 25-coord deck, host-authoritative clue-giver redaction, themed word packs (Standard / Spicy / Kids), final-score tiers (16 great / 21 legendary / 25 perfect). No winner team — uses `score` + `scoreRating` instead.
-- [x] Phase 11 — Codenames (party word-association, 2-team).
-- [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players, base-set 16-card deck (Princess/Countess/King/Prince ×2/Handmaid ×2/Baron ×2/Priest ×2/Guard ×5). Per-seat single hidden card is the only redaction; Priest peek is privately addressed to the actor. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
-- [x] Phase 13 — Skull (3–6p bluffing): each player's 3 roses + 1 skull disks stacked face-down per seat (single chokepoint redaction). Configurable challenge target (1/2/3 wins, default 2). Phases: `placeOpening` → `placing` → `bidding` → `revealing` → `roundOver` → `gameOver`. Challenger flips from own stack first, then chooses opponent stacks (top-down); hit a skull → drop a disk (rose preferred). Heuristic AI.
-- [x] Phase 14 — Liar's Dice (2–8p): 5 dice per seat (rerolled per round); per-seat `yourDice` redacted, on-reveal everyone sees `lastReveal.allDice`. Options: 1s-wild (counts toward any non-1 bid) and spot-on (caller wins if bid is exactly right, else they lose). Binomial-prior AI uses unseen-dice math to call/raise.
-- [x] Phase 15 — Liar's Poker (2–8p): standard 52-card deck, configurable 1–5 cards/seat (default 3). Combined-pool verification — declared hand must exist across the union of all hands. Standard 8-category ranking EXCEPT plain flushes: declared as `{topRank, suit}`, **lower top card is stronger** (must have exact top + 4 strictly-lower same-suit cards). Straight flushes use standard high-rank-wins. Hand compare + existence live in `src/games/liars-poker/hands.ts` with focused test coverage for the inverted-flush rule. Optional dummy-hand "last life" — a player who loses their last card gets one round with a single dealt card they can't see but everyone else can. Monte-Carlo prior AI.
-- [x] Phase 16 — Cockroach Poker (3–6p): 64-card deck (8 creatures × 8). Pass face-down with a claim; receiver believes / rejects / peeks + passes onward. Chokepoint redaction includes peek-chain tracking (`pass.seenBy`) so previously-peeked seats see the card too. Lose on 4 of any one creature face-up.
+- [x] Phase 11 — Codenames (party word-association, 2-team)
+- [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players. Per-seat single hidden card is the only redaction; Priest peek is privately addressed to the actor. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
+- [x] Phase 13 — Skull (3–6p bluffing): 3 roses + 1 skull per seat, single chokepoint stack redaction. Configurable challenge target (1/2/3 wins, default 2). Challenger flips own stack first, then chooses opponent stacks; hit a skull → drop a disk (rose preferred). AI uses a skull-density posterior for flip selection.
+- [x] Phase 14 — Liar's Dice (2–8p): 5 dice per seat, per-seat `yourDice` redacted, on-reveal `lastReveal.allDice` becomes public. Options: 1s-wild, spot-on. Binomial-prior AI with bluff-mix on raises.
+- [x] Phase 15 — Liar's Poker (2–8p): 52-card deck, configurable 1–5 cards/seat. Combined-pool verification across all hands. Standard 8-category ranking EXCEPT plain flushes: **lower top card is stronger** (must have exact top + 4 strictly-lower same-suit cards). Straight flushes use standard high-rank-wins. Optional dummy-hand "last life" — losing your last card gives you one round with a card you can't see but everyone else can. Monte-Carlo prior AI with bluff-mix.
+- [x] Phase 16 — Cockroach Poker (3–6p): 64-card deck (8 creatures × 8). Pass face-down with a claim; receiver believes / rejects / peeks + passes onward. Chokepoint redaction includes peek-chain tracking (`pass.seenBy`). Lose on 4 of any one creature face-up.
 
 ## Non-goals (do not implement)
 
@@ -122,12 +121,11 @@ See each game's README:
 
 ## Where to start next
 
-Phase 0b: wire `HomeMenu` to actually pick a game and start a solo session. The pieces needed:
-1. A `solo` mode in `networkStore` that doesn't open a Trystero room.
-2. A "solo runner" that lives in `gameStore` (or beside it) — applies actions to private state directly and calls `viewFor` to refresh the public view.
-3. `HomeMenu` buttons that build the initial `GameConfig` from `module.defaultConfig`, call `module.createInitialState`, and stuff the result into the store.
+Open work, roughly in priority order:
 
-Once solo works for any one game (ONUW is smallest — start there), Phase 1's real game logic can land without UI/store rework.
+1. **Phase 8 — Chat + phase-gated visibility.** Wire chat into the per-game phase rules (ONUW night silence, dead-spectate views for Secret Hitler / Avalon).
+2. **Phase 9 — Replay.** Host records the action log; replay flows through `applyAction` from a fresh `createInitialState` and re-redacts per seat for playback.
+3. **Phase 4b — Avalon optional modules.** Lady of the Lake / Excalibur / Two Lancelots are scaffolded in state but not driven by `applyAction`. Wire each one as an independent stackable feature.
 
 ## Reference: Catan project
 
