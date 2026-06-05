@@ -23,8 +23,28 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build
+      - name: Show toolchain versions
+        run: |
+          node --version
+          npm --version
+          echo "free memory:"
+          free -h || true
+      - name: npm ci (verbose)
+        run: npm ci --no-audit --no-fund --foreground-scripts --loglevel=verbose 2>&1 | tail -200
+      - name: Run typecheck (separate step so we see TS errors)
+        run: npx tsc --noEmit 2>&1 | tail -100
+      - name: Run vite build (separate step so we isolate the failure)
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+        run: npx vite build 2>&1 | tail -100
+      - name: Show dist/ contents on failure
+        if: failure()
+        run: |
+          ls -la dist || echo "no dist/"
+          echo "---disk---"
+          df -h
+          echo "---memory---"
+          free -h || true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
