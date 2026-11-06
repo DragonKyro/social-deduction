@@ -40,6 +40,9 @@ export interface CodenamesSeatState {
   team: TeamColor;
   // One spymaster per team. The other team members are operatives.
   role: 'spymaster' | 'operative';
+  // Driven by the host's AI. Public (the lobby shows it anyway); the AI uses
+  // it so an AI operative defers to human teammates instead of racing them.
+  isAI: boolean;
 }
 
 // Last clue the current spymaster gave. Drives the guessing UI and the
@@ -118,6 +121,7 @@ export interface CodenamesPublicSeatState {
   name: string;
   team: TeamColor;
   role: 'spymaster' | 'operative';
+  isAI: boolean;
 }
 
 export interface CodenamesPublicState {

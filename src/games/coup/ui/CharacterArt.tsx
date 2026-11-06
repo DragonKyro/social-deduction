@@ -1,472 +1,318 @@
+import { memo } from 'react';
 import type { CSSProperties } from 'react';
+import { useSvgIds } from '@/ui/shared/svg';
 import { CHARACTERS } from '../characters';
+import type { CoupCategory } from '../characters';
 import type { CoupCharacter } from '../state';
+import { Portrait } from './portraits';
+import type { PortraitPalette, SvgIds } from './portraits';
 
 // ============================================================================
-// SVG character art for Coup. Card-style 100×108 shield with a category-
-// colored gradient + a glyph per character. Style matches ONUW / Avalon
-// role art so the look is consistent across games.
+// Coup card art — "gilded dystopian court".
+//
+// Every character is a framed portrait card (63:88): black lacquer body,
+// double gold-leaf frame, arched portrait window, ribbon nameplate in Cinzel,
+// and a category gem. The Classic five have painted busts; the rest carry a
+// heraldic medallion (see portraits.tsx). `CardBack` is the shared ornate
+// back used for every face-down influence and the court deck.
 // ============================================================================
 
-export interface CharacterArtProps {
-  character: CoupCharacter;
-  size?: number;
-  style?: CSSProperties;
-  faded?: boolean;
+export const CARD_RATIO = 168 / 120;
+
+interface CategoryTheme {
+  label: string;
+  short: string;
+  gem: string;
+  palette: PortraitPalette;
 }
 
-interface Palette {
-  primary: string;
-  secondary: string;
-  emblem: string;
-  rim: string;
-}
-
-const CLASSIC: Palette = {
-  primary: '#1f2937',
-  secondary: '#0f172a',
-  emblem: '#fbbf24',
-  rim: '#fde68a',
-};
-const FINANCE: Palette = {
-  primary: '#14532d',
-  secondary: '#166534',
-  emblem: '#bbf7d0',
-  rim: '#86efac',
-};
-const COMMS: Palette = {
-  primary: '#1e3a8a',
-  secondary: '#1e40af',
-  emblem: '#bfdbfe',
-  rim: '#93c5fd',
-};
-const FORCE: Palette = {
-  primary: '#7f1d1d',
-  secondary: '#991b1b',
-  emblem: '#fecaca',
-  rim: '#fca5a5',
-};
-const SPECIAL: Palette = {
-  primary: '#581c87',
-  secondary: '#6b21a8',
-  emblem: '#f5d0fe',
-  rim: '#e9d5ff',
-};
-const MOVEMENT: Palette = {
-  primary: '#0f766e',
-  secondary: '#0d9488',
-  emblem: '#a7f3d0',
-  rim: '#6ee7b7',
-};
-const ANARCHY: Palette = {
-  primary: '#7c2d12',
-  secondary: '#c2410c',
-  emblem: '#fdba74',
-  rim: '#fed7aa',
+export const CATEGORY_THEME: Record<CoupCategory, CategoryTheme> = {
+  classic: { label: 'Classic', short: 'Classic', gem: '#f3d27a', palette: { bg0: '#6b4a1e', bg1: '#1d1206', ink: '#2a1708' } },
+  finance: { label: 'Finance', short: 'Finance', gem: '#4fd18b', palette: { bg0: '#2c8a5c', bg1: '#06261a', ink: '#082a1b' } },
+  communications: { label: 'Communications', short: 'Comms', gem: '#6aa8ff', palette: { bg0: '#2f5fa8', bg1: '#081a36', ink: '#0a1d3d' } },
+  force: { label: 'Force', short: 'Force', gem: '#ff6b6b', palette: { bg0: '#9c2230', bg1: '#2a050b', ink: '#33060d' } },
+  specialInterest: { label: 'Special Interest', short: 'Special', gem: '#c58bff', palette: { bg0: '#6f3aa6', bg1: '#1d0833', ink: '#220a3b' } },
+  movement: { label: 'Movement', short: 'Movement', gem: '#4fe0cf', palette: { bg0: '#1d8a80', bg1: '#04261f', ink: '#062b26' } },
+  anarchy: { label: 'Anarchy', short: 'Anarchy', gem: '#ff9a4a', palette: { bg0: '#b4501c', bg1: '#2a0c03', ink: '#2f0e04' } },
 };
 
-function paletteFor(c: CoupCharacter): Palette {
-  const cat = CHARACTERS[c].category;
-  switch (cat) {
-    case 'classic':
-      return CLASSIC;
-    case 'finance':
-      return FINANCE;
-    case 'communications':
-      return COMMS;
-    case 'force':
-      return FORCE;
-    case 'specialInterest':
-      return SPECIAL;
-    case 'movement':
-      return MOVEMENT;
-    case 'anarchy':
-      return ANARCHY;
-  }
-}
-
-// Each character gets a small glyph centered on the shield (50×56). The
-// glyphs use fill={p.emblem} so they pick up the per-character palette.
-function Glyph({ character, p }: { character: CoupCharacter; p: Palette }) {
-  switch (character) {
-    case 'duke':
-    case 'banker':
-      // Crown
-      return (
-        <g fill={p.emblem}>
-          <path d="M25 18 L35 32 L50 14 L65 32 L75 18 L72 42 L28 42 Z" stroke={p.rim} strokeWidth={1.5} />
-          <circle cx={25} cy={18} r={3} />
-          <circle cx={50} cy={14} r={3.5} />
-          <circle cx={75} cy={18} r={3} />
-        </g>
-      );
-    case 'assassin':
-    case 'assassinG54':
-    case 'soldier':
-      // Dagger
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1}>
-          <path d="M50 8 L56 38 L50 50 L44 38 Z" />
-          <rect x={42} y={38} width={16} height={5} />
-          <path d="M50 43 L50 56" stroke={p.emblem} strokeWidth={3} />
-        </g>
-      );
-    case 'captain':
-    case 'thief':
-      // Hook / anchor
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={4} strokeLinecap="round">
-          <circle cx={50} cy={16} r={6} stroke={p.emblem} fill={p.rim} />
-          <path d="M50 22 L50 46" />
-          <path d="M30 36 Q30 52 50 52 Q70 52 70 36" />
-          <path d="M36 32 L64 32" />
-        </g>
-      );
-    case 'ambassador':
-    case 'inquisitor':
-      // Scroll
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={26} y={14} width={48} height={36} rx={4} />
-          <path d="M32 22 L68 22 M32 30 L68 30 M32 38 L60 38" stroke={p.primary} strokeWidth={1.5} fill="none" />
-        </g>
-      );
-    case 'contessa':
-      // Shield with cross
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={2}>
-          <path d="M50 10 L72 18 L70 38 Q70 52 50 56 Q30 52 30 38 L28 18 Z" />
-          <path d="M50 18 L50 48 M36 32 L64 32" stroke={p.primary} strokeWidth={3} fill="none" />
-        </g>
-      );
-    case 'taxCollector':
-      // Coin stack
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <ellipse cx={50} cy={44} rx={20} ry={5} />
-          <ellipse cx={50} cy={36} rx={20} ry={5} />
-          <ellipse cx={50} cy={28} rx={20} ry={5} />
-          <ellipse cx={50} cy={20} rx={20} ry={5} />
-        </g>
-      );
-    case 'mercenary':
-      // Two crossed swords
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
-          <path d="M28 12 L72 52" />
-          <path d="M72 12 L28 52" />
-          <circle cx={50} cy={32} r={4} fill={p.rim} />
-        </g>
-      );
-    case 'spy':
-      // Eye
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <ellipse cx={50} cy={32} rx={20} ry={12} />
-          <circle cx={50} cy={32} r={6} fill={p.primary} />
-          <circle cx={52} cy={30} r={2} fill={p.emblem} />
-        </g>
-      );
-    case 'plantationOwner':
-      // Wheat
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <path d="M50 12 L50 54" stroke={p.emblem} strokeWidth={3} />
-          <ellipse cx={42} cy={20} rx={4} ry={8} transform="rotate(-20 42 20)" />
-          <ellipse cx={58} cy={20} rx={4} ry={8} transform="rotate(20 58 20)" />
-          <ellipse cx={42} cy={32} rx={4} ry={8} transform="rotate(-20 42 32)" />
-          <ellipse cx={58} cy={32} rx={4} ry={8} transform="rotate(20 58 32)" />
-          <ellipse cx={42} cy={44} rx={4} ry={8} transform="rotate(-20 42 44)" />
-          <ellipse cx={58} cy={44} rx={4} ry={8} transform="rotate(20 58 44)" />
-        </g>
-      );
-    case 'capitalist':
-    case 'financier':
-      // Top hat + dollar
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={32} y={12} width={36} height={22} />
-          <rect x={26} y={32} width={48} height={4} />
-          <text
-            x={50}
-            y={56}
-            textAnchor="middle"
-            fontSize={20}
-            fontWeight={700}
-            fontFamily="sans-serif"
-            fill={p.emblem}
-          >
-            $
-          </text>
-        </g>
-      );
-    case 'speculator':
-      // Chart line up
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
-          <path d="M20 50 L36 36 L48 42 L72 18" />
-          <path d="M72 18 L62 18 M72 18 L72 28" />
-        </g>
-      );
-    case 'treasurer':
-      // Two coins exchanging
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <circle cx={35} cy={32} r={14} />
-          <circle cx={65} cy={32} r={14} />
-          <path d="M28 50 L72 50" stroke={p.emblem} strokeWidth={2} />
-          <text x={35} y={37} textAnchor="middle" fontSize={14} fill={p.primary}>$</text>
-          <text x={65} y={37} textAnchor="middle" fontSize={14} fill={p.primary}>$</text>
-        </g>
-      );
-    case 'newscaster':
-    case 'reporter':
-      // Microphone
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={42} y={14} width={16} height={22} rx={8} />
-          <path d="M34 30 Q34 44 50 44 Q66 44 66 30" fill="none" stroke={p.emblem} strokeWidth={2} />
-          <path d="M50 44 L50 54" stroke={p.emblem} strokeWidth={3} />
-        </g>
-      );
-    case 'producer':
-      // Clapper / video
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={22} y={28} width={56} height={28} />
-          <path d="M22 16 L78 22 L78 28 L22 28 Z" />
-          <path d="M30 16 L34 24 M44 16 L48 24 M58 16 L62 24" stroke={p.primary} strokeWidth={1.5} />
-        </g>
-      );
-    case 'lobbyist':
-      // Briefcase
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={22} y={24} width={56} height={32} rx={3} />
-          <rect x={38} y={16} width={24} height={10} />
-          <path d="M22 38 L78 38" stroke={p.primary} strokeWidth={1.5} />
-        </g>
-      );
-    case 'guerrilla':
-      // Bandana / star
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <path d="M50 12 L58 32 L78 32 L62 44 L68 64 L50 52 L32 64 L38 44 L22 32 L42 32 Z" />
-        </g>
-      );
-    case 'judge':
-      // Gavel
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={20} y={50} width={60} height={6} />
-          <rect x={30} y={16} width={24} height={12} transform="rotate(-30 42 22)" />
-          <rect x={36} y={22} width={28} height={6} transform="rotate(60 50 28)" />
-        </g>
-      );
-    case 'mayor':
-      // City building
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={28} y={28} width={44} height={28} />
-          <path d="M22 28 L50 12 L78 28" />
-          <rect x={36} y={36} width={6} height={6} fill={p.primary} />
-          <rect x={48} y={36} width={6} height={6} fill={p.primary} />
-          <rect x={58} y={36} width={6} height={6} fill={p.primary} />
-        </g>
-      );
-    case 'priest':
-      // Cross
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={44} y={12} width={12} height={48} />
-          <rect x={28} y={28} width={44} height={12} />
-        </g>
-      );
-    case 'lawyer':
-      // Scales of justice
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={2.5} strokeLinecap="round">
-          <path d="M50 14 L50 54" />
-          <path d="M30 24 L70 24" />
-          <path d="M30 24 L24 38 L36 38 Z" fill={p.emblem} />
-          <path d="M70 24 L64 38 L76 38 Z" fill={p.emblem} />
-        </g>
-      );
-    case 'bishop':
-      // Mitre
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <path d="M50 10 Q40 22 36 38 L36 56 L64 56 L64 38 Q60 22 50 10 Z" />
-          <path d="M50 26 L50 50 M40 36 L60 36" stroke={p.primary} strokeWidth={2} fill="none" />
-        </g>
-      );
-    case 'protestor':
-      // Raised fist
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={36} y={24} width={28} height={26} rx={4} />
-          <rect x={34} y={20} width={32} height={8} rx={3} />
-          <rect x={42} y={50} width={16} height={10} />
-        </g>
-      );
-    case 'peacekeeper':
-      // Dove / shield
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <path d="M50 14 L66 24 L62 44 Q56 56 50 58 Q44 56 38 44 L34 24 Z" />
-          <circle cx={50} cy={28} r={3} fill={p.primary} />
-          <circle cx={50} cy={28} r={1.5} fill={p.emblem} />
-        </g>
-      );
-    case 'foreignConsular':
-      // Handshake
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
-          <path d="M22 36 L36 30 L48 38 L60 30 L72 36" />
-          <path d="M40 38 L40 50 M58 38 L58 50" />
-          <path d="M36 50 L62 50" stroke={p.emblem} strokeWidth={3} />
-        </g>
-      );
-    case 'diplomat':
-      // Envelope
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={22} y={20} width={56} height={32} />
-          <path d="M22 20 L50 40 L78 20" fill="none" stroke={p.primary} strokeWidth={2} />
-        </g>
-      );
-    case 'anarchist':
-      // Circled A
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={3.5} strokeLinecap="round">
-          <circle cx={50} cy={34} r={20} />
-          <path d="M40 44 L50 22 L60 44 M44 38 L56 38" />
-        </g>
-      );
-    case 'armsDealer':
-      // Crossed rifles
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={3} strokeLinecap="round">
-          <path d="M22 14 L74 50" />
-          <path d="M74 14 L22 50" />
-          <circle cx={48} cy={32} r={3} fill={p.rim} />
-        </g>
-      );
-    case 'paramilitary':
-      // Helmet
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <path d="M22 38 Q22 16 50 16 Q78 16 78 38 L78 44 L22 44 Z" />
-          <rect x={22} y={44} width={56} height={6} />
-        </g>
-      );
-    case 'socialist':
-      // Equality bars
-      return (
-        <g fill={p.emblem} stroke={p.rim} strokeWidth={1.5}>
-          <rect x={26} y={24} width={48} height={8} />
-          <rect x={26} y={36} width={48} height={8} />
-          <rect x={26} y={48} width={48} height={8} />
-        </g>
-      );
-    case 'worldBank':
-      // Globe + coin
-      return (
-        <g fill="none" stroke={p.emblem} strokeWidth={2}>
-          <circle cx={50} cy={32} r={18} fill={p.rim} stroke={p.emblem} />
-          <ellipse cx={50} cy={32} rx={18} ry={8} />
-          <path d="M32 32 L68 32 M50 14 L50 50" />
-        </g>
-      );
-    default:
-      // Generic question-mark glyph for unimplemented characters.
-      return (
-        <g fill={p.emblem}>
-          <text
-            x={50}
-            y={42}
-            textAnchor="middle"
-            fontSize={36}
-            fontWeight={700}
-            fontFamily="sans-serif"
-          >
-            ?
-          </text>
-        </g>
-      );
-  }
-}
-
-export function CharacterArt({ character, size = 100, style, faded }: CharacterArtProps) {
-  const p = paletteFor(character);
-  const id = `coupGrad-${character}`;
-  const ratio = 108 / 100;
+function SharedDefs({ id }: { id: SvgIds }) {
   return (
-    <svg
-      viewBox="0 0 100 108"
-      width={size}
-      height={size * ratio}
-      style={{ opacity: faded ? 0.45 : 1, ...style }}
-    >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor={p.secondary} />
-          <stop offset="1" stopColor={p.primary} />
-        </linearGradient>
-      </defs>
-      <rect x={2} y={2} width={96} height={104} rx={10} fill={`url(#${id})`} stroke={p.rim} strokeWidth={2} />
-      <Glyph character={character} p={p} />
-      <text
-        x={50}
-        y={92}
-        textAnchor="middle"
-        fontSize={11}
-        fontWeight={700}
-        fontFamily="ui-sans-serif, system-ui, sans-serif"
-        fill={p.emblem}
-        letterSpacing="0.04em"
-      >
-        {CHARACTERS[character].name.toUpperCase().slice(0, 14)}
-      </text>
-    </svg>
+    <>
+      <linearGradient id={id('gold')} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="#7a5418" />
+        <stop offset="0.28" stopColor="#f3d27a" />
+        <stop offset="0.5" stopColor="#b8862f" />
+        <stop offset="0.72" stopColor="#fff1b8" />
+        <stop offset="1" stopColor="#8a6420" />
+      </linearGradient>
+      <linearGradient id={id('silver')} x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stopColor="#8e96a3" />
+        <stop offset="0.5" stopColor="#f2f5f8" />
+        <stop offset="1" stopColor="#6b7280" />
+      </linearGradient>
+      <radialGradient id={id('skin')} cx="38%" cy="32%" r="78%">
+        <stop offset="0" stopColor="#f6d6b8" />
+        <stop offset="0.55" stopColor="#d9a17a" />
+        <stop offset="1" stopColor="#99613f" />
+      </radialGradient>
+      <radialGradient id={id('vig')} cx="50%" cy="42%" r="70%">
+        <stop offset="0.6" stopColor="#000" stopOpacity={0} />
+        <stop offset="1" stopColor="#000" stopOpacity={0.55} />
+      </radialGradient>
+    </>
   );
 }
 
+const ARCH = 'M18 120 V44 Q18 15 60 13 Q102 15 102 44 V120 Z';
+
+function Corner({ x, y, sx, sy, gold }: { x: number; y: number; sx: number; sy: number; gold: string }) {
+  return (
+    <path
+      transform={`translate(${x} ${y}) scale(${sx} ${sy})`}
+      d="M0 12 Q0 0 12 0 M3 12 Q3 3 12 3 M0 6 q4 1 5 -2"
+      stroke={gold}
+      strokeWidth={1}
+      fill="none"
+    />
+  );
+}
+
+export interface CharacterArtProps {
+  character: CoupCharacter;
+  /** Width in px; height follows the 63:88 card ratio. */
+  size?: number;
+  style?: CSSProperties;
+  className?: string;
+  faded?: boolean;
+  /** Decorative (inside a labelled control) vs. an image with its own label. */
+  decorative?: boolean;
+}
+
+export const CharacterArt = memo(function CharacterArt({
+  character,
+  size = 100,
+  style,
+  className,
+  faded,
+  decorative,
+}: CharacterArtProps) {
+  const id = useSvgIds();
+  const spec = CHARACTERS[character];
+  const theme = CATEGORY_THEME[spec.category];
+  const name = spec.name.toUpperCase();
+  const long = name.length > 11;
+  return (
+    <svg
+      viewBox="0 0 120 168"
+      width={size}
+      height={size * CARD_RATIO}
+      className={className}
+      style={{ display: 'block', opacity: faded ? 0.45 : 1, ...style }}
+      role={decorative ? undefined : 'img'}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : spec.name}
+    >
+      <defs>
+        <SharedDefs id={id} />
+        <clipPath id={id('arch')}>
+          <path d={ARCH} />
+        </clipPath>
+        <linearGradient id={id('panel')} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#1c1410" />
+          <stop offset="1" stopColor="#0b0806" />
+        </linearGradient>
+      </defs>
+      {/* lacquer body + gold frame */}
+      <rect x={1} y={1} width={118} height={166} rx={9} fill="#0b0705" />
+      <rect x={3.5} y={3.5} width={113} height={161} rx={7} fill={id.url('panel')} stroke={id.url('gold')} strokeWidth={3} />
+      <rect x={8} y={8} width={104} height={152} rx={4} fill="none" stroke={id.url('gold')} strokeWidth={0.7} opacity={0.7} />
+      {/* portrait */}
+      <g clipPath={id.url('arch')}>
+        <Portrait character={character} id={id} palette={theme.palette} />
+        <rect x={0} y={0} width={120} height={130} fill={id.url('vig')} />
+      </g>
+      <path d={ARCH} fill="none" stroke={id.url('gold')} strokeWidth={2.4} />
+      <path d={ARCH} fill="none" stroke="#3a2406" strokeWidth={0.6} transform="translate(0 1.2)" opacity={0.6} />
+      {/* corner filigree */}
+      <Corner x={11} y={11} sx={1} sy={1} gold={id.url('gold')} />
+      <Corner x={109} y={11} sx={-1} sy={1} gold={id.url('gold')} />
+      <Corner x={11} y={157} sx={1} sy={-1} gold={id.url('gold')} />
+      <Corner x={109} y={157} sx={-1} sy={-1} gold={id.url('gold')} />
+      {/* category gem */}
+      <path d="M60 4.5 L64.5 9 L60 13.5 L55.5 9 Z" fill={theme.gem} stroke={id.url('gold')} strokeWidth={1} />
+      {/* nameplate ribbon */}
+      <path d="M10 126 H110 L104.5 136.5 L110 147 H10 L15.5 136.5 Z" fill={id.url('gold')} stroke="#4a300a" strokeWidth={0.7} />
+      <path d="M14 129 H106 L102 136.5 L106 144 H14 L18 136.5 Z" fill="none" stroke="#4a300a" strokeWidth={0.5} opacity={0.6} />
+      <text
+        x={60}
+        y={140.2}
+        textAnchor="middle"
+        style={{ fontFamily: "var(--font-regal)" }}
+        fontWeight={700}
+        fontSize={long ? 8.4 : 10.5}
+        letterSpacing={long ? 0.2 : 0.8}
+        fill="#2a1708"
+        {...(name.length > 15 ? { textLength: 84, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
+      >
+        {name}
+      </text>
+      {/* footer pips */}
+      <text x={60} y={157} textAnchor="middle" style={{ fontFamily: "var(--font-regal)" }} fontSize={6} letterSpacing={1.2} fill="#c9a24a" opacity={0.85}>
+        {theme.short.toUpperCase()}
+      </text>
+    </svg>
+  );
+});
+
+/** Ornate card back shared by every face-down influence and the court deck. */
+export const CardBack = memo(function CardBack({ size = 100, style, className }: { size?: number; style?: CSSProperties; className?: string }) {
+  const id = useSvgIds();
+  return (
+    <svg
+      viewBox="0 0 120 168"
+      width={size}
+      height={size * CARD_RATIO}
+      className={className}
+      style={{ display: 'block', ...style }}
+      aria-hidden
+    >
+      <defs>
+        <SharedDefs id={id} />
+        <radialGradient id={id('back')} cx="50%" cy="45%" r="75%">
+          <stop offset="0" stopColor="#6e1424" />
+          <stop offset="0.6" stopColor="#3a0912" />
+          <stop offset="1" stopColor="#1a0408" />
+        </radialGradient>
+        <pattern id={id('lattice')} width={10} height={10} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width={10} height={10} fill="none" stroke="#f3d27a" strokeOpacity={0.16} strokeWidth={0.8} />
+          <circle cx={0} cy={0} r={1} fill="#f3d27a" fillOpacity={0.25} />
+        </pattern>
+      </defs>
+      <rect x={1} y={1} width={118} height={166} rx={9} fill="#0b0705" />
+      <rect x={3.5} y={3.5} width={113} height={161} rx={7} fill={id.url('back')} stroke={id.url('gold')} strokeWidth={3} />
+      <rect x={10} y={10} width={100} height={148} rx={4} fill={id.url('lattice')} stroke={id.url('gold')} strokeWidth={0.9} />
+      <rect x={14} y={14} width={92} height={140} rx={3} fill="none" stroke={id.url('gold')} strokeWidth={0.5} opacity={0.6} />
+      <Corner x={17} y={17} sx={1} sy={1} gold={id.url('gold')} />
+      <Corner x={103} y={17} sx={-1} sy={1} gold={id.url('gold')} />
+      <Corner x={17} y={151} sx={1} sy={-1} gold={id.url('gold')} />
+      <Corner x={103} y={151} sx={-1} sy={-1} gold={id.url('gold')} />
+      {/* central seal: crown over crossed daggers */}
+      <circle cx={60} cy={82} r={30} fill="#1a0408" stroke={id.url('gold')} strokeWidth={2.2} />
+      <circle cx={60} cy={82} r={25.5} fill="none" stroke={id.url('gold')} strokeWidth={0.6} strokeDasharray="1.6 1.6" />
+      {[38, -38].map((r) => (
+        <g key={r} transform={`rotate(${r} 60 84)`}>
+          <path d="M57.2 58 L60 50 L62.8 58 L62 98 L58 98 Z" fill={id.url('silver')} stroke="#2a2a30" strokeWidth={0.4} />
+          <path d="M60 54 L60 96" stroke="#ffffff" strokeOpacity={0.55} strokeWidth={0.5} />
+          <rect x={52.5} y={97.5} width={15} height={3} rx={1.2} fill={id.url('gold')} stroke="#4a300a" strokeWidth={0.4} />
+          <rect x={58.4} y={100.5} width={3.2} height={7} fill="#2a1208" />
+          <circle cx={60} cy={109} r={2} fill={id.url('gold')} />
+        </g>
+      ))}
+      <path d="M45 80 L45 66 L51.5 72.5 L55 62.5 L60 70 L65 62.5 L68.5 72.5 L75 66 L75 80 Z" fill={id.url('gold')} stroke="#4a300a" strokeWidth={0.8} />
+      <rect x={44} y={78} width={32} height={5} rx={1.2} fill={id.url('gold')} stroke="#4a300a" strokeWidth={0.8} />
+      <circle cx={60} cy={80.5} r={1.6} fill="#c0142f" />
+      <text x={60} y={128} textAnchor="middle" style={{ fontFamily: "var(--font-regal)" }} fontWeight={900} fontSize={13} letterSpacing={4} fill={id.url('gold')}>
+        COUP
+      </text>
+      <path d="M38 133 H82" stroke={id.url('gold')} strokeWidth={0.7} />
+      <rect x={1} y={1} width={118} height={166} rx={9} fill={id.url('vig')} opacity={0.5} />
+    </svg>
+  );
+});
+
+/** A single embossed gold coin. */
+export const CoinIcon = memo(function CoinIcon({ size = 18, style }: { size?: number; style?: CSSProperties }) {
+  const id = useSvgIds();
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} style={{ display: 'block', ...style }} aria-hidden>
+      <defs>
+        <radialGradient id={id('c')} cx="35%" cy="30%" r="75%">
+          <stop offset="0" stopColor="#fff3c4" />
+          <stop offset="0.45" stopColor="#e2b350" />
+          <stop offset="1" stopColor="#8a5f17" />
+        </radialGradient>
+      </defs>
+      <circle cx={12} cy={12.8} r={10.4} fill="#5a3b0c" />
+      <circle cx={12} cy={12} r={10.4} fill={id.url('c')} stroke="#7a5418" strokeWidth={0.8} />
+      <circle cx={12} cy={12} r={7.6} fill="none" stroke="#7a5418" strokeWidth={0.7} strokeDasharray="1 1" />
+      <path d="M7.6 13.6 L7.6 9 L9.8 11 L12 7.6 L14.2 11 L16.4 9 L16.4 13.6 Z" fill="#9a6b1c" />
+      <rect x={7.4} y={13.4} width={9.2} height={2} rx={0.6} fill="#9a6b1c" />
+    </svg>
+  );
+});
+
+/** A stack of embossed coins (side view) with the count beside it. */
+export const CoinStack = memo(function CoinStack({ count, compact }: { count: number; compact?: boolean }) {
+  const id = useSvgIds();
+  const shown = Math.max(1, Math.min(count, compact ? 6 : 9));
+  const h = 12 + shown * 3.4;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 5 }} role="img" aria-label={`${count} coin${count === 1 ? '' : 's'}`}>
+      <svg viewBox={`0 0 26 ${h}`} width={22} height={(22 / 26) * h} style={{ display: 'block', opacity: count === 0 ? 0.3 : 1 }} aria-hidden>
+        <defs>
+          <linearGradient id={id('edge')} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#7a5418" />
+            <stop offset="0.35" stopColor="#f3d27a" />
+            <stop offset="0.7" stopColor="#b8862f" />
+            <stop offset="1" stopColor="#6b4612" />
+          </linearGradient>
+          <radialGradient id={id('face')} cx="40%" cy="35%" r="70%">
+            <stop offset="0" stopColor="#fff3c4" />
+            <stop offset="1" stopColor="#c99637" />
+          </radialGradient>
+        </defs>
+        {Array.from({ length: shown }, (_, i) => {
+          const y = h - 6 - i * 3.4;
+          const dx = ((i * 7) % 3) - 1;
+          return (
+            <g key={i} transform={`translate(${dx} 0)`}>
+              <path d={`M2 ${y} v2.6 a11 4.2 0 0 0 22 0 v-2.6`} fill={id.url('edge')} stroke="#5a3b0c" strokeWidth={0.5} />
+              <ellipse cx={13} cy={y} rx={11} ry={4.2} fill={id.url('face')} stroke="#7a5418" strokeWidth={0.6} />
+            </g>
+          );
+        })}
+        <ellipse cx={13} cy={h - 6 - (shown - 1) * 3.4} rx={6.5} ry={2.2} fill="none" stroke="#9a6b1c" strokeWidth={0.6} />
+      </svg>
+      <span
+        style={{
+          fontFamily: 'var(--font-regal)',
+          fontWeight: 700,
+          fontSize: compact ? 15 : 18,
+          color: 'var(--gold-bright)',
+          textShadow: '0 1px 0 #000, 0 0 8px rgba(212,166,74,0.35)',
+          lineHeight: 1,
+        }}
+        aria-hidden
+      >
+        {count}
+      </span>
+    </span>
+  );
+});
+
 export function CategoryBadge({ character }: { character: CoupCharacter }) {
-  const cat = CHARACTERS[character].category;
-  const colorMap: Record<string, string> = {
-    classic: '#fbbf24',
-    finance: '#86efac',
-    communications: '#93c5fd',
-    force: '#fca5a5',
-    specialInterest: '#d8b4fe',
-    movement: '#5eead4',
-    anarchy: '#fdba74',
-  };
-  const labelMap: Record<string, string> = {
-    classic: 'Classic',
-    finance: 'Finance',
-    communications: 'Comms',
-    force: 'Force',
-    specialInterest: 'Special',
-    movement: 'Movement',
-    anarchy: 'Anarchy',
-  };
+  const theme = CATEGORY_THEME[CHARACTERS[character].category];
   return (
     <span
       style={{
-        display: 'inline-block',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
         padding: '1px 6px',
-        background: '#0b0f17',
-        border: `1px solid ${colorMap[cat]}`,
-        color: colorMap[cat],
-        borderRadius: 4,
-        fontSize: 10,
+        background: 'rgba(0,0,0,0.35)',
+        border: `1px solid ${theme.gem}66`,
+        color: theme.gem,
+        borderRadius: 999,
+        fontSize: 9.5,
         textTransform: 'uppercase',
-        letterSpacing: '0.06em',
+        letterSpacing: '0.08em',
+        fontFamily: 'var(--font-ui)',
+        whiteSpace: 'nowrap',
       }}
     >
-      {labelMap[cat]}
+      <span style={{ width: 6, height: 6, background: theme.gem, transform: 'rotate(45deg)', display: 'inline-block' }} />
+      {theme.short}
     </span>
   );
 }

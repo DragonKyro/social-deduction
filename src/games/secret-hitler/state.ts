@@ -7,6 +7,7 @@ import type { SeatIndex } from '@/engine/types';
 export type ShRoleId = 'liberal' | 'fascist' | 'hitler';
 export type ShParty = 'liberal' | 'fascist';
 export type ShPolicy = 'liberal' | 'fascist';
+export type ShVote = 'ja' | 'nein';
 
 export type ShPhase =
   | 'setup'
@@ -34,10 +35,12 @@ export type ShExecutivePower =
 export interface ShSeatState {
   index: SeatIndex;
   name: string;
+  /** Driven by the host's AI. Public (the lobby shows it). */
+  isAI: boolean;
   role: ShRoleId;
   party: ShParty;
   alive: boolean;
-  voteCast: 'ja' | 'nein' | null;
+  voteCast: ShVote | null;
   hasBeenInvestigated: boolean;
 }
 
@@ -60,6 +63,7 @@ export interface ShPrivateState {
   setupAcked: Record<SeatIndex, boolean>;
   board: ShBoardState;
 
+  // HIDDEN: deck order and discard contents. Only the sizes are public.
   policyDeck: ShPolicy[];
   policyDiscard: ShPolicy[];
 
@@ -69,21 +73,29 @@ export interface ShPrivateState {
 
   chancellorCandidateSeat: SeatIndex | null;
 
+  // Term limits: the last ELECTED government (set when an election passes,
+  // so a vetoed government is still term-limited). Cleared by chaos.
   lastElectedPresident: SeatIndex | null;
   lastElectedChancellor: SeatIndex | null;
 
+  // HIDDEN: the 3 (president) / 2 (chancellor) policies in the session.
   legislativeHand: ShPolicy[];
+  // The president refused a veto this session; the chancellor must enact.
+  vetoRefused: boolean;
 
   pendingExec: ShExecutivePower | null;
 
   lastEnactedPolicy: ShPolicy | null;
   lastEnactedViaTopDeck: boolean;
 
+  // HIDDEN: power results, visible only to the president who used them.
   pendingInvestigation: { by: SeatIndex; target: SeatIndex; party: ShParty } | null;
   pendingPeek: { by: SeatIndex; policies: ShPolicy[] } | null;
 
   investigations: ShInvestigationRecord[];
 
+  // HIDDEN: the deal + every reshuffle derive from this. Never put it (or
+  // anything derived from it) in a public view.
   seed: number;
   reshuffleCount: number;
 
@@ -95,6 +107,7 @@ export interface ShPrivateState {
     | 'hitlerExecuted'
     | 'hitlerElected';
 
+  // PUBLIC: every entry is something the whole table saw happen.
   log: ShLogEntry[];
 }
 
@@ -107,6 +120,8 @@ export type ShLogEntry =
       approved: boolean;
       jaCount: number;
       neinCount: number;
+      // Per seat, revealed together once everyone has voted. null = dead.
+      votes: Array<ShVote | null>;
     }
   | {
       kind: 'policyEnacted';
@@ -116,6 +131,7 @@ export type ShLogEntry =
       viaTopDeck: false;
     }
   | { kind: 'topDeckEnacted'; policy: ShPolicy }
+  | { kind: 'vetoDenied'; president: SeatIndex; chancellor: SeatIndex }
   | { kind: 'vetoUsed'; president: SeatIndex; chancellor: SeatIndex }
   | { kind: 'execution'; by: SeatIndex; target: SeatIndex }
   | { kind: 'investigation'; by: SeatIndex; target: SeatIndex }
@@ -128,9 +144,18 @@ export type ShLogEntry =
 export interface ShPublicSeatState {
   index: SeatIndex;
   name: string;
+  isAI: boolean;
   alive: boolean;
-  voteCast: 'ja' | 'nein' | null;
+  // How this seat voted. null while the vote is open (votes are revealed
+  // together) and for seats that didn't vote.
+  voteCast: ShVote | null;
+  // Whether this seat has cast a ballot in the current election (but not
+  // which way). Lets the table see who is still deciding.
+  hasVoted: boolean;
   hasAckedSetup: boolean;
+  // Public: the table sees who used Investigate on whom (not the result).
+  investigated: boolean;
+  // Every role, revealed only at game over.
   revealedRole: ShRoleId | null;
 }
 
@@ -145,6 +170,7 @@ export interface ShPublicState {
   lastElectedPresident: SeatIndex | null;
   lastElectedChancellor: SeatIndex | null;
   inSpecialElection: boolean;
+  vetoRefused: boolean;
 
   policyDeckSize: number;
   policyDiscardSize: number;
@@ -162,7 +188,12 @@ export interface ShPublicState {
   yourRole: ShRoleId | null;
   yourParty: ShParty | null;
   yourPartyKnowledge: Array<{ seat: SeatIndex; role: ShRoleId }>;
+  // President during legislativePresident (3), chancellor during
+  // legislativeChancellor / vetoRequested (2). Null for everyone else.
   yourLegislativeHand: ShPolicy[] | null;
+  // The president's memory of the 2 policies they passed, while the
+  // chancellor holds them (legislativeChancellor / vetoRequested).
+  yourPassedPolicies: ShPolicy[] | null;
   yourInvestigations: Array<{ target: SeatIndex; party: ShParty }>;
   yourPeek: ShPolicy[] | null;
   yourPendingInvestigationResult: { target: SeatIndex; party: ShParty } | null;

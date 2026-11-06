@@ -3,82 +3,213 @@
   max-width: 760px;
   margin: 0 auto;
   display: grid;
-  gap: 20px;
+  gap: 18px;
+  color: #efe3c8;
 }
 
 .header {
-  display: flex;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 18px;
   align-items: center;
+}
+@media (max-width: 560px) {
+  .header {
+    grid-template-columns: auto 1fr;
+  }
+  .hero {
+    display: none !important;
+  }
+}
+
+.back {
+  font-family: var(--font-rogue);
+  font-size: 18px;
+  background: rgba(20, 10, 4, 0.5);
+  color: #efe3c8;
+  border: 1px solid #8a6438;
+  border-radius: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  padding: 6px 4px;
+  animation: sk-setup-drop 640ms var(--ease-out) both;
+}
+.heroDisk {
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin-left: -26px;
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.6));
+}
+.heroDisk:first-child {
+  margin-left: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-rogue);
+  font-weight: 400;
+  font-size: 56px;
+  line-height: 0.9;
+  color: #efe3c8;
+  text-shadow: 0 2px 0 #7a1414, 0 0 22px rgba(255, 80, 40, 0.35);
+}
+.tagline {
+  margin: 4px 0 0;
+  color: #d8b98a;
+  letter-spacing: 0.03em;
 }
 
 .panel {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 16px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 20% 10%, rgba(255, 220, 170, 0.08), transparent 60%),
+    linear-gradient(160deg, #3a2414, #1c0f07);
+  border: 2px dashed rgba(216, 185, 138, 0.45);
+  outline: 4px solid rgba(10, 5, 2, 0.55);
+  outline-offset: -9px;
+  box-shadow: var(--shadow-md);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
 }
 
 .h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #cbd5e1;
+  margin: 0 0 4px;
+  font-family: var(--font-rogue);
+  font-weight: 400;
+  font-size: 24px;
+  color: #ffb35c;
 }
 
 .subtitle {
   margin: 0 0 12px;
-  color: #94a3b8;
+  color: #d8b98a;
   font-size: 13px;
 }
 
 .countControls {
   display: flex;
-  gap: 6px;
-  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
-  flex-wrap: wrap;
 }
-
 .countControls button {
-  width: 44px;
-  height: 36px;
-  border-radius: 8px;
-  background: #1f2937;
-  color: #e2e8f0;
-  border: 1px solid #334155;
-  font-size: 14px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #5a3a22, #24150b);
+  color: #efe3c8;
+  border: 2px dashed #c49a5a;
+  font-family: var(--font-rogue);
+  font-size: 20px;
   cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
-
+.countControls button:hover {
+  transform: rotate(-8deg) translateY(-2px);
+}
 .countControls button.countActive {
-  background: #7c2d12;
-  border-color: #fbbf24;
-  color: #fef3c7;
+  background: radial-gradient(circle at 35% 30%, #c9412e, #5c0f0a);
+  border-style: solid;
+  border-color: #ffb35c;
+  color: #fff1d6;
+  box-shadow: 0 0 14px rgba(255, 120, 40, 0.45);
 }
 
 .nameRow {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-
-.seatNumber {
-  width: 22px;
-  text-align: right;
-  color: #64748b;
-  font-size: 13px;
+.seatDisk {
+  width: 32px;
+  height: 32px;
+  flex: none;
 }
-
 .nameInput {
   flex: 1;
-  padding: 6px 8px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  color: #e2e8f0;
-  border-radius: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: rgba(239, 227, 200, 0.92);
+  color: #2a140a;
+  border: 1px solid #8a6438;
+  border-radius: 8px;
+  font-size: 15px;
+}
+.nameInput:focus {
+  outline: 2px solid #ffb35c;
+  outline-offset: 1px;
+}
+
+.aiToggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 98px;
+  height: 32px;
+  padding: 0 8px 0 32px;
+  border-radius: 999px;
+  border: 1px solid #8a6438;
+  background: #efe3c8;
+  color: #2a140a;
+  cursor: pointer;
+  font-family: var(--font-rogue);
+  font-size: 17px;
+  flex: none;
+}
+.aiKnob {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #c9b48a);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-med) var(--ease-spring), background var(--dur-fast) ease;
+}
+.aiLabel {
+  flex: 1;
+  text-align: center;
+}
+.aiOn {
+  background: linear-gradient(180deg, #a3271c, #5c0f0a);
+  color: #fff1d6;
+}
+.aiOn .aiKnob {
+  transform: translateX(64px);
+  background: radial-gradient(circle at 35% 30%, #ffd9a0, #c97d16);
+}
+.aiOn {
+  padding: 0 32px 0 8px;
+}
+.aiToggle:focus-visible,
+.countControls button:focus-visible,
+.startButton:focus-visible,
+.back:focus-visible {
+  outline: 2px solid #ffb35c;
+  outline-offset: 2px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: #d8b98a;
+}
+
+.rules {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #efe3c8;
 }
 
 .footer {
@@ -87,18 +218,57 @@
 }
 
 .startButton {
-  background: #b91c1c;
-  color: #fef3c7;
-  font-weight: 700;
-  padding: 12px 22px;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
+  font-family: var(--font-rogue);
+  font-size: 24px;
+  background: linear-gradient(180deg, #a3271c, #5c0f0a);
+  color: #fff1d6;
+  padding: 8px 28px;
+  border: 1px solid #ffb35c;
+  border-radius: 10px;
   cursor: pointer;
+  box-shadow: 0 10px 24px -10px rgba(200, 40, 20, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) ease;
+}
+.startButton:hover {
+  transform: translateY(-2px) rotate(-1deg);
+  filter: brightness(1.1);
 }
 
-.startButton:disabled {
-  background: #334155;
-  color: #94a3b8;
-  cursor: not-allowed;
+@keyframes sk-setup-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-24px) scale(1.1);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Overrides for the global button rules in src/index.css ------------
+   (grey hover background at 0,2,1, 0.45 disabled opacity, base shadow).
+   Restated at higher specificity so the themed buttons keep their look. */
+
+.countControls button:hover:not(:disabled) {
+  background: radial-gradient(circle at 35% 30%, #6a462a, #2a180c);
+  border-color: #c49a5a;
+}
+.countControls button.countActive:hover:not(:disabled) {
+  background: radial-gradient(circle at 35% 30%, #c9412e, #5c0f0a);
+  border-color: #ffb35c;
+}
+.aiToggle.aiToggle:hover:not(:disabled) {
+  background: #fff4dc;
+  border-color: #8a6438;
+}
+.aiToggle.aiOn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #b8321f, #6e140d);
+}
+.startButton.startButton:hover:not(:disabled) {
+  background: linear-gradient(180deg, #c03424, #6e140d);
+  border-color: #ffb35c;
+}
+.back.back:hover:not(:disabled) {
+  background: rgba(60, 30, 10, 0.7);
+  border-color: #c49a5a;
 }

@@ -1,134 +1,382 @@
+/* Avalon setup: the great hall before the knights sit down.
+   Shared keyframes are referenced as `global(sd-…)` (see GameView.module.css). */
+
 .root {
-  padding: 24px;
-  max-width: 980px;
-  margin: 0 auto;
+  --stone: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='168' height='92'><g stroke='%23070605' stroke-width='3'><rect x='1' y='1' width='80' height='44' rx='3' fill='%231e1a15'/><rect x='83' y='1' width='84' height='44' rx='3' fill='%23231e18'/><rect x='-42' y='47' width='80' height='44' rx='3' fill='%23201b16'/><rect x='40' y='47' width='84' height='44' rx='3' fill='%231b1712'/><rect x='126' y='47' width='80' height='44' rx='3' fill='%23241f19'/></g></svg>");
+  position: relative;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 20px clamp(12px, 3vw, 32px) 48px;
   display: grid;
-  gap: 20px;
+  gap: 18px;
+  align-content: start;
+  max-width: 1040px;
+  margin: 0 auto;
+  width: 100%;
+  isolation: isolate;
+}
+
+.root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(1000px 520px at 50% -8%, rgba(255, 186, 104, 0.16), transparent 65%),
+    radial-gradient(1000px 1000px at 50% 50%, transparent 45%, rgba(0, 0, 0, 0.7) 100%),
+    var(--grain),
+    var(--stone),
+    #120f0b;
+}
+
+.torch {
+  position: fixed;
+  top: -120px;
+  left: 50%;
+  width: 760px;
+  height: 520px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 158, 64, 0.18), transparent 65%);
+  z-index: -1;
+  pointer-events: none;
+  animation: avTorch 3.4s ease-in-out infinite;
+}
+
+@keyframes avTorch {
+  0%, 100% { opacity: 0.85; }
+  20% { opacity: 0.68; }
+  24% { opacity: 0.95; }
+  60% { opacity: 0.78; }
 }
 
 .header {
   display: flex;
   gap: 16px;
   align-items: center;
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+}
+
+.back {
+  font-family: var(--font-regal);
+  background: rgba(20, 14, 9, 0.6);
+  border: 1px solid var(--gold-deep);
+  color: var(--parchment);
+}
+
+.back:hover:not(:disabled) {
+  background: rgba(60, 40, 20, 0.7);
+  border-color: var(--gold);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-regal);
+  font-weight: 900;
+  font-size: clamp(30px, 5vw, 46px);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #fff1b8 0%, #e6bd62 45%, #8a6420 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.7));
+}
+
+.tagline {
+  margin: 0;
+  font-family: var(--font-regal);
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
 }
 
 .panel {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 16px;
+  padding: 16px 18px 18px;
+  border-radius: 14px;
+  background:
+    var(--grain),
+    linear-gradient(180deg, rgba(46, 32, 19, 0.94), rgba(22, 15, 9, 0.96));
+  box-shadow:
+    inset 0 0 0 1px rgba(243, 210, 122, 0.3),
+    inset 0 0 0 4px rgba(10, 6, 3, 0.6),
+    inset 0 0 0 5px rgba(212, 166, 74, 0.22),
+    var(--shadow-lg);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
 }
 
-.h3 {
-  margin: 0 0 8px;
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #cbd5e1;
-}
+.panel:nth-of-type(2) { animation-delay: 60ms; }
+.panel:nth-of-type(3) { animation-delay: 120ms; }
 
-.subtitle {
-  margin: 0 0 12px;
-  color: #94a3b8;
-  font-size: 13px;
-}
-
-.countControls {
+.panelHead {
   display: flex;
-  gap: 6px;
-  align-items: center;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 
-.countActive {
-  background: #2563eb;
-  border-color: #1e40af;
+.panelHead h2 {
+  margin: 0;
+  font-family: var(--font-regal);
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  color: var(--gold-bright);
 }
 
-.nameGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-}
-
-.nameRow {
-  display: grid;
-  grid-template-columns: 32px 1fr;
-  gap: 8px;
+.split {
+  display: inline-flex;
   align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
-.seatNumber {
-  width: 32px;
-  height: 32px;
+.kicker {
+  display: block;
+  font-family: var(--font-regal);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* player count: wax-seal medallions */
+
+.counts {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.count {
+  width: 42px;
+  height: 42px;
+  padding: 0;
   border-radius: 50%;
-  background: #1f2937;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  color: #94a3b8;
-  border: 1px solid #334155;
+  font-family: var(--font-regal);
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--gold);
+  background: radial-gradient(circle at 40% 35%, #2c1d10, #120b05);
+  border: 0;
+  box-shadow: inset 0 0 0 1.5px var(--gold-deep), 0 3px 8px rgba(0, 0, 0, 0.6);
 }
 
-.roleGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
+.count:hover:not(:disabled) {
+  background: radial-gradient(circle at 40% 35%, #3b2814, #1a1007);
+  box-shadow: inset 0 0 0 1.5px var(--gold), 0 3px 8px rgba(0, 0, 0, 0.6);
 }
 
-.roleCard {
+.countOn,
+.countOn:hover:not(:disabled) {
+  color: #2a1f14;
+  background: radial-gradient(circle at 38% 32%, #ffe7a6, #c7963a 70%);
+  box-shadow: 0 0 0 2px #6e4a12, 0 0 16px rgba(243, 210, 122, 0.45);
+  animation: global(sd-pop) var(--dur-med) var(--ease-spring) both;
+}
+
+/* seats */
+
+.seatList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 8px;
+}
+
+.seatRow {
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 10px;
   align-items: center;
-  padding: 10px;
+  padding: 6px 8px;
   border-radius: 10px;
-  background: #1f2937;
-  border: 2px solid #334155;
-  cursor: pointer;
+  background: rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(243, 210, 122, 0.12);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+}
+
+.seatAI {
+  box-shadow: inset 0 0 0 1px rgba(127, 150, 230, 0.35);
+}
+
+.nameInput {
+  min-width: 0;
+  font-family: var(--font-regal);
+  font-weight: 700;
+  background: rgba(10, 7, 4, 0.7);
+  border-color: var(--gold-deep);
+  padding: 6px 8px;
+}
+
+.who {
+  display: inline-flex;
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--gold-deep);
+}
+
+.who button {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.who button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.who .whoOn,
+.who .whoOn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f3d27a, #b8892f);
+  color: #2a1f14;
+}
+
+/* characters */
+
+.roleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.role {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
   text-align: left;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(243, 210, 122, 0.12);
+  opacity: 0.72;
+  transition: opacity var(--dur-fast) ease, box-shadow var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out);
 }
 
-.roleCard:hover:not(:disabled) {
-  background: #2a3441;
+.role:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0.92;
+  transform: translateY(-2px);
 }
 
-.roleCardOn {
-  border-color: #60a5fa;
-  background: #1e293b;
-}
-
-.roleCardLocked {
-  border-color: #fbbf24;
-  background: #1e293b;
-  cursor: default;
+.roleOn {
   opacity: 1;
 }
 
-.poolPreview {
-  margin-top: 14px;
-  padding: 12px;
-  background: #0b0f17;
-  border-radius: 8px;
-  border: 1px solid #1f2937;
-  font-size: 13px;
+.roleGood.roleOn {
+  box-shadow: inset 0 0 0 1.5px #6f9fe8, 0 0 18px rgba(79, 134, 232, 0.22);
 }
 
-.questPreview {
+.roleEvil.roleOn {
+  box-shadow: inset 0 0 0 1.5px #d0545a, 0 0 18px rgba(208, 52, 60, 0.22);
+}
+
+.roleLocked {
+  cursor: default;
+}
+
+.roleLocked:hover:not(:disabled) {
+  transform: none;
+}
+
+.roleText {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.roleText strong {
+  font-family: var(--font-regal);
+  font-size: 15px;
+  color: var(--parchment);
+}
+
+.roleText small {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.roleDesc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.check {
+  font-size: 18px;
+  color: var(--gold-bright);
+}
+
+.pool {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.pool ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pool li {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-family: var(--font-regal);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.poolGood {
+  background: rgba(31, 74, 168, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(127, 178, 255, 0.45);
+}
+
+.poolEvil {
+  background: rgba(143, 18, 28, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(255, 138, 122, 0.45);
+}
+
+/* quests */
+
+.quests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.questPreviewTile {
-  width: 64px;
-  height: 64px;
-  background: #1f2937;
-  border: 2px solid #334155;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  position: relative;
+.quests li {
+  width: 72px;
+  height: 72px;
 }
 
 .footer {
@@ -136,14 +384,21 @@
   justify-content: flex-end;
 }
 
-.startButton {
-  background: #16a34a;
-  border-color: #15803d;
-  padding: 12px 24px;
-  font-size: 15px;
-  font-weight: 700;
+.start {
+  font-family: var(--font-regal);
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: 0.08em;
+  color: #2a1f14;
+  padding: 12px 26px;
+  border-radius: 10px;
+  border: 1px solid #6e4a12;
+  background: linear-gradient(180deg, #ffe7a6, #c7963a 60%, #a87a26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 8px 22px -6px rgba(0, 0, 0, 0.8);
 }
 
-.startButton:hover {
-  background: #22c55e;
+.start:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fff0c4, #d9a84a 60%, #b8892f);
+  border-color: #6e4a12;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 26px rgba(243, 210, 122, 0.4);
 }

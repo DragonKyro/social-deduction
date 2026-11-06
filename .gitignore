@@ -32,3 +32,8 @@ Thumbs.db
 
 # Test coverage
 coverage/
+
+# Firebase deploy artefacts (merged rules)
+.firebase/
+firebase-debug.log
+database-debug.log

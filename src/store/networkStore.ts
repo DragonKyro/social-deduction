@@ -1,74 +1,91 @@
 import { create } from 'zustand';
 import { getGame } from '@/engine/registry';
-import type {
-  ActionEnvelope,
-  GameId,
-  PublicEnvelope,
-  Seat,
-  SeatIndex,
-} from '@/engine/types';
+import { randomSeed } from '@/engine/rng';
+import type { GameId, Seat, SeatIndex } from '@/engine/types';
 import {
-  bindRoom,
+  generateRoomCode,
   getDisplayName,
-  getOrCreateUuid,
+  normalizeRoomCode,
   setDisplayName as persistDisplayName,
-  type RoomBindings,
-  type ChatMessage,
-  type ConnectionState,
-  type LobbyState,
-  type LocalRole,
-} from '@/net';
+} from '@/net/identity';
+import { setRoomInUrl } from '@/net/roomLink';
+import type {
+  GuestConnection,
+  GuestEvents,
+  HostConnection,
+  HostEvents,
+  RoomTransport,
+} from '@/net/transport';
+import type {
+  ChatMessage,
+  ConnectionState,
+  InboxMessage,
+  LobbyState,
+  LocalRole,
+  Presence,
+  RoomMeta,
+  ViewRecord,
+} from '@/net/types';
 import { useGameStore } from './gameStore';
+import {
+  applySeatRequest,
+  buildViews,
+  initialSeats,
+  seatOf,
+  stampChangedViews,
+  vetInboundAction,
+  type LedgerEntry,
+} from './hostLogic';
 
 // ============================================================================
-// networkStore
+// networkStore — online play over Firebase Realtime Database
 // ============================================================================
 //
-// Host-authoritative multiplayer. The host owns the LobbyState (seats + game
-// options) and rebroadcasts it on every change. Guests send SeatRequest
-// messages to claim/leave a seat; the host integrates them.
+// Host-authoritative. The host's device owns the lobby and the only copy of
+// the private game state:
+//   - guests write seat requests and actions to the room inbox; the database
+//     stamps each with the sender's uid; the host vets them (`hostLogic.ts`)
+//     and applies actions through `gameStore.hostApply`;
+//   - after every applied action (human or AI) the host writes each
+//     connected device its own redacted view to `views/{uid}`, which the
+//     security rules let only that device read. Peers never receive anyone
+//     else's view, and never the seed.
+//   - AI seats run on the host only (gameStore's AI loop).
 //
-// In-game traffic uses two channels:
-//   - `action` (peer → host): the host validates against its lobby's
-//     seat→uuid mapping, applies via the module, and re-broadcasts redacted
-//     views.
-//   - `view` (host → peer, individually addressed): one envelope per peer,
-//     never a broadcast. This is the chokepoint that keeps hidden info
-//     hidden.
-//
-// AI seats are driven on the host only — the host's tick loop polls each
-// AI seat for an action after applying a player action.
+// The host also saves its private state to a host-only node so a reload
+// resumes the match (`?room=CODE` in the URL rejoins on load).
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyAction = any;
 
+export interface HostRoomInitial {
+  seatCount: number;
+  names: string[];
+  options: Record<string, unknown>;
+  aiSeats?: SeatIndex[];
+}
+
 interface NetworkStore {
   connection: ConnectionState;
   role: LocalRole;
+  /** This device's uid while online. */
   uuid: string | null;
   displayName: string;
   hostUuid: string | null;
   lobby: LobbyState | null;
   chat: ChatMessage[];
-  // peerUuid → online flag. Multiple Trystero peerIds can map to the same
-  // UUID (testing in multiple tabs); the value is the count of peerIds
-  // currently mapped to it. Marked online if > 0.
+  /** uid → number of live connections. */
   onlinePeers: Record<string, number>;
-  // Room code currently joined (host or guest). null if disconnected/solo.
   roomCode: string | null;
+  /** Last user-facing problem (room not found, server unreachable, …). */
+  error: string | null;
+  /** This device's link to the server. */
+  linkUp: boolean;
+  /** Guest: a match is running but this device stepped out to the lobby. */
+  matchHidden: boolean;
 
-  // Online host or join.
-  hostRoom: (
-    roomCode: string,
-    gameId: GameId,
-    initial?: {
-      seatCount: number;
-      names: string[];
-      options: Record<string, unknown>;
-      seed?: number;
-    },
-  ) => void;
-  joinRoom: (roomCode: string) => void;
+  hostRoom: (gameId: GameId, initial?: HostRoomInitial) => Promise<void>;
+  joinRoom: (roomCode: string) => Promise<void>;
   leaveRoom: () => void;
 
   // Host-only lobby mutators.
@@ -76,310 +93,430 @@ interface NetworkStore {
   setLobbySeats: (seats: Seat[]) => void;
   setLobbyOptions: (options: Record<string, unknown>) => void;
   startGame: () => void;
+  /** Host: end the running match for everyone (back to the lobby). */
+  endMatch: () => void;
 
   // Guest-only.
   requestSeat: (desiredSeat: number | 'leave') => void;
+  /** Guest: return to the running match after stepping out. */
+  resumeMatch: () => void;
   setLocalName: (name: string) => void;
 
-  // Chat.
   sendChat: (text: string) => void;
-  pushChat: (msg: ChatMessage) => void;
-
+  clearError: () => void;
   reset: () => void;
 }
 
-// Module-scoped room handle so we don't keep it inside the store (it's not
-// serializable + Zustand renders shouldn't see it). Same pattern as Catan.
-let activeRoom: RoomBindings | null = null;
-// peerId → uuid mapping the host (or guest) has learned from `hello`.
-let peerIdToUuid: Map<string, string> = new Map();
-// Host-only: the host's private knowledge of each seat's uuid lives in the
-// lobby itself (`Seat.uuid`). We don't duplicate it here.
-
-function uid(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function teardown() {
-  if (activeRoom) {
-    try {
-      activeRoom.leave();
-    } catch {
-      // ignore
-    }
-    activeRoom = null;
-  }
-  peerIdToUuid = new Map();
-}
-
 // ----------------------------------------------------------------------------
-// Host helpers
+// Module state (connections aren't serialisable, so they stay out of Zustand)
 // ----------------------------------------------------------------------------
 
-// Build the game-specific seat list from the lobby's authoritative seats.
-function emptyLobbyForGame(gameId: GameId): LobbyState {
-  const mod = getGame(gameId);
-  // Start with the game's recommended player count as the seat count, but
-  // bounded by the game's range. Host can adjust by claiming/releasing.
-  const initialPlayerCount = Math.min(mod.maxPlayers, Math.max(mod.minPlayers, 5));
-  const defaults = mod.defaultConfig(initialPlayerCount);
-  const seats: Seat[] = Array.from({ length: initialPlayerCount }, (_, i) => ({
-    index: i,
-    uuid: null,
-    name: `Seat ${i + 1}`,
-    isAI: false,
-  }));
-  return {
-    gameId,
-    seats,
-    gameOptions: defaults.gameOptions,
-    seed: defaults.seed,
-  };
+let transportOverride: RoomTransport | null = null;
+/** Tests: run against `fakeTransport` instead of Firebase. */
+export function setTransportForTests(t: RoomTransport | null): void {
+  transportOverride = t;
 }
 
-// Translate the lobby's `Seat[]` + the game-specific options into the
-// game-specific options shape with `players: [{name, isAI}]`. Most modules
-// embed a `players` field; we overwrite it from the lobby. If a module
-// doesn't use `players`, the extra key is harmless.
-function injectPlayersIntoOptions(lobby: LobbyState): Record<string, unknown> {
-  const players = lobby.seats.map((s) => ({ name: s.name, isAI: s.isAI }));
-  return { ...lobby.gameOptions, players };
+async function transport(): Promise<RoomTransport> {
+  if (transportOverride) return transportOverride;
+  // Lazy: the Firebase SDK only downloads when someone goes online.
+  const mod = await import('@/net/firebaseRoom');
+  return mod.getTransport();
 }
 
-function hostBroadcastLobby() {
-  const lobby = useNetworkStore.getState().lobby;
-  if (!lobby || !activeRoom) return;
-  activeRoom.sendLobby(lobby);
+let hostConn: HostConnection | null = null;
+let guestConn: GuestConnection | null = null;
+// Bumped on every create / join / leave so late async results from an
+// abandoned attempt are ignored.
+let generation = 0;
+// Host: uids currently connected, and what each device was last sent this
+// match (only changed views are re-sent, each with a per-device sequence).
+let presentUids: string[] = [];
+let ledger = new Map<string, LedgerEntry>();
+// Guest: the latest view record and which match is applied locally.
+let latestView: ViewRecord | null = null;
+let appliedMatch = -1;
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
-function hostBroadcastChat(msg: ChatMessage) {
-  if (!activeRoom) return;
-  activeRoom.sendChat(msg);
+/** Lobby options are world-readable in the room: never let a seed in. */
+function sanitizeOptions(options: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...options };
+  delete out.seed;
+  delete out.rngCursor;
+  return out;
 }
 
-function hostApplyActionAndBroadcast(
-  envelope: ActionEnvelope<unknown>,
-  fromPeerId: string | null,
-) {
-  const { lobby } = useNetworkStore.getState();
-  if (!lobby) return;
-  const { module, privateState } = useGameStore.getState();
-  if (!module || privateState === null) return;
-
-  // Validate sender owns the seat they claim. byUuid must match seat.uuid.
-  // (`fromPeerId === null` means the host applied it locally.)
-  if (fromPeerId !== null) {
-    const learnedUuid = peerIdToUuid.get(fromPeerId);
-    if (!learnedUuid || learnedUuid !== envelope.byUuid) {
-      // Spoofed envelope: drop silently.
-      return;
-    }
-  }
-  const claimedSeat = lobby.seats[envelope.bySeat];
-  // AI seats are driven by the host; reject AI-seat actions from any peer.
-  if (!claimedSeat || claimedSeat.uuid !== envelope.byUuid || claimedSeat.isAI) {
-    return;
-  }
-  // Defense against action-payload spoofing: every game's action shape carries
-  // a `bySeat` field that the per-game reducer trusts. A peer that owns seat 2
-  // could otherwise submit an envelope with `envelope.bySeat=2` but
-  // `action.bySeat=5` to act as another player. Enforce equality.
-  const actionBySeat = (envelope.action as { bySeat?: SeatIndex } | null)?.bySeat;
-  if (typeof actionBySeat === 'number' && actionBySeat !== envelope.bySeat) {
-    return;
-  }
-  hostApplyAndBroadcastInternal(envelope);
+function countPresence(people: Presence[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const p of people) out[p.uid] = (out[p.uid] ?? 0) + 1;
+  return out;
 }
 
-// Apply (action OR AI action) and broadcast per-peer redacted views.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function hostApplyAndBroadcastInternal(envelope: ActionEnvelope<any>) {
-  const { lobby } = useNetworkStore.getState();
-  if (!lobby) return;
-  const { module, privateState, tick, localSeat } = useGameStore.getState();
-  if (!module || privateState === null) return;
-
-  let next;
-  try {
-    next = module.applyAction(privateState, envelope.action, envelope.byUuid);
-  } catch (e) {
-    // Illegal action — host ignores and does not rebroadcast.
-    console.warn('[host] applyAction rejected:', (e as Error).message);
-    return;
-  }
-  const newTick = tick + 1;
-  // Update host's local state + own view.
-  useGameStore.setState({
-    privateState: next,
-    tick: newTick,
-    publicView: {
-      gameId: module.id,
-      tick: newTick,
-      view: module.viewFor(next, localSeat),
-      seat: localSeat,
-    },
-  });
-  // Send a redacted view to every human peer that holds a seat. Spectators
-  // also get one (seat=null) on their own snapshot request.
-  if (!activeRoom) return;
-  const seatByUuid: Map<string, Seat> = new Map();
-  for (const s of lobby.seats) {
-    if (s.uuid && !s.isAI) seatByUuid.set(s.uuid, s);
-  }
-  // For each connected peer, send the view redacted for THAT peer's seat.
-  for (const [peerId, uuid] of peerIdToUuid) {
-    const seat = seatByUuid.get(uuid);
-    const seatIdx: SeatIndex | null = seat ? seat.index : null;
-    const env: PublicEnvelope<unknown> = {
-      gameId: module.id,
-      tick: newTick,
-      view: module.viewFor(next, seatIdx),
-      seat: seatIdx,
-    };
-    activeRoom.sendView(env, peerId);
-  }
-
-  // After applying, schedule AI turns if any.
-  hostMaybeStepAI();
+function teardownConnections(deleteRoom: boolean) {
+  generation++;
+  if (hostConn) hostConn.close({ deleteRoom });
+  if (guestConn) guestConn.close();
+  hostConn = null;
+  guestConn = null;
+  presentUids = [];
+  ledger = new Map();
+  latestView = null;
+  appliedMatch = -1;
+  const gs = useGameStore.getState();
+  gs.registerBroadcastHandler(null);
+  gs.registerHostAppliedListener(null);
+  gs.registerExitHandler(null);
 }
-
-let aiStepTimer: ReturnType<typeof setTimeout> | null = null;
-function hostMaybeStepAI() {
-  if (aiStepTimer) return;
-  aiStepTimer = setTimeout(() => {
-    aiStepTimer = null;
-    const { lobby } = useNetworkStore.getState();
-    const { module, privateState } = useGameStore.getState();
-    if (!lobby || !module || privateState === null) return;
-    if (!module.aiChooseAction) return;
-    for (const seat of lobby.seats) {
-      if (!seat.isAI) continue;
-      const action = module.aiChooseAction(privateState, seat.index);
-      if (!action) continue;
-      hostApplyAndBroadcastInternal({
-        action,
-        byUuid: `ai:${seat.index}`,
-        bySeat: seat.index,
-      });
-      return; // Only step one AI per tick; the post-apply call re-schedules.
-    }
-  }, 250);
-}
-
-// ----------------------------------------------------------------------------
-// Store
-// ----------------------------------------------------------------------------
 
 export const useNetworkStore = create<NetworkStore>((set, get) => {
-  // Defer wiring the broadcastHandler until the store is constructed (so we
-  // can reference `get()`).
+  // --------------------------------------------------------------------------
+  // Host internals
+  // --------------------------------------------------------------------------
+
+  function commitLobby(next: LobbyState) {
+    set({ lobby: next });
+    hostConn?.setLobby(next).catch((e: Error) => console.warn('[host] lobby write failed:', e.message));
+  }
+
+  function humanSeatUids(lobby: LobbyState): string[] {
+    return lobby.seats.filter((s) => s.uuid && !s.isAI).map((s) => s.uuid!);
+  }
+
+  /** Fan out per-device redacted views (+ the host's saved state). */
+  function hostPublish(state: unknown, tick: number) {
+    const { lobby, uuid } = get();
+    const { module } = useGameStore.getState();
+    if (!hostConn || !lobby?.inGame || !module || !uuid) return;
+    const recipients = new Set([...presentUids, ...humanSeatUids(lobby)]);
+    const views = stampChangedViews(ledger, buildViews(module, state, lobby, recipients, tick, uuid));
+    const viewSeq: Record<string, number> = {};
+    for (const [u, e] of ledger) viewSeq[u] = e.seq;
+    hostConn
+      .publish(views, { match: lobby.match, gameId: module.id, tick, state, viewSeq })
+      .catch((e: Error) => console.warn('[host] publish failed:', e.message));
+  }
+
+  /** A device appeared mid-match: give it its current view. */
+  function hostPublishToNewcomers() {
+    const { lobby, uuid } = get();
+    const { module, privateState, tick } = useGameStore.getState();
+    if (!hostConn || !lobby?.inGame || !module || privateState === null || !uuid) return;
+    const fresh = presentUids.filter((u) => !ledger.has(u) && u !== uuid);
+    if (fresh.length === 0) return;
+    const views = stampChangedViews(ledger, buildViews(module, privateState, lobby, fresh, tick, uuid));
+    hostConn.publish(views).catch((e: Error) => console.warn('[host] publish failed:', e.message));
+  }
+
+  function hostHandleInbox(fromUid: string, msg: InboxMessage) {
+    const lobby = get().lobby;
+    if (!lobby) return;
+    if (msg.kind === 'seat') {
+      const next = applySeatRequest(lobby, fromUid, msg);
+      if (next) commitLobby(next);
+      return;
+    }
+    if (msg.kind === 'action') {
+      const verdict = vetInboundAction(lobby, fromUid, msg.action);
+      if (!verdict.ok) {
+        console.warn(`[host] refused action from ${fromUid}: ${verdict.reason}`);
+        return;
+      }
+      useGameStore.getState().hostApply(msg.action as AnyAction, fromUid);
+    }
+  }
+
+  function hostEvents(gen: number): HostEvents {
+    return {
+      presence: (people) => {
+        if (gen !== generation) return;
+        presentUids = [...new Set(people.map((p) => p.uid))];
+        set({ onlinePeers: countPresence(people) });
+        hostPublishToNewcomers();
+      },
+      chat: (msg) => {
+        if (gen !== generation) return;
+        set((s) => (s.chat.some((m) => m.id === msg.id) ? s : { chat: [...s.chat, msg] }));
+      },
+      connected: (up) => {
+        if (gen !== generation) return;
+        set({ linkUp: up });
+      },
+      inbox: (fromUid, msg) => {
+        if (gen !== generation) return;
+        hostHandleInbox(fromUid, msg);
+      },
+    };
+  }
+
+  function installHostHooks() {
+    const gs = useGameStore.getState();
+    gs.registerBroadcastHandler(null);
+    gs.registerHostAppliedListener((state, tick) => hostPublish(state, tick));
+    gs.registerExitHandler(() => {
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.confirm === 'function' &&
+        !window.confirm('End this game for everyone and return to the lobby?')
+      ) {
+        return;
+      }
+      get().endMatch();
+    });
+  }
+
+  function hostStartLocal(lobby: LobbyState, state: unknown, gameId: GameId, tick: number) {
+    const uuid = get().uuid;
+    const hostSeat = uuid ? (seatOf(lobby, uuid)?.index ?? null) : null;
+    const aiSeats = lobby.seats.filter((s) => s.isAI).map((s) => s.index);
+    useGameStore.getState().startLocalGame(getGame(gameId), state, hostSeat, {
+      aiSeats,
+      controllableSeats: hostSeat === null ? [] : [hostSeat],
+      tick,
+    });
+  }
+
+  async function resumeAsHost(t: RoomTransport, code: string, meta: RoomMeta, uid: string, gen: number) {
+    const displayName = getDisplayName();
+    const { conn, lobby, saved } = await t.resumeHost(code, meta, { uid, name: displayName }, hostEvents(gen));
+    if (gen !== generation) {
+      conn.close({ deleteRoom: false });
+      return;
+    }
+    if (!lobby) {
+      conn.close({ deleteRoom: true });
+      set({ connection: 'disconnected', role: 'solo', roomCode: null, error: 'That room was damaged; start a new one.' });
+      setRoomInUrl(null);
+      return;
+    }
+    hostConn = conn;
+    set({
+      connection: 'lobby',
+      role: 'host',
+      uuid: uid,
+      displayName,
+      hostUuid: uid,
+      lobby,
+      roomCode: code,
+      error: null,
+    });
+    setRoomInUrl(code);
+    installHostHooks();
+    if (lobby.inGame && saved && saved.match === lobby.match) {
+      // Continue each device's sequence; an empty key forces a fresh send.
+      ledger = new Map(Object.entries(saved.viewSeq ?? {}).map(([u, seq]) => [u, { key: '', seq }]));
+      set({ connection: 'in-game' });
+      hostStartLocal(lobby, saved.state, saved.gameId, saved.tick);
+    } else if (lobby.inGame) {
+      // The saved state is gone: the match can't continue.
+      commitLobby({ ...lobby, inGame: false });
+      conn.clearMatch().catch(() => {});
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Guest internals
+  // --------------------------------------------------------------------------
+
+  function applyGuestView(rec: ViewRecord) {
+    const gs = useGameStore.getState();
+    const env = rec.env;
+    if (gs.publicView && appliedMatch === rec.match && gs.gameId === env.gameId && env.tick < gs.tick) return;
+    useGameStore.setState({
+      gameId: env.gameId,
+      module: getGame(env.gameId),
+      privateState: null,
+      isHost: false,
+      tick: env.tick,
+      publicView: env,
+      localSeat: env.seat,
+      aiSeats: [],
+      controllableSeats: env.seat === null ? [] : [env.seat],
+    });
+    appliedMatch = rec.match;
+    set({ connection: 'in-game', matchHidden: false });
+  }
+
+  function guestEvents(gen: number, uid: string): GuestEvents {
+    return {
+      lobby: (lobby) => {
+        if (gen !== generation) return;
+        if (!lobby) {
+          get().leaveRoom();
+          set({ error: 'The host closed the room.' });
+          return;
+        }
+        const seated = !!seatOf(lobby, uid);
+        set((s) => ({
+          lobby,
+          role: seated ? 'guest' : lobby.inGame ? 'spectator' : 'guest',
+          connection: s.connection === 'connecting' ? 'lobby' : s.connection,
+        }));
+      },
+      view: (rec) => {
+        if (gen !== generation) return;
+        latestView = rec;
+        if (!rec) {
+          if (useGameStore.getState().publicView) useGameStore.getState().clearGame();
+          appliedMatch = -1;
+          set({ connection: 'lobby', matchHidden: false });
+          return;
+        }
+        // A new match started while this device had stepped out: bring it back in.
+        if (rec.match !== appliedMatch && get().matchHidden) set({ matchHidden: false });
+        if (!get().matchHidden) applyGuestView(rec);
+      },
+      presence: (people) => {
+        if (gen !== generation) return;
+        set({ onlinePeers: countPresence(people) });
+      },
+      chat: (msg) => {
+        if (gen !== generation) return;
+        set((s) => (s.chat.some((m) => m.id === msg.id) ? s : { chat: [...s.chat, msg] }));
+      },
+      connected: (up) => {
+        if (gen !== generation) return;
+        set({ linkUp: up });
+      },
+    };
+  }
+
+  function guestSend(msg: InboxMessage) {
+    if (!guestConn) return;
+    guestConn.send(msg).catch((e: Error) => {
+      console.warn('[guest] send failed:', e.message);
+      set({ error: `Couldn't reach the host: ${e.message}` });
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // Store
+  // --------------------------------------------------------------------------
+
   return {
     connection: 'disconnected',
     role: 'solo',
     uuid: null,
-    displayName: 'Player',
+    displayName: getDisplayName(),
     hostUuid: null,
     lobby: null,
     chat: [],
     onlinePeers: {},
     roomCode: null,
+    error: null,
+    linkUp: true,
+    matchHidden: false,
 
-    // ----- Host -----
-    hostRoom: (roomCode, gameId, initial) => {
-      teardown();
-      // Always start from a fresh dispatch chain so we don't stack wrappers
-      // across host→guest→host transitions.
-      uninstallHostDispatchHook();
-      const uuid = getOrCreateUuid();
-      const displayName = getDisplayName();
-      const room = bindRoom(roomCode);
-      activeRoom = room;
-      let lobby: LobbyState;
-      if (initial) {
-        const seats: Seat[] = Array.from({ length: initial.seatCount }, (_, i) => ({
-          index: i,
-          uuid: null,
-          name: initial.names[i] ?? `Seat ${i + 1}`,
-          isAI: false,
-        }));
-        lobby = {
+    hostRoom: async (gameId, initial) => {
+      teardownConnections(get().role === 'host');
+      useGameStore.getState().clearGame();
+      const gen = generation;
+      set({ connection: 'connecting', role: 'host', error: null, lobby: null, chat: [], roomCode: null });
+      try {
+        const t = await transport();
+        const uid = await t.signIn();
+        if (gen !== generation) return;
+        const displayName = getDisplayName();
+        const mod = getGame(gameId);
+        const seatCount = initial?.seatCount ?? Math.min(mod.maxPlayers, Math.max(mod.minPlayers, 5));
+        const names = initial?.names ?? Array.from({ length: seatCount }, (_, i) => `Seat ${i + 1}`);
+        const lobby: LobbyState = {
           gameId,
-          seats,
-          gameOptions: initial.options,
-          seed: initial.seed ?? Math.floor(Math.random() * 2 ** 31),
+          seats: initialSeats(uid, displayName, names.slice(0, seatCount), initial?.aiSeats ?? []),
+          gameOptions: sanitizeOptions(initial?.options ?? mod.defaultConfig(seatCount).gameOptions),
+          inGame: false,
+          match: 0,
         };
-      } else {
-        lobby = emptyLobbyForGame(gameId);
+        let conn: HostConnection | null = null;
+        let code = '';
+        for (let attempt = 0; attempt < 6 && !conn; attempt++) {
+          code = generateRoomCode();
+          conn = await t.createRoom(code, lobby, { uid, name: displayName }, hostEvents(gen));
+        }
+        if (gen !== generation) {
+          conn?.close({ deleteRoom: true });
+          return;
+        }
+        if (!conn) throw new Error('Could not find a free room code — try again.');
+        hostConn = conn;
+        set({
+          connection: 'lobby',
+          role: 'host',
+          uuid: uid,
+          displayName,
+          hostUuid: uid,
+          lobby,
+          roomCode: code,
+        });
+        setRoomInUrl(code);
+        installHostHooks();
+      } catch (e) {
+        if (gen !== generation) return;
+        teardownConnections(get().role === 'host');
+        set({ connection: 'disconnected', role: 'solo', error: errorMessage(e) });
       }
-      // Host occupies seat 0 by default — overwrite its name with the host's
-      // persistent display name.
-      lobby.seats[0] = { ...lobby.seats[0]!, uuid, name: displayName };
-      set({
-        connection: 'lobby',
-        role: 'host',
-        uuid,
-        displayName,
-        hostUuid: uuid,
-        lobby,
-        chat: [],
-        onlinePeers: { [uuid]: 1 },
-        roomCode,
-      });
-      // Register the broadcastHandler so the host can apply its OWN actions
-      // through the same path (via the local gameStore.dispatch's host path,
-      // we don't actually need the handler — it goes the local route). But
-      // we set it to null on the host explicitly so dispatch picks the host
-      // path even when isHost is true.
-      useGameStore.getState().registerBroadcastHandler(null);
-      // Override gameStore.dispatch path: host dispatch should broadcast
-      // views after applying. We do this by hooking applyAction at dispatch
-      // time. Simpler: override `dispatch` via a wrapper installed below.
-      installHostDispatchHook();
-      wireHostHandlers(room);
     },
 
-    // ----- Guest -----
-    joinRoom: (roomCode) => {
-      teardown();
-      const uuid = getOrCreateUuid();
-      const displayName = getDisplayName();
-      const room = bindRoom(roomCode);
-      activeRoom = room;
-      set({
-        connection: 'connecting',
-        role: 'guest',
-        uuid,
-        displayName,
-        hostUuid: null,
-        lobby: null,
-        chat: [],
-        onlinePeers: { [uuid]: 1 },
-        roomCode,
-      });
-      wireGuestHandlers(room);
-      // Tell the gameStore to forward dispatched actions over the wire.
-      useGameStore.getState().registerBroadcastHandler((action) => {
-        const st = get();
-        if (!activeRoom || st.lobby == null || st.uuid == null) return;
-        const seat = st.lobby.seats.find((s) => s.uuid === st.uuid);
-        if (!seat) return;
-        activeRoom.sendAction({
-          action,
-          byUuid: st.uuid,
-          bySeat: seat.index,
+    joinRoom: async (input) => {
+      const code = normalizeRoomCode(input);
+      if (!code) {
+        set({ error: 'Room codes are 4–6 letters or numbers.' });
+        return;
+      }
+      teardownConnections(get().role === 'host');
+      useGameStore.getState().clearGame();
+      const gen = generation;
+      set({ connection: 'connecting', role: 'guest', roomCode: code, error: null, lobby: null, chat: [] });
+      try {
+        const t = await transport();
+        const uid = await t.signIn();
+        const meta = await t.lookupRoom(code);
+        if (gen !== generation) return;
+        if (!meta) {
+          set({
+            connection: 'disconnected',
+            role: 'solo',
+            roomCode: null,
+            error: `There's no room ${code}. Check the code with your host.`,
+          });
+          setRoomInUrl(null);
+          return;
+        }
+        if (meta.hostUid === uid) {
+          await resumeAsHost(t, code, meta, uid, gen);
+          return;
+        }
+        const displayName = getDisplayName();
+        set({ uuid: uid, displayName, hostUuid: meta.hostUid });
+        const conn = await t.joinAsGuest(code, meta, { uid, name: displayName }, guestEvents(gen, uid));
+        if (gen !== generation) {
+          conn.close();
+          return;
+        }
+        guestConn = conn;
+        setRoomInUrl(code);
+        const gs = useGameStore.getState();
+        gs.registerHostAppliedListener(null);
+        gs.registerBroadcastHandler((action) => guestSend({ kind: 'action', action }));
+        gs.registerExitHandler(() => {
+          // Step out to the lobby; the match keeps running and the seat is kept.
+          useGameStore.getState().clearGame();
+          set({ connection: 'lobby', matchHidden: true });
         });
-      });
-      uninstallHostDispatchHook();
+      } catch (e) {
+        if (gen !== generation) return;
+        teardownConnections(get().role === 'host');
+        set({ connection: 'disconnected', role: 'solo', roomCode: null, error: errorMessage(e) });
+      }
     },
 
     leaveRoom: () => {
-      teardown();
-      uninstallHostDispatchHook();
-      useGameStore.getState().registerBroadcastHandler(null);
-      useGameStore.getState().exitGame();
+      const wasHost = get().role === 'host';
+      teardownConnections(wasHost);
+      useGameStore.getState().clearGame();
+      setRoomInUrl(null);
       set({
         connection: 'disconnected',
         role: 'solo',
@@ -388,156 +525,132 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         chat: [],
         onlinePeers: {},
         roomCode: null,
+        matchHidden: false,
       });
     },
 
     // ----- Host-only lobby mutators -----
     setLobbyGameId: (gameId) => {
-      const { lobby, role } = get();
-      if (role !== 'host') return;
-      const fresh = emptyLobbyForGame(gameId);
-      // Preserve host's seat (uuid + name) at index 0, if it fits.
-      const hostSeat = lobby?.seats.find((s) => s.uuid === get().uuid);
-      if (hostSeat && fresh.seats[0]) {
-        fresh.seats[0] = { ...fresh.seats[0], uuid: hostSeat.uuid, name: hostSeat.name };
-      }
-      // Re-place any seated guests onto the new seat list (best effort).
-      if (lobby) {
-        let nextSeatIdx = 1;
-        for (const s of lobby.seats) {
-          if (!s.uuid || s.uuid === hostSeat?.uuid) continue;
-          while (nextSeatIdx < fresh.seats.length && fresh.seats[nextSeatIdx]!.uuid) {
-            nextSeatIdx++;
-          }
-          if (nextSeatIdx < fresh.seats.length) {
-            fresh.seats[nextSeatIdx] = {
-              ...fresh.seats[nextSeatIdx]!,
-              uuid: s.uuid,
-              name: s.name,
-              isAI: s.isAI,
-            };
-            nextSeatIdx++;
-          }
-        }
-      }
-      set({ lobby: fresh });
-      hostBroadcastLobby();
+      const { lobby, role, uuid } = get();
+      if (role !== 'host' || !lobby || lobby.inGame || !uuid) return;
+      const mod = getGame(gameId);
+      const n = Math.min(mod.maxPlayers, Math.max(mod.minPlayers, lobby.seats.length));
+      const seats: Seat[] = Array.from({ length: n }, (_, i) => {
+        const old = lobby.seats[i];
+        return old ? { ...old, index: i } : { index: i, uuid: null, name: `Seat ${i + 1}`, isAI: false };
+      });
+      commitLobby({ ...lobby, gameId, seats, gameOptions: sanitizeOptions(mod.defaultConfig(n).gameOptions) });
     },
 
     setLobbySeats: (seats) => {
       const { role, lobby } = get();
-      if (role !== 'host' || !lobby) return;
-      set({ lobby: { ...lobby, seats } });
-      hostBroadcastLobby();
+      if (role !== 'host' || !lobby || lobby.inGame) return;
+      const next = seats.map((s, i) => ({ ...s, index: i }));
+      let gameOptions = lobby.gameOptions;
+      if (next.length !== lobby.seats.length) {
+        // Options picked for N players (e.g. an ONUW role pool) may not fit
+        // the new count: dry-run the setup and fall back to the defaults.
+        const mod = getGame(lobby.gameId);
+        const players = next.map((s) => ({ name: s.name, isAI: s.isAI }));
+        try {
+          mod.createInitialState({ gameId: lobby.gameId, seats: next, seed: 1, gameOptions: { ...gameOptions, players } });
+        } catch {
+          gameOptions = sanitizeOptions(mod.defaultConfig(next.length).gameOptions);
+          set({ error: `Game options reset to the defaults for ${next.length} players.` });
+        }
+      }
+      commitLobby({ ...lobby, seats: next, gameOptions });
     },
 
     setLobbyOptions: (options) => {
       const { role, lobby } = get();
-      if (role !== 'host' || !lobby) return;
-      set({ lobby: { ...lobby, gameOptions: options } });
-      hostBroadcastLobby();
+      if (role !== 'host' || !lobby || lobby.inGame) return;
+      commitLobby({ ...lobby, gameOptions: sanitizeOptions(options) });
     },
 
     startGame: () => {
       const { role, lobby, uuid } = get();
-      if (role !== 'host' || !lobby || !uuid) return;
+      if (role !== 'host' || !lobby || !uuid || !hostConn || lobby.inGame) return;
+      if (lobby.seats.some((s) => !s.uuid)) return;
       const mod = getGame(lobby.gameId);
-      // Build the game-specific config from the lobby.
-      const options = injectPlayersIntoOptions(lobby);
-      const config = {
-        gameId: lobby.gameId,
-        seats: lobby.seats,
-        seed: lobby.seed,
-        gameOptions: options,
+      const gameOptions = {
+        ...lobby.gameOptions,
+        players: lobby.seats.map((s) => ({ name: s.name, isAI: s.isAI })),
       };
-      let initialState;
+      // The seed is decided here and never leaves this device.
+      const config = { gameId: lobby.gameId, seats: lobby.seats, seed: randomSeed(), gameOptions };
+      let initialState: unknown;
       try {
         initialState = mod.createInitialState(config);
       } catch (e) {
-        console.warn('[host] createInitialState failed:', (e as Error).message);
+        set({ error: `Couldn't start: ${errorMessage(e)}` });
         return;
       }
-      const hostSeat = lobby.seats.find((s) => s.uuid === uuid);
-      const hostSeatIdx: SeatIndex | null = hostSeat ? hostSeat.index : null;
-      // Set host's own state.
-      useGameStore.getState().startLocalGame(mod, initialState, hostSeatIdx);
-      set({ connection: 'in-game' });
-      // Send a `start` envelope to each connected peer with their redacted view.
-      if (!activeRoom) return;
-      for (const [peerId, peerUuid] of peerIdToUuid) {
-        const seat = lobby.seats.find((s) => s.uuid === peerUuid && !s.isAI);
-        const seatIdx: SeatIndex | null = seat ? seat.index : null;
-        const view: PublicEnvelope<unknown> = {
-          gameId: mod.id,
-          tick: 0,
-          view: mod.viewFor(initialState, seatIdx),
-          seat: seatIdx,
-        };
-        activeRoom.sendStart({ gameId: mod.id, tick: 0, view }, peerId);
-      }
-      hostMaybeStepAI();
+      const next: LobbyState = { ...lobby, inGame: true, match: lobby.match + 1 };
+      ledger = new Map();
+      commitLobby(next);
+      set({ connection: 'in-game', error: null });
+      hostStartLocal(next, initialState, lobby.gameId, 0);
+    },
+
+    endMatch: () => {
+      const { lobby, role } = get();
+      if (role !== 'host' || !lobby || !hostConn) return;
+      useGameStore.getState().clearGame();
+      ledger = new Map();
+      hostConn.clearMatch().catch((e: Error) => console.warn('[host] clear failed:', e.message));
+      commitLobby({ ...lobby, inGame: false });
+      set({ connection: 'lobby' });
     },
 
     // ----- Guest -----
     requestSeat: (desiredSeat) => {
-      const st = get();
-      if (!activeRoom || !st.uuid) return;
-      activeRoom.sendSeatRequest({
-        uuid: st.uuid,
-        desiredSeat,
-        displayName: st.displayName,
-      });
+      guestSend({ kind: 'seat', desiredSeat, displayName: get().displayName });
+    },
+
+    resumeMatch: () => {
+      if (get().role === 'host' || !latestView) return;
+      set({ matchHidden: false });
+      applyGuestView(latestView);
     },
 
     setLocalName: (name) => {
-      persistDisplayName(name);
-      set({ displayName: name });
+      const clean = name.slice(0, 20);
+      persistDisplayName(clean);
+      set({ displayName: clean });
       const st = get();
-      if (st.role === 'host' && st.lobby && st.uuid) {
-        const seats = st.lobby.seats.map((s) =>
-          s.uuid === st.uuid ? { ...s, name } : s,
-        );
-        set({ lobby: { ...st.lobby, seats } });
-        hostBroadcastLobby();
-      } else if (st.role === 'guest' && activeRoom && st.uuid) {
-        // Have the host integrate it via a seatReq (re-state current seat
-        // claim with new name; host will rebroadcast).
-        const seat = st.lobby?.seats.find((s) => s.uuid === st.uuid);
-        activeRoom.sendSeatRequest({
-          uuid: st.uuid,
-          desiredSeat: seat ? seat.index : 'leave',
-          displayName: name,
+      if (!st.lobby || !st.uuid) return;
+      const trimmed = clean.trim();
+      if (!trimmed) return;
+      if (st.role === 'host') {
+        if (st.lobby.inGame) return;
+        commitLobby({
+          ...st.lobby,
+          seats: st.lobby.seats.map((s) => (s.uuid === st.uuid ? { ...s, name: trimmed } : s)),
         });
+      } else {
+        const seat = seatOf(st.lobby, st.uuid);
+        if (seat) guestSend({ kind: 'seat', desiredSeat: seat.index, displayName: trimmed });
       }
     },
 
     // ----- Chat -----
     sendChat: (text) => {
       const st = get();
-      if (!st.uuid) return;
-      const msg: ChatMessage = {
-        id: uid(),
-        senderUuid: st.uuid,
-        senderName: st.displayName,
-        text,
-        timestamp: Date.now(),
-        kind: 'user',
-      };
-      // Show locally; also send. The host echoes everyone's messages so the
-      // receive handler will dedupe by id.
-      set((s) => ({ chat: [...s.chat, msg] }));
-      if (activeRoom) activeRoom.sendChat(msg);
+      const clean = text.trim().slice(0, 500);
+      const conn = hostConn ?? guestConn;
+      if (!clean || !conn) return;
+      // Our own line arrives back through the chat listener like everyone's.
+      conn.sendChat(st.displayName.trim() || 'Player', clean).catch((e: Error) => {
+        set({ error: `Message not sent: ${e.message}` });
+      });
     },
 
-    pushChat: (msg) =>
-      set((s) =>
-        s.chat.some((m) => m.id === msg.id) ? s : { chat: [...s.chat, msg] },
-      ),
+    clearError: () => set({ error: null }),
 
     reset: () => {
-      teardown();
-      uninstallHostDispatchHook();
-      useGameStore.getState().registerBroadcastHandler(null);
+      teardownConnections(get().role === 'host');
+      useGameStore.getState().clearGame();
       set({
         connection: 'disconnected',
         role: 'solo',
@@ -547,269 +660,9 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         chat: [],
         onlinePeers: {},
         roomCode: null,
+        error: null,
+        matchHidden: false,
       });
     },
   };
 });
-
-// ============================================================================
-// Wire-handlers
-// ============================================================================
-
-function wireHostHandlers(room: RoomBindings) {
-  room.recvHello((msg, peerId) => {
-    peerIdToUuid.set(peerId, msg.uuid);
-    useNetworkStore.setState((s) => {
-      const next = { ...s.onlinePeers };
-      next[msg.uuid] = (next[msg.uuid] ?? 0) + 1;
-      return { onlinePeers: next };
-    });
-    // Reply with hello so the guest knows our uuid (and the host marker).
-    const st = useNetworkStore.getState();
-    if (st.uuid) {
-      room.sendHello({ uuid: st.uuid, displayName: st.displayName }, peerId);
-    }
-    // Send current lobby immediately so the newcomer renders something.
-    const lobby = st.lobby;
-    if (lobby) room.sendLobby(lobby, peerId);
-    // If a game is already in progress, snapshot the current view so the
-    // peer can rejoin. Mirror the snapReq path.
-    sendSnapshotTo(peerId, msg.uuid);
-  });
-
-  room.recvSeatRequest((msg /* , _peerId */) => {
-    const st = useNetworkStore.getState();
-    if (!st.lobby) return;
-    const seats = st.lobby.seats.slice();
-    // First, clear any seat the requester currently holds (so claim moves them).
-    for (let i = 0; i < seats.length; i++) {
-      if (seats[i]!.uuid === msg.uuid) {
-        seats[i] = { ...seats[i]!, uuid: null, name: `Seat ${i + 1}`, isAI: false };
-      }
-    }
-    if (msg.desiredSeat === 'leave') {
-      useNetworkStore.setState({ lobby: { ...st.lobby, seats } });
-      hostBroadcastLobby();
-      return;
-    }
-    const idx = msg.desiredSeat;
-    if (idx < 0 || idx >= seats.length) return;
-    const target = seats[idx]!;
-    // Refuse if seat is occupied by a different uuid or by an AI.
-    if (target.uuid && target.uuid !== msg.uuid) return;
-    if (target.isAI) return;
-    seats[idx] = {
-      ...target,
-      uuid: msg.uuid,
-      name: msg.displayName?.trim() || target.name,
-      isAI: false,
-    };
-    useNetworkStore.setState({ lobby: { ...st.lobby, seats } });
-    hostBroadcastLobby();
-  });
-
-  room.recvAction((envelope, peerId) => {
-    hostApplyActionAndBroadcast(envelope, peerId);
-  });
-
-  room.recvSnapshotRequest((_msg, peerId) => {
-    const uuid = peerIdToUuid.get(peerId);
-    if (!uuid) return;
-    sendSnapshotTo(peerId, uuid);
-  });
-
-  room.recvChat((msg, _peerId) => {
-    // Host appends + re-broadcasts (so all peers see same ordering). Dedupe
-    // by id in case the host receives its own message back.
-    useNetworkStore.setState((s) =>
-      s.chat.some((m) => m.id === msg.id) ? s : { chat: [...s.chat, msg] },
-    );
-    hostBroadcastChat(msg);
-  });
-
-  room.onPeerJoin((peerId) => {
-    // Send our hello immediately so the guest learns the host uuid.
-    const st = useNetworkStore.getState();
-    if (st.uuid) {
-      room.sendHello({ uuid: st.uuid, displayName: st.displayName }, peerId);
-    }
-  });
-
-  room.onPeerLeave((peerId) => {
-    const uuid = peerIdToUuid.get(peerId);
-    peerIdToUuid.delete(peerId);
-    if (!uuid) return;
-    useNetworkStore.setState((s) => {
-      const next = { ...s.onlinePeers };
-      next[uuid] = Math.max(0, (next[uuid] ?? 0) - 1);
-      if (next[uuid] === 0) delete next[uuid];
-      return { onlinePeers: next };
-    });
-  });
-}
-
-function sendSnapshotTo(peerId: string, uuid: string) {
-  if (!activeRoom) return;
-  const st = useNetworkStore.getState();
-  if (!st.lobby) return;
-  const { module, privateState, tick } = useGameStore.getState();
-  if (!module || privateState === null) {
-    // Game hasn't started; lobby already sent on hello — nothing more.
-    return;
-  }
-  const seat = st.lobby.seats.find((s) => s.uuid === uuid && !s.isAI);
-  const seatIdx: SeatIndex | null = seat ? seat.index : null;
-  const view: PublicEnvelope<unknown> = {
-    gameId: module.id,
-    tick,
-    view: module.viewFor(privateState, seatIdx),
-    seat: seatIdx,
-  };
-  activeRoom.sendSnapshot(
-    {
-      view,
-      chat: st.chat,
-      hostUuid: st.uuid ?? '',
-      seatUuids: st.lobby.seats.map((s) => s.uuid),
-    },
-    peerId,
-  );
-}
-
-function wireGuestHandlers(room: RoomBindings) {
-  // Send our hello immediately when we see any peer (the host should be in
-  // the room when we connect, but Trystero fires onPeerJoin asynchronously).
-  room.onPeerJoin((peerId) => {
-    const st = useNetworkStore.getState();
-    if (st.uuid) room.sendHello({ uuid: st.uuid, displayName: st.displayName }, peerId);
-  });
-
-  room.recvHello((msg, peerId) => {
-    peerIdToUuid.set(peerId, msg.uuid);
-    useNetworkStore.setState((s) => {
-      const next = { ...s.onlinePeers };
-      next[msg.uuid] = (next[msg.uuid] ?? 0) + 1;
-      return { onlinePeers: next };
-    });
-  });
-
-  room.recvLobby((state, peerId) => {
-    // Whoever broadcasts the lobby IS the host. If their hello arrived
-    // first, peerIdToUuid maps; otherwise we'll fall back to setting it on
-    // the next hello (recvHello rebroadcasts onlinePeers but not hostUuid).
-    const peerUuid = peerIdToUuid.get(peerId) ?? null;
-    useNetworkStore.setState((s) => ({
-      lobby: state,
-      hostUuid: peerUuid ?? s.hostUuid,
-      connection: 'lobby',
-    }));
-  });
-
-  room.recvStart((msg, peerId) => {
-    const hostUuid = peerIdToUuid.get(peerId) ?? null;
-    const mod = getGame(msg.gameId);
-    // Apply the redacted public view to the local game store. Guest has no
-    // private state.
-    useGameStore.setState({
-      gameId: msg.view.gameId,
-      module: mod,
-      privateState: null,
-      tick: msg.view.tick,
-      publicView: msg.view,
-      localSeat: msg.view.seat,
-      isHost: false,
-    });
-    useNetworkStore.setState({ connection: 'in-game', hostUuid });
-  });
-
-  room.recvView((envelope, _peerId) => {
-    const { tick } = useGameStore.getState();
-    if (envelope.tick < tick) return; // stale
-    useGameStore.setState({
-      gameId: envelope.gameId,
-      publicView: envelope,
-      tick: envelope.tick,
-      localSeat: envelope.seat,
-    });
-  });
-
-  room.recvSnapshot((msg, peerId) => {
-    const hostUuid = peerIdToUuid.get(peerId) ?? msg.hostUuid;
-    const mod = getGame(msg.view.gameId);
-    useGameStore.setState({
-      gameId: msg.view.gameId,
-      module: mod,
-      privateState: null,
-      tick: msg.view.tick,
-      publicView: msg.view,
-      localSeat: msg.view.seat,
-      isHost: false,
-    });
-    useNetworkStore.setState({
-      connection: 'in-game',
-      hostUuid,
-      chat: msg.chat,
-    });
-  });
-
-  room.recvChat((msg, _peerId) => {
-    useNetworkStore.setState((s) =>
-      s.chat.some((m) => m.id === msg.id) ? s : { chat: [...s.chat, msg] },
-    );
-  });
-
-  room.onPeerLeave((peerId) => {
-    const uuid = peerIdToUuid.get(peerId);
-    peerIdToUuid.delete(peerId);
-    if (!uuid) return;
-    useNetworkStore.setState((s) => {
-      const next = { ...s.onlinePeers };
-      next[uuid] = Math.max(0, (next[uuid] ?? 0) - 1);
-      if (next[uuid] === 0) delete next[uuid];
-      return { onlinePeers: next };
-    });
-  });
-}
-
-// ============================================================================
-// Host dispatch hook
-// ============================================================================
-//
-// gameStore.dispatch's host path applies actions to private state directly.
-// For multiplayer host, we ALSO need to broadcast a per-peer redacted view
-// after every applied action. We achieve that by wrapping the existing
-// `dispatch` action when the host enters online mode. This avoids gameStore
-// importing from net/.
-
-type Dispatch = (action: AnyAction) => void;
-let originalDispatch: Dispatch | null = null;
-
-function installHostDispatchHook() {
-  if (originalDispatch) return;
-  const store = useGameStore;
-  const cur = store.getState().dispatch;
-  originalDispatch = cur;
-  store.setState({
-    dispatch: (action: AnyAction) => {
-      const st = useNetworkStore.getState();
-      const { isHost, localSeat } = useGameStore.getState();
-      const hostUuid = st.uuid;
-      if (!isHost || st.role !== 'host' || !hostUuid || localSeat === null) {
-        // Fall back to the original (works for hot-seat solo too).
-        cur(action);
-        return;
-      }
-      hostApplyAndBroadcastInternal({
-        action,
-        byUuid: hostUuid,
-        bySeat: localSeat,
-      });
-    },
-  });
-}
-
-function uninstallHostDispatchHook() {
-  if (!originalDispatch) return;
-  useGameStore.setState({ dispatch: originalDispatch });
-  originalDispatch = null;
-}

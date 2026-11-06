@@ -1,6 +1,6 @@
 import { makeRng, rngShuffle } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
-import { ROLES, ROLE_MAX_COUNT, rolesSortedByWakeOrder } from './roles';
+import { AWAKE_WOLF_CARDS, ROLES, ROLE_MAX_COUNT, rolesSortedByWakeOrder, wakesAtNight } from './roles';
 import type {
   OnuwCenterCard,
   OnuwNightStep,
@@ -19,13 +19,13 @@ export function validateRolePool(playerCount: number, pool: readonly OnuwRoleId[
   }
   const counts: Record<string, number> = {};
   for (const r of pool) {
+    if (!ROLES[r]) return `Unknown role "${String(r)}".`;
     counts[r] = (counts[r] ?? 0) + 1;
     const cap = ROLE_MAX_COUNT[r] ?? 1;
     if (counts[r] > cap) {
       return `Too many copies of ${ROLES[r].name} (max ${cap}).`;
     }
   }
-  // At least one werewolf-team card present somewhere.
   const wolfCards = pool.filter((r) => ROLES[r].team === 'werewolves');
   if (wolfCards.length === 0) {
     return 'Pool must include at least one werewolf-team role.';
@@ -58,53 +58,49 @@ export function dealRoles(
     name: names[i] ?? `Seat ${i + 1}`,
     dealtRole: role,
     finalRole: role,
+    finalCard: role,
     observations: [],
     voteTarget: null,
     killed: false,
     artifacts: [],
   }));
 
-  const centerCards: OnuwCenterCard[] = centerRoles.map((role, i) => ({
-    index: i,
-    role,
-  }));
+  const centerCards: OnuwCenterCard[] = centerRoles.map((role, i) => ({ index: i, role, card: role }));
 
-  const schedule = buildNightSchedule(seats);
+  const schedule = buildNightSchedule(seats, rolePool);
   return { seats, centerCards, schedule };
 }
 
-// Build the night schedule. We bucket seats by dealt role, then sort by
-// each role's wake-order. Roles with wakeOrder = 1000 (passive / no
-// night action) are excluded from the schedule entirely.
-export function buildNightSchedule(seats: readonly OnuwSeatState[]): OnuwNightStep[] {
-  const dealtRoles = new Set<OnuwRoleId>();
-  for (const s of seats) dealtRoles.add(s.dealtRole);
-  const ordered = rolesSortedByWakeOrder([...dealtRoles]);
-  const out: OnuwNightStep[] = [];
-  let stepIndex = 0;
-  for (const role of ordered) {
-    if (ROLES[role].wakeOrder >= 1000) continue;
-    const seatList = seats.filter((s) => s.dealtRole === role).map((s) => s.index);
-    out.push({
-      stepIndex: stepIndex++,
-      role,
-      seats: seatList,
-      resolved: false,
-      interactive: ROLES[role].hasInteractiveAction,
-    });
+// Build the night schedule from the ROLE POOL, in wake order. Every waking
+// role in the pool gets a step even if all its cards are in the center
+// (those steps have no seats and resolve silently) — so the schedule never
+// depends on where the cards landed. The schedule is host-only anyway; this
+// keeps anything derived from it (e.g. Aura Seer counts, timing) honest.
+//
+// All awake werewolves (Werewolf, Alpha Wolf, Mystic Wolf) share ONE wake
+// step (role 'werewolf'); the Alpha and Mystic then get their own steps.
+export function buildNightSchedule(
+  seats: readonly OnuwSeatState[],
+  rolePool: readonly OnuwRoleId[],
+): OnuwNightStep[] {
+  const roles = new Set<OnuwRoleId>();
+  for (const r of rolePool) {
+    if (!wakesAtNight(r)) continue;
+    roles.add(r);
+    if (AWAKE_WOLF_CARDS.has(r)) roles.add('werewolf');
   }
-  // Always insert an Insomniac-style "look at final card" step at the end
-  // for seats whose dealt role is `insomniac`. (It's already covered by the
-  // role's own wakeOrder 80 — we just have to make sure it runs LAST after
-  // any swaps. The numeric ordering already handles this.)
-  return out;
+  const ordered = rolesSortedByWakeOrder([...roles]);
+  return ordered.map((role, stepIndex) => ({
+    stepIndex,
+    role,
+    seats: seats
+      .filter((s) => (role === 'werewolf' ? AWAKE_WOLF_CARDS.has(s.dealtRole) : s.dealtRole === role))
+      .map((s) => s.index),
+    doppel: false,
+    resolved: false,
+    interactive: ROLES[role].hasInteractiveAction,
+  }));
 }
-
-// Some roles get an automatic observation at deal-time or at first wake
-// (e.g. Squire sees which positions hold werewolf CARDS — that's a deal-
-// time observation; Family Man, Empath, Aura Seer etc. resolve at end of
-// night). We compute these in the night-engine step handlers rather than
-// here so swaps that happen earlier in the night are reflected.
 
 // Compute the initial state from a config-style payload.
 export function buildInitialPrivate(
@@ -125,13 +121,19 @@ export function buildInitialPrivate(
     nightSchedule: schedule,
     nightStepIndex: 0,
     nightStepAcks: {},
+    piLooks: {},
+    witchPeeks: {},
+    doppelCopy: null,
+    alphaCenter: [],
+    revealed: [],
     setupAcked,
     voteAcks: [],
     rolePool: [...rolePool],
     dayDurationSec,
     allowNoLynch,
     seed,
-    winnerTeam: null,
+    winners: [],
+    winningTeams: [],
     killedSeats: [],
     voteTally: {},
   };

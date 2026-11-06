@@ -5,4 +5,5 @@ export type {
   OnuwPublicState,
   OnuwRoleId,
   OnuwArtifactId,
+  OnuwTeamId,
 } from './state';

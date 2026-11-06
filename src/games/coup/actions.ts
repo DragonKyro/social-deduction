@@ -7,26 +7,29 @@ import type { CoupCharacter, GeneralActionId } from './state';
 
 export type CoupGameAction =
   // Active turn — declare a general action or a character claim
+  // `bySeat` is required on every action: the host checks it against the
+  // phase (only the current player declares), and the network layer checks
+  // it against the sender's real seat.
   | {
       type: 'declareGeneral';
+      bySeat: SeatIndex;
       generalId: GeneralActionId;
       target?: SeatIndex; // required for 'coup'
     }
   | {
       type: 'declareCharacter';
+      bySeat: SeatIndex;
       claimedCharacter: CoupCharacter;
       characterActionId: CharacterActionId;
       target?: SeatIndex;
       // mercenary partner offer (claim only — the partner can decline by passing)
       mercenaryPartner?: SeatIndex;
-      // inquisitor's branch decision at declare time
+      // inquisitor's branch decision at declare time ('peek' needs `target`)
       inquisitorBranch?: 'exchange' | 'peek';
+      // which of the target's cards to peek (Inquisitor peek AND Spy)
       inquisitorPeekCardIndex?: 0 | 1;
       // foreign consular treaty pair (two seats; cannot include the claimer)
       treatyPair?: [SeatIndex, SeatIndex];
-      // arms dealer branch: steal | sell influence
-      armsDealerBranch?: 'steal' | 'sell';
-      sellCardIndex?: 0 | 1;
     }
 
   // Challenge / block window
@@ -38,9 +41,6 @@ export type CoupGameAction =
       character: CoupCharacter;
     }
 
-  // Reveal step (challenge resolution)
-  | { type: 'revealCard'; bySeat: SeatIndex; cardIndex: 0 | 1 }
-
   // Lose-influence pick (coup / assassinate / failed challenge / etc.)
   | { type: 'pickInfluenceToLose'; bySeat: SeatIndex; cardIndex: 0 | 1 }
 
@@ -51,12 +51,8 @@ export type CoupGameAction =
       keepIndices: number[]; // indices into exchangeOffer.cards
     }
 
-  // Acks (move past spy-peek / Inquisitor-peek display)
+  // Ack (move past the spy-peek / Inquisitor-peek display)
   | { type: 'ackPeek'; bySeat: SeatIndex }
-  | { type: 'ackTurn'; bySeat: SeatIndex }
-
-  // Spy / Inquisitor target picks (resolved live in the spyPeek / inquisitor branch)
-  | { type: 'spyPickTarget'; bySeat: SeatIndex; targetSeat: SeatIndex; cardIndex: 0 | 1 }
 
   // === G54 / Anarchy exotic mechanics =======================================
 

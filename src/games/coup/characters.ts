@@ -272,7 +272,7 @@ const ACT = {
   }),
   newscaster: (): CharacterAction => ({
     id: 'forceSwap',
-    label: 'Pay 1: peek a target card and force-swap it (house rule)',
+    label: 'Pay 1: force a target to swap a card with the deck (house rule)',
     effect: 'forceSwap',
     challengeable: true,
     blockable: false,
@@ -281,7 +281,7 @@ const ACT = {
   }),
   reporter: (): CharacterAction => ({
     id: 'forceSwap',
-    label: 'Peek a target card and force-swap it (house rule)',
+    label: 'Force a target to swap a card with the deck (house rule)',
     effect: 'forceSwap',
     challengeable: true,
     blockable: false,
@@ -466,7 +466,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'classic',
     action: ACT.assassin(),
     blocks: [],
-    description: 'Pay 3 coins, force a player to lose an influence. Blocked by Contessa.',
+    description: 'Pay 3 coins: a player loses an influence. Blocked by Contessa. The 3 coins stay spent if blocked; returned if the claim is successfully challenged.',
     implemented: true,
   },
   captain: {
@@ -486,7 +486,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'classic',
     action: ACT.ambassador(),
     blocks: [{ blocks: 'steal' }],
-    description: 'Exchange — draw 2 from the deck, keep any, return 2. Blocks Steal (classic only).',
+    description: 'Exchange: draw 2 from the court deck, keep any, return 2. Blocks Steal.',
     implemented: true,
   },
   contessa: {
@@ -519,7 +519,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.capitalist(),
     blocks: [],
     description:
-      '+2 coins; opens a pile-on window where any opponent claiming Capitalist may join for +2 themselves (each subject to challenge).',
+      '(house rule) +2 coins; opens a pile-on where every other player may join for +2 themselves (joiners are not challenged).',
     implemented: true,
   },
   speculator: {
@@ -530,7 +530,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.speculator(),
     blocks: [{ blocks: 'steal' }],
     description:
-      'Steal coins equal to your own current coin count, max 5 (house rule). Also blocks Steal — same-role only in G54.',
+      '(house rule) Steal coins equal to your own current coin count, max 5. Also blocks Steal.',
     implemented: true,
   },
   treasurer: {
@@ -564,7 +564,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.newscaster(),
     blocks: [],
     description:
-      '(house rule) Pay 1; peek one of a target\'s cards and force-swap it with a deck draw.',
+      '(house rule) Pay 1: a target swaps a face-down card of their choice with a deck draw. You see the card they received.',
     implemented: true,
   },
   reporter: {
@@ -575,7 +575,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.reporter(),
     blocks: [],
     description:
-      '(house rule) Peek a target\'s card and force them to swap that slot with a freshly-drawn card.',
+      '(house rule) A target swaps a face-down card of their choice with a deck draw. You see the card they received.',
     implemented: true,
   },
   producer: {
@@ -618,7 +618,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'force',
     action: ACT.assassinG54(),
     blocks: [{ blocks: 'assassinate' }],
-    description: 'G54 reprint of Assassin. In G54 only Assassin blocks Assassinate.',
+    description: 'Pay 3 coins: a player loses an influence. Also blocks Assassinate. The coins stay spent if blocked; returned if the claim is successfully challenged.',
     implemented: true,
   },
   mercenary: {
@@ -629,7 +629,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.mercenary(),
     blocks: [],
     description:
-      'Hire-to-kill: you and a chosen partner each pay 1; target loses an influence. Same-role challenges only.',
+      '(house rule) Hire-to-kill: you and a chosen partner each pay 1; the target loses an influence. Unblockable.',
     implemented: true,
   },
   soldier: {
@@ -649,7 +649,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'force',
     action: ACT.guerrilla(),
     blocks: [{ blocks: 'coup' }],
-    description: '(house rule) Pay 3: eliminate; only another Guerrilla may block this strike.',
+    description: '(house rule) Pay 3: target loses an influence; only a Guerrilla may block it. Also blocks Coup (G54).',
     implemented: true,
   },
   thief: {
@@ -660,7 +660,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.thief(),
     blocks: [{ blocks: 'steal' }],
     description:
-      'Steal 2 coins (G54 Captain analogue). Same-role only; failed challenge sends the coins to the challenger.',
+      'Steal 2 coins from another player (G54 Captain analogue). Blocks Steal.',
     implemented: true,
   },
 
@@ -672,7 +672,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'specialInterest',
     action: null,
     blocks: [{ blocks: 'coup' }],
-    description: 'Blocks Coup: cancel an incoming Coup (Coup attacker still spends the 7 coins).',
+    description: 'Blocks a Coup aimed at you (the attacker still spends the 7 coins).',
     implemented: true,
   },
   mayor: {
@@ -682,7 +682,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'specialInterest',
     action: ACT.mayor(),
     blocks: [],
-    description: '+2 coins (Mayor income). Honest Mayor claims can\'t be Foreign-Aid-blocked.',
+    description: '+2 coins (Mayor income). Unblockable.',
     implemented: true,
   },
   priest: {
@@ -693,7 +693,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.priest(),
     blocks: [{ blocks: 'assassinate' }],
     description:
-      '(house rule) Pay 1: bless a target — they gain a reviveBlessed token. If they would lose their last influence, the token is spent and they keep that card face-down. Also blocks Assassinate.',
+      '(house rule) Pay 1: bless a target — they gain a reviveBlessed token. If they would lose their last influence, the token is spent and they keep that card face-down (each player can be saved once per game). Also blocks Assassinate.',
     implemented: true,
   },
   lawyer: {
@@ -704,7 +704,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.lawyer(),
     blocks: [{ blocks: 'assassinate' }, { blocks: 'coup' }],
     description:
-      '(house rule) +2 coins and gain a reviveBlessed token. Blocks Assassinate AND Coup (canonical "lawyered up").',
+      '(house rule) +2 coins and gain a revive token (saves your last card once per game). Blocks Assassinate AND Coup.',
     implemented: true,
   },
   bishop: {
@@ -714,7 +714,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     category: 'specialInterest',
     action: ACT.bishop(),
     blocks: [{ blocks: 'steal' }, { blocks: 'foreignAid' }],
-    description: '(house rule) +1 coin and grant yourself a reviveBlessed token. Blocks Steal AND Foreign Aid.',
+    description: '(house rule) +1 coin and gain a revive token (saves your last card once per game). Blocks Steal AND Foreign Aid.',
     implemented: true,
   },
 
@@ -727,7 +727,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.inquisitor(),
     blocks: [{ blocks: 'steal' }],
     description:
-      'Either exchange ONE card with the deck, OR look at one of a target\'s cards and force them to keep / discard it. Blocks Steal.',
+      'Either exchange ONE card with the deck, OR privately look at one of a target\'s face-down cards. Blocks Steal.',
     implemented: true,
   },
   protestor: {
@@ -759,7 +759,7 @@ export const CHARACTERS: Record<CoupCharacter, CharacterSpec> = {
     action: ACT.foreignConsular(),
     blocks: [],
     description:
-      'Place a Treaty between two other living seats — they can\'t target each other until the treaty expires (end of your next turn).',
+      'Place a Treaty between two other living seats: they can\'t target each other until a later Treaty replaces the bond.',
     implemented: true,
   },
   diplomat: {

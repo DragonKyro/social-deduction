@@ -1,10 +1,14 @@
+@import './ui/shared/theme.css';
+
 :root {
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
   color-scheme: dark;
-  color: #e5e7eb;
-  background: #0b0f17;
+  color: var(--text);
+  background: var(--bg-0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body,
@@ -14,37 +18,89 @@ html,
   min-height: 100vh;
 }
 
+body {
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(212, 166, 74, 0.07), transparent 70%),
+    radial-gradient(900px 500px at 100% 100%, rgba(63, 127, 214, 0.05), transparent 70%),
+    var(--bg-0);
+  background-attachment: fixed;
+}
+
+body::before {
+  /* Film grain over everything; purely decorative. */
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--grain);
+  opacity: 0.55;
+  z-index: 0;
+}
+
 #root {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
 }
 
-button {
+:where(h1, h2, h3) {
+  font-family: var(--font-regal);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+/* Base element styles use :where() (zero specificity) so any module class
+   in a game's CSS overrides them without !important or extra selectors. */
+:where(button) {
   font: inherit;
   color: inherit;
-  background: #1f2937;
-  border: 1px solid #374151;
-  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.1)), var(--bg-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
   padding: 6px 12px;
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) ease;
 }
 
-button:hover:not(:disabled) {
-  background: #2a3441;
+:where(button:hover:not(:disabled)) {
+  border-color: var(--gold-deep);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.05)), var(--bg-3);
 }
 
-button:disabled {
-  opacity: 0.5;
+:where(button:active:not(:disabled)) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+:where(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+:where(button:disabled) {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-input,
-select,
-textarea {
+:where(input, select, textarea) {
   font: inherit;
   color: inherit;
-  background: #111827;
-  border: 1px solid #374151;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 4px 8px;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+
+::selection {
+  background: rgba(212, 166, 74, 0.35);
 }

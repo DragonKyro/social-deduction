@@ -1,44 +1,48 @@
 # One Night Ultimate Werewolf
 
-Single-night social deduction. Each player gets a hidden role from a pool of `playerCount + 3` cards (the extra 3 sit face-down in the center). Roles wake in a fixed order at night and perform private actions; players then discuss during the day and lynch one player by vote.
+Single-night social deduction. Each player gets a hidden role from a pool of `playerCount + 3` cards (the extra 3 sit face-down in the center). Roles wake in a fixed order at night and perform private actions; players then discuss during the day and kill one player by vote.
 
 ## Scope
 
-**Base game** ships first (Phase 1):
-- Werewolf ×2, Minion, Mason ×2, Seer, Robber, Troublemaker, Tanner, Drunk, Insomniac, Hunter, Villager ×3
+- **Base game**: Werewolf ×2, Minion, Mason ×2, Seer, Robber, Troublemaker, Tanner, Drunk, Insomniac, Hunter, Villager ×3
+- **Daybreak**: Doppelganger, Witch, Apprentice Seer, Paranormal Investigator, Village Idiot, Revealer, Curator, Alpha Wolf, Mystic Wolf, Dream Wolf
+- **Bonus roles** (consolidated packs): Aura Seer, Cursed, Prince, Apprentice Tanner, Beholder, Thing, Squire, Body Snatcher, Empath, Nostradamus, Family Man, Windy Wendy, Defender-er, The Sponge, Ricochet Rhino, Innocent Bystander
 
-**Daybreak expansion** (Phase 2):
-- Doppelganger, Witch, Apprentice Seer, Paranormal Investigator, Village Idiot, Revealer, Curator, Alpha Wolf, Mystic Wolf, Dream Wolf
+## Files
 
-**Bonus Roles pack** (Phase 2b) — consolidated Bonus Packs 1-4:
-- Aura Seer, Cursed, Prince, Apprentice Tanner, Beholder, Thing, Squire, Body Snatcher, Empath, Nostradamus, Family Man, Windy Wendy, Defender-er, The Sponge, Ricochet Rhino, Innocent Bystander (16 roles)
-- 6 artifact tokens: Bow of the Hunter, Cloak of the Prince, Sword of the Bodyguard, Mist of the Vampire, Dagger of the Traitor, Alien Artifact
-- 2 extra player number tokens (#11, #12) so games can scale to 12 seats with the right role count
+- `state.ts` — private host state + public view types. `actions.ts` — action union.
+- `roles.ts` — static role metadata (team, wake order, Doppelganger mode, mandatory flag, descriptions), werewolf-card sets, recommended pools.
+- `setup.ts` — pool validation, deal, night schedule. `night.ts` — every night-action helper. `resolve.ts` — votes + win conditions.
+- `view.ts` — `viewFor`, the redaction chokepoint (also used by the AI). `module.ts` — `applyAction` validation + dispatch. `ai.ts` — the AI.
+- `ui/` — `GameView` (screens), `RoleArt` (cards / back / medallions), `Sky` (animated backdrop), `OnuwSetup`.
 
-The Bonus Roles pack is purely additive — every role plugs into the same night-order engine; no new phase, no new action class beyond what base + Daybreak introduced. Artifacts are a generic seat-bound token system; only some roles care about them (Prince needs the Cloak; Hunter is more interesting with the Bow), but artifact ownership is independent of role and the engine surfaces it in `OnuwPublicSeatState.artifacts`.
+## Cards: printed vs effective
 
-### Role file layout
+Each position holds a card with a **printed** face (`finalCard` / `card`) and an **effective** role (`finalRole` / `role`). They differ only after a transformation — the Doppelganger card becomes the copied role, a Paranormal Investigator who saw a werewolf becomes a werewolf — and the transformation travels with the card. Looking at a card shows the printed face; teams and win conditions use the effective role.
 
-Each role is a self-contained file under `roles/` exporting:
-- `wakeOrder: number` — the canonical night-step index
-- `nightAction: (state, seat) => state` — apply this role's night step
-- (optional) `requiresArtifact: OnuwArtifactId` — Prince's Cloak gating, etc.
-- (optional) `dayEffect(state, seat) => state` — Family Man's neighbor-werewolf payoff, etc.
-- (optional) `voteEffect(state, seat) => state` — Cursed's "becomes werewolf if voted", Ricochet Rhino's vote bounce
+## Night
 
-The night-order list lives in `nightOrder.ts` and unions the active packs' role IDs. There are NO `if (rolePool.includes('windyWendy'))` branches in the engine — every role registers via its own file.
+- The schedule is built from the **whole role pool**, not the dealt seats, so its shape never depends on which roles are in the center. Steps for center-only roles have no seats and resolve silently.
+- All awake werewolves (Werewolf, Alpha, Mystic) share one wake step; Dream Wolf sleeps but is seen. A wolf who sees no other werewolf is a lone wolf and may look at one center card.
+- **Doppelganger** (official timing): copies of Seer / Robber / Troublemaker / Drunk / Witch / PI / … act immediately; copies of Werewolf / Minion / Mason (and Squire, Beholder, Empath) wake with that role; copies of Insomniac / Revealer / Curator / Aura Seer wake again right after the original.
+- Mandatory actions (a pass is rejected): Doppelganger, Drunk, The Thing, Alpha Wolf (unless there is no non-werewolf to convert). The Witch, once she has looked at a center card, must hand it out.
+
+## Voting and winning
+
+Official rules: most votes die, ties all die, nobody dies if no one has more than one vote; Hunter takes their vote target. Village wins if a werewolf dies (or no player is a werewolf and nobody dies); werewolf team wins if a werewolf is in play and none dies, unless a Tanner died; with no werewolf in play the werewolf team (e.g. Minion) wins if someone else dies. Tanner wins if killed (and the village can win alongside). Minion / Squire / Rhino are werewolf **team** but not werewolves. Results are per seat (`winners`) plus `winningTeams`.
 
 ## Hidden info
 
-- **Roles** are never broadcast — they live in `OnuwPrivateState.seats[i].dealtRole`/`finalRole` and only enter `OnuwPublicState.yourRole` when the view is redacted for that exact seat.
-- **Night observations** (`yourObservation`) are the same: a Seer who peeks Seat 2 sees Seat 2's role in their own private view; nobody else's view contains that observation.
-- **Artifact ownership is PUBLIC** — matches the Bezier intent; the artifact is a flavor token, the role that needs it (e.g. Prince) stays hidden. So an opponent sees "Seat 3 has the Cloak" without learning Seat 3's role.
-- During day phase, the only public info beyond artifacts is "who voted yet" — not what each person voted (votes resolve simultaneously at the end of the timer).
+- A seat's view holds only its dealt card, its own observations, its own vote, and — only while it is that seat's turn — `yourNightStep` (the role it is acting as). Its current card (`yourFinalRole`) appears only after the vote.
+- Nothing about the night schedule is public: no step index, no "who is awake", no step count. The spectator view is identical for the whole night.
+- Votes stay secret until resolution; only "has voted" is public.
+- Public from daybreak: cards the Revealer left face-up. After the vote: everything.
+- The RNG seed is host-only.
+- Pass-and-play UI: the shared screen always renders the spectator view; a player's private screen opens behind a curtain and the device goes round the table every night step-cycle regardless of who is awake.
 
-## Why ONUW first
+## House variants / simplifications
 
-Smallest action surface of the four games and the most constrained timeline (one night). Good shakedown for the redaction model before tackling Coup's much larger action space or Avalon's nested mission structure.
-
-## Bonus Roles caveats
-
-A few Bonus Roles roles assume mechanics from sister games in the One Night series (Vampire, Alien, Super Villains) — e.g. Body Snatcher's "takes their team" only matters when teams beyond village/werewolves/tanner exist. We honor the rule for werewolf-team swaps and treat other team conversions as no-ops with a logged note. The full sister-game roster is not on the roadmap.
+- Squire sees which positions hold a werewolf card (incl. center); Aura Seer counts the other players who woke; Empath counts werewolf cards among neighbors; Cursed counts as a werewolf when killed.
+- Curator, Defender-er, Nostradamus and The Sponge are narrated / honor-system only (artifacts are flavor). The Sponge scores as village.
+- Alpha Wolf's displaced card goes to a separate "alpha center" slot shown at the end.
+- `allowNoLynch: false` (not exposed in the setup UI) kills a tie of single votes.

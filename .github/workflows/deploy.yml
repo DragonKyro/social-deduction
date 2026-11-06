@@ -14,6 +14,12 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Explicit bash = -eo pipefail, so a failing command piped into tail still
+# fails the step (without it, type errors were silently ignored).
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,6 +39,8 @@ jobs:
         run: npm ci --no-audit --no-fund --foreground-scripts --loglevel=verbose 2>&1 | tail -200
       - name: Run typecheck (separate step so we see TS errors)
         run: npx tsc --noEmit 2>&1 | tail -100
+      - name: Run tests
+        run: npx vitest run 2>&1 | tail -60
       - name: Run vite build (separate step so we isolate the failure)
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'

@@ -1,24 +1,25 @@
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { LiarsPokerAction } from './actions';
 import { aiChooseAction } from './ai';
-import { claimExists, isStrictRaise } from './hands';
+import { claimExists, isStrictRaise, normalizeClaim } from './hands';
 import { buildInitial, dealRound } from './setup';
 import type {
   Card,
   LiarsPokerPrivateState,
   LiarsPokerPublicState,
   PlayerState,
-  PublicPlayer,
   RevealRecord,
   RoundSummary,
 } from './state';
+import { aliveSeats, viewFor } from './view';
 
 // ============================================================================
 // Liar's Poker — module
 //
 // Hidden info: each seat's own hand (normal players). Dummy-hand inversion:
-// dummy seats see NOTHING; every other seat sees the dummy's card. The
-// chokepoint is `viewFor` which decides per-seat which cards are visible.
+// dummy seats see NOTHING of their own card; every other seat sees it. The
+// chokepoint is `viewFor` (view.ts) which decides per-seat which cards are
+// visible.
 // ============================================================================
 
 export interface LiarsPokerSeatConfig {
@@ -39,12 +40,6 @@ function getOptions(config: GameConfig): LiarsPokerOptions {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function aliveSeats(state: LiarsPokerPrivateState): SeatIndex[] {
-  return state.seats
-    .map((s) => s.index)
-    .filter((i) => !state.players[i]!.eliminated);
-}
 
 function nextLive(state: LiarsPokerPrivateState, from: SeatIndex): SeatIndex {
   const n = state.seats.length;
@@ -75,6 +70,15 @@ function resetAck(state: LiarsPokerPrivateState): Record<SeatIndex, boolean> {
   return out;
 }
 
+/** The acting seat must be a real, still-alive seat. */
+function requireLiveSeat(state: LiarsPokerPrivateState, seat: unknown): SeatIndex {
+  if (typeof seat !== 'number' || !Number.isInteger(seat) || !state.players[seat]) {
+    throw new Error('Unknown seat');
+  }
+  if (state.players[seat]!.eliminated) throw new Error('Eliminated seat cannot act');
+  return seat;
+}
+
 function combinedPool(state: LiarsPokerPrivateState): Card[] {
   const pool: Card[] = [];
   for (const s of state.seats) {
@@ -89,8 +93,7 @@ function resolveCall(
 ): LiarsPokerPrivateState {
   const claim = state.currentClaim!;
   const bidder = state.currentBidder!;
-  const pool = combinedPool(state);
-  const exists = claimExists(claim, pool);
+  const exists = claimExists(claim, combinedPool(state));
   // If claim exists → caller loses; else bidder loses.
   const callerWon = !exists;
   const loserSeat = callerWon ? bidder : caller;
@@ -99,7 +102,7 @@ function resolveCall(
     allHands[s.index] = state.players[s.index]!.hand.slice();
   }
   const reveal: RevealRecord = {
-    claim,
+    claim: { ...claim },
     caller,
     bidder,
     claimExists: exists,
@@ -109,31 +112,16 @@ function resolveCall(
   };
   // Apply loss to loser.
   const lp = state.players[loserSeat]!;
-  let next = state;
+  let next: LiarsPokerPrivateState;
   if (lp.isDummy) {
-    // Dummies have one card; losing → eliminated.
-    next = withPlayer(state, loserSeat, {
-      eliminated: true,
-      cardCount: 0,
-      isDummy: false,
-    });
-  } else if (lp.cardCount - 1 === 0) {
-    if (state.dummyHand) {
-      // Dummy life starts next round.
-      next = withPlayer(state, loserSeat, {
-        cardCount: 0,
-        isDummy: true,
-      });
-    } else {
-      next = withPlayer(state, loserSeat, {
-        cardCount: 0,
-        eliminated: true,
-      });
-    }
+    // Dummies are on their last life; losing → eliminated.
+    next = withPlayer(state, loserSeat, { eliminated: true, cardCount: 0, isDummy: false });
+  } else if (lp.cardCount - 1 <= 0) {
+    next = state.dummyHand
+      ? withPlayer(state, loserSeat, { cardCount: 0, isDummy: true }) // dummy life from next deal
+      : withPlayer(state, loserSeat, { cardCount: 0, eliminated: true });
   } else {
-    next = withPlayer(state, loserSeat, {
-      cardCount: lp.cardCount - 1,
-    });
+    next = withPlayer(state, loserSeat, { cardCount: lp.cardCount - 1 });
   }
   return {
     ...next,
@@ -186,18 +174,16 @@ export const liarsPokerModule: GameModule<
     state: LiarsPokerPrivateState,
     action: LiarsPokerAction,
   ): LiarsPokerPrivateState {
+    if (state.phase === 'gameOver') throw new Error('Game is over');
     switch (action.type) {
       case 'ackDeal': {
         if (state.phase !== 'dealPending') {
           throw new Error('ackDeal only valid in dealPending');
         }
-        const p = state.players[action.bySeat]!;
-        if (p.eliminated) throw new Error('Eliminated seat cannot ack');
-        const next = withPlayer(state, action.bySeat, { dealAcked: true });
-        const allAcked = aliveSeats(next).every(
-          (i) => next.players[i]!.dealAcked,
-        );
-        if (!allAcked) return next;
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.players[seat]!.dealAcked) throw new Error('Already acknowledged');
+        const next = withPlayer(state, seat, { dealAcked: true });
+        if (!aliveSeats(next).every((i) => next.players[i]!.dealAcked)) return next;
         return { ...next, phase: 'bidding', currentSeat: next.roundLeader };
       }
 
@@ -205,17 +191,21 @@ export const liarsPokerModule: GameModule<
         if (state.phase !== 'bidding') {
           throw new Error('placeClaim only valid in bidding');
         }
-        if (action.bySeat !== state.currentSeat) {
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (seat !== state.currentSeat) {
           throw new Error('Not your turn');
         }
-        if (!isStrictRaise(state.currentClaim, action.claim)) {
+        const claim = normalizeClaim(action.claim);
+        if (!claim) throw new Error('Malformed claim');
+        if (!isStrictRaise(state.currentClaim, claim)) {
           throw new Error('Claim must strictly exceed the previous one');
         }
         return {
           ...state,
-          currentClaim: action.claim,
-          currentBidder: action.bySeat,
-          currentSeat: nextLive(state, action.bySeat),
+          currentClaim: claim,
+          currentBidder: seat,
+          roundClaims: [...state.roundClaims, { seat, claim }],
+          currentSeat: nextLive(state, seat),
         };
       }
 
@@ -223,36 +213,35 @@ export const liarsPokerModule: GameModule<
         if (state.phase !== 'bidding') {
           throw new Error('callLiar only valid in bidding');
         }
-        if (action.bySeat !== state.currentSeat) {
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (seat !== state.currentSeat) {
           throw new Error('Not your turn');
         }
-        if (state.currentClaim === null) {
+        if (state.currentClaim === null || state.currentBidder === null) {
           throw new Error('No claim to call');
         }
-        return resolveCall(state, action.bySeat);
+        return resolveCall(state, seat);
       }
 
       case 'ackReveal': {
         if (state.phase !== 'revealing') {
           throw new Error('ackReveal only valid in revealing');
         }
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.revealAcked[seat]) throw new Error('Already acknowledged');
         const next = {
           ...state,
-          revealAcked: { ...state.revealAcked, [action.bySeat]: true },
+          revealAcked: { ...state.revealAcked, [seat]: true },
         };
-        const allAcked = aliveSeats(next).every(
-          (i) => next.revealAcked[i],
-        );
-        if (!allAcked) return next;
         const alive = aliveSeats(next);
+        if (!alive.every((i) => next.revealAcked[i])) return next;
+        const loser = next.lastReveal!.loserSeat;
+        const summary: RoundSummary = {
+          roundNumber: next.roundNumber,
+          reveal: next.lastReveal!,
+          eliminatedThisRound: next.players[loser]!.eliminated ? [loser] : [],
+        };
         if (alive.length <= 1) {
-          const summary: RoundSummary = {
-            roundNumber: next.roundNumber,
-            reveal: next.lastReveal!,
-            eliminatedThisRound: aliveSeats(state).filter(
-              (i) => next.players[i]!.eliminated,
-            ),
-          };
           return {
             ...next,
             phase: 'gameOver',
@@ -260,13 +249,6 @@ export const liarsPokerModule: GameModule<
             matchWinners: alive,
           };
         }
-        const summary: RoundSummary = {
-          roundNumber: next.roundNumber,
-          reveal: next.lastReveal!,
-          eliminatedThisRound: aliveSeats(state).filter(
-            (i) => next.players[i]!.eliminated,
-          ),
-        };
         return {
           ...next,
           phase: 'roundOver',
@@ -279,91 +261,22 @@ export const liarsPokerModule: GameModule<
         if (state.phase !== 'roundOver') {
           throw new Error('ackRoundOver only valid in roundOver');
         }
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.roundOverAcked[seat]) throw new Error('Already acknowledged');
         const next = {
           ...state,
-          roundOverAcked: {
-            ...state.roundOverAcked,
-            [action.bySeat]: true,
-          },
+          roundOverAcked: { ...state.roundOverAcked, [seat]: true },
         };
-        const allAcked = aliveSeats(next).every(
-          (i) => next.roundOverAcked[i],
-        );
-        if (!allAcked) return next;
-        const leader = nextRoundLeader(next);
-        return dealRound(next, leader);
+        if (!aliveSeats(next).every((i) => next.roundOverAcked[i])) return next;
+        return dealRound(next, nextRoundLeader(next));
       }
+
+      default:
+        throw new Error('Unknown action');
     }
   },
 
-  viewFor(
-    state: LiarsPokerPrivateState,
-    seat: SeatIndex | null,
-  ): LiarsPokerPublicState {
-    const players: PublicPlayer[] = state.seats.map((s) => {
-      const p = state.players[s.index]!;
-      // visibleHand: populated for dummy seats IFF the viewing seat isn't
-      // the dummy themselves. Otherwise empty.
-      const isDummySeat = p.isDummy && !p.eliminated;
-      const reveal = state.lastReveal;
-      const inReveal =
-        (state.phase === 'revealing' || state.phase === 'roundOver') &&
-        reveal !== null;
-      let visibleHand: Card[] = [];
-      if (inReveal) {
-        // After reveal, everyone sees everyone's hand.
-        visibleHand = reveal.allHands[s.index] ?? [];
-      } else if (isDummySeat && seat !== s.index) {
-        visibleHand = p.hand.slice();
-      }
-      return {
-        index: s.index,
-        name: s.name,
-        cardCount: p.cardCount,
-        isDummy: p.isDummy,
-        eliminated: p.eliminated,
-        dealAcked: p.dealAcked,
-        visibleHand,
-      };
-    });
-
-    // Your hand: normal seats see it; dummies do NOT (they can't see their card).
-    let yourHand: Card[] = [];
-    if (seat !== null) {
-      const me = state.players[seat]!;
-      if (!me.isDummy) yourHand = me.hand.slice();
-    }
-
-    let yourAckPending = false;
-    if (seat !== null) {
-      const p = state.players[seat]!;
-      if (state.phase === 'dealPending')
-        yourAckPending = !p.dealAcked && !p.eliminated;
-      else if (state.phase === 'revealing')
-        yourAckPending = !state.revealAcked[seat] && !p.eliminated;
-      else if (state.phase === 'roundOver')
-        yourAckPending = !state.roundOverAcked[seat] && !p.eliminated;
-    }
-
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({ index: s.index, name: s.name })),
-      players,
-      currentSeat: state.currentSeat,
-      roundLeader: state.roundLeader,
-      roundNumber: state.roundNumber,
-      cardsPerPlayer: state.cardsPerPlayer,
-      dummyHand: state.dummyHand,
-      currentClaim: state.currentClaim,
-      currentBidder: state.currentBidder,
-      lastReveal: state.lastReveal,
-      history: state.history.slice(),
-      matchWinners: state.matchWinners.slice(),
-      yourSeat: seat,
-      yourHand,
-      yourAckPending,
-    };
-  },
+  viewFor,
 
   isFinished(state: LiarsPokerPrivateState): boolean {
     return state.phase === 'gameOver';

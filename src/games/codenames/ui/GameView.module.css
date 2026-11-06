@@ -1,281 +1,1315 @@
+/* ==========================================================================
+   Codenames — Cold-War dossier on a walnut desk under a green banker's lamp.
+   Performance: 25 cards use only gradients + box-shadows; the agent
+   portraits are <use> references into one sprite. Animations touch
+   transform / opacity only.
+   ========================================================================== */
+
 .root {
-  padding: 16px;
-  max-width: 1100px;
-  margin: 0 auto;
+  --cn-paper: #efe5cb;
+  --cn-paper-dark: #ddcfa8;
+  --cn-ink: #29231b;
+  --cn-ink-soft: #5b5040;
+  --cn-red: #b8291f;
+  --cn-red-deep: #7a140e;
+  --cn-blue: #1f4f9c;
+  --cn-blue-deep: #102c5c;
+  --cn-bystander: #d4c094;
+  --cn-assassin: #121214;
+  --cn-stamp: #a3241b;
+  --cn-manila: #d2b177;
+
+  position: relative;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 18px clamp(10px, 2.5vw, 28px) 40px;
   display: grid;
+  gap: 16px;
+  align-content: start;
+  color: var(--parchment);
+  background:
+    radial-gradient(1100px 520px at 50% -80px, rgba(255, 236, 170, 0.16), transparent 70%),
+    radial-gradient(800px 600px at 50% 120%, rgba(0, 0, 0, 0.55), transparent 70%),
+    repeating-linear-gradient(
+      93deg,
+      rgba(255, 255, 255, 0.018) 0 2px,
+      transparent 2px 9px,
+      rgba(0, 0, 0, 0.05) 9px 11px,
+      transparent 11px 23px
+    ),
+    linear-gradient(180deg, #33241a, #1d140e 70%);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- Header ---------------------------------------------------------- */
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
   gap: 14px;
+  flex-wrap: wrap;
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
+  font-family: var(--font-dossier);
+  font-weight: 400;
+  font-size: clamp(24px, 3.4vw, 34px);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #f4ead2;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+}
+
+.classified {
+  font-family: var(--font-dossier);
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #e2584b;
+  border: 2px solid currentColor;
+  padding: 2px 8px;
+  transform: rotate(-6deg);
+  opacity: 0.85;
 }
 
 .subtitle {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 13px;
+  font-family: var(--font-dossier);
+  font-size: 12px;
+  color: rgba(239, 229, 203, 0.6);
+  letter-spacing: 0.08em;
 }
 
-.scoreBanner {
+.exitBtn {
+  font-family: var(--font-dossier);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #e7d9b5, #cdbb8c);
+  color: var(--cn-ink);
+  border: 1px solid #8c7646;
+  border-radius: 3px 10px 3px 3px;
+}
+
+.exitBtn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f1e5c4, #d8c799);
+  border-color: #6d5a33;
+}
+
+/* ---- Scoreboards ------------------------------------------------------ */
+
+.scoreboards {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 14px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
 }
 
-.scoreRed,
-.scoreBlue {
+.dossier {
+  --team: var(--cn-red);
+  --team-deep: var(--cn-red-deep);
+  --sd-glow: #ff6a55;
+  position: relative;
+  margin-top: 18px;
+  padding: 12px 14px 10px;
+  border-radius: 4px 12px 6px 6px;
+  color: var(--cn-ink);
+  background-color: var(--cn-manila);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.06)),
+    var(--paper-fibre);
+  box-shadow: var(--shadow-md);
+  border-left: 6px solid var(--team);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+}
+
+.dossier[data-team='blue'] {
+  --team: var(--cn-blue);
+  --team-deep: var(--cn-blue-deep);
+  --sd-glow: #6aa4ff;
+}
+
+.dossierTab {
+  position: absolute;
+  top: -20px;
+  left: 14px;
+  padding: 3px 14px 2px;
+  border-radius: 8px 8px 0 0;
+  background: var(--team);
+  color: #fbf3df;
+  font-family: var(--font-dossier);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dossierBody {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.agentsLeft {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
-  font-size: 16px;
 }
 
-.scoreRed {
-  color: #fca5a5;
-}
-.scoreBlue {
-  color: #93c5fd;
-  justify-content: flex-end;
-}
-
-.scoreBigNum {
-  font-size: 28px;
-  font-weight: 800;
+.bigNum {
+  font-family: var(--font-dossier);
+  font-size: 40px;
+  line-height: 1;
+  color: var(--team-deep);
 }
 
-.turnPill {
-  padding: 4px 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
+.bigNumLabel {
+  font-family: var(--font-dossier);
+  font-size: 11px;
+  line-height: 1.15;
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  color: var(--cn-ink-soft);
 }
 
-.turnPill.red {
-  background: #7f1d1d;
-  color: #fee2e2;
-}
-.turnPill.blue {
-  background: #1e3a8a;
-  color: #dbeafe;
+.agentTokens {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
-.panel {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 14px;
+/* Tiny agent silhouettes (head + shoulders) drawn with gradients. */
+.agentToken {
+  width: 14px;
+  height: 18px;
+  border-radius: 7px 7px 3px 3px;
+  background:
+    radial-gradient(circle at 50% 30%, var(--team) 0 4px, transparent 4.5px),
+    radial-gradient(ellipse at 50% 120%, var(--team) 0 8px, transparent 8.5px);
+  transition: opacity var(--dur-med) ease, transform var(--dur-med) var(--ease-out);
 }
 
-.grid {
+.agentToken[data-found] {
+  opacity: 0.22;
+  transform: scale(0.85);
+}
+
+.roster {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed rgba(41, 35, 27, 0.35);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-dossier);
+  font-size: 13px;
+}
+
+.roster li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.rosterYou .rosterName {
+  text-decoration: underline;
+  text-decoration-color: var(--team);
+  text-decoration-thickness: 2px;
+}
+
+.rosterRole {
+  color: var(--team-deep);
+}
+
+.rosterTag,
+.aiTag,
+.youTag {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.rosterTag {
+  color: var(--team-deep);
+  border: 1px solid currentColor;
+}
+
+.aiTag {
+  background: var(--cn-ink);
+  color: var(--cn-manila);
+}
+
+.youTag {
+  background: var(--team);
+  color: #fff;
+}
+
+.winner {
+  box-shadow: 0 0 0 2px var(--team), 0 0 26px rgba(255, 220, 140, 0.45), var(--shadow-md);
+}
+
+.turnCol {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  place-items: center;
+  gap: 6px;
+  align-content: center;
+  padding-top: 18px;
+}
+
+.turnLabel {
+  font-family: var(--font-dossier);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(239, 229, 203, 0.55);
+}
+
+.turnStamp {
+  --stamp: #e4cfa0;
+  font-family: var(--font-dossier);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 16px;
+  padding: 6px 14px;
+  border: 3px double var(--stamp);
+  color: var(--stamp);
+  border-radius: 4px;
+  white-space: nowrap;
+  animation: global(sd-stamp) 560ms var(--ease-out) both;
+}
+
+.turnStamp[data-team='red'] {
+  --stamp: #ff7b6b;
+}
+
+.turnStamp[data-team='blue'] {
+  --stamp: #86b2ff;
+}
+
+/* ---- Desk layout ------------------------------------------------------ */
+
+.desk {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 18px;
+  align-items: start;
+  max-width: 1240px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.boardColumn {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.sideColumn {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ---- Telegram (clue) --------------------------------------------------- */
+
+.telegram {
+  position: relative;
+  padding: 10px 70px 12px 18px;
+  color: #2a2418;
+  font-family: var(--font-dossier);
+  background-color: #f1e2ae;
+  background-image:
+    radial-gradient(circle at 6px 0, transparent 4px, #f1e2ae 4.5px) top left / 12px 8px repeat-x,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.25), rgba(0, 0, 0, 0.05)),
+    var(--paper-fibre);
+  border-radius: 2px;
+  box-shadow: var(--shadow-md);
+  animation: global(sd-drop-in) var(--dur-med) var(--ease-out) both;
+}
+
+.telegramHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 2px solid rgba(42, 36, 24, 0.75);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.typed {
+  margin: 0;
+  font-size: clamp(18px, 2.6vw, 26px);
+  letter-spacing: 0.12em;
+  min-height: 1.3em;
+}
+
+.typed span {
+  opacity: 0;
+  animation: cn-type 1ms steps(1) forwards;
+  animation-delay: calc(var(--i, 0) * 42ms + 120ms);
+  white-space: pre;
+}
+
+@keyframes cn-type {
+  to {
+    opacity: 1;
+  }
+}
+
+.telegramNumber {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  color: var(--cn-stamp);
+  border: 3px solid currentColor;
+  transform: rotate(-12deg);
+  animation: global(sd-stamp) 520ms var(--ease-out) both;
+  animation-delay: 700ms;
+}
+
+.telegram[data-team='blue'] .telegramNumber {
+  color: var(--cn-blue);
+}
+
+/* Clue form = an outgoing telegram blank. */
+.telegramForm {
+  padding-right: 18px;
+  display: grid;
   gap: 8px;
 }
 
+.formRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.formLabel {
+  width: 70px;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.clueInput {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  font-size: 22px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cn-ink);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px dashed rgba(42, 36, 24, 0.6);
+  padding: 2px 4px;
+  outline: none;
+}
+
+.clueInput:focus-visible {
+  border-bottom-style: solid;
+  border-bottom-color: var(--cn-stamp);
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.clueInput[aria-invalid='true'] {
+  border-bottom-color: var(--cn-stamp);
+}
+
+.keys {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Round typewriter keys. */
+.typeKey {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  font-family: var(--font-dossier);
+  font-size: 15px;
+  color: #f3ecda;
+  background: radial-gradient(circle at 35% 30%, #4b4741, #1d1b18 70%);
+  border: 2px solid #a9a197;
+  box-shadow: 0 3px 0 #0d0c0a, 0 4px 6px rgba(0, 0, 0, 0.45);
+}
+
+.typeKey:hover:not(:disabled) {
+  border-color: #e6dccb;
+  background: radial-gradient(circle at 35% 30%, #5a554e, #24211d 70%);
+}
+
+.typeKey:active:not(:disabled),
+.typeKeyOn {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #0d0c0a, 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.typeKeyOn,
+.typeKeyOn:hover:not(:disabled) {
+  background: radial-gradient(circle at 35% 30%, #c8473a, #6d150f 70%);
+  border-color: #f0c2b6;
+}
+
+.formError,
+.formHint {
+  margin: 0;
+  font-size: 12px;
+}
+
+.formError {
+  color: var(--cn-stamp);
+}
+
+.formHint {
+  color: rgba(42, 36, 24, 0.7);
+}
+
+.formFoot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.transmit {
+  font-family: var(--font-dossier);
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #fbeee2;
+  background: linear-gradient(180deg, #c0392b, #8e1d14);
+  border: 1px solid #5e100a;
+  border-radius: 3px;
+  padding: 7px 18px;
+}
+
+.transmit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #d24a3c, #9d2218);
+  border-color: #5e100a;
+}
+
+.transmit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.slip {
+  display: grid;
+  gap: 4px;
+  padding: 12px 18px;
+  font-family: var(--font-dossier);
+  color: var(--cn-ink);
+  background-color: var(--cn-paper);
+  background-image: var(--paper-fibre);
+  border-radius: 2px;
+  box-shadow: var(--shadow-md);
+  border-left: 6px solid var(--cn-red);
+  animation: global(sd-fade-in) var(--dur-med) ease both;
+}
+
+.slip[data-team='blue'] {
+  border-left-color: var(--cn-blue);
+}
+
+.slipLabel {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cn-ink-soft);
+}
+
+.slipText {
+  font-size: 16px;
+}
+
+.cursor {
+  display: inline-block;
+  margin-left: 3px;
+  animation: cn-blink 1s steps(1) infinite;
+}
+
+@keyframes cn-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---- Board ------------------------------------------------------------ */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: clamp(6px, 1.2vw, 14px);
+  padding: clamp(8px, 1.6vw, 18px);
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 238, 180, 0.12), transparent 70%),
+    linear-gradient(180deg, #2e4a3a, #213628);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 2px 18px rgba(0, 0, 0, 0.55), var(--shadow-lg);
+}
+
+/* An index card: ruled stock, red header line, punched hole. */
 .card {
   position: relative;
-  aspect-ratio: 5 / 3;
-  border-radius: 8px;
-  background: #f5e9c9;
-  color: #1c1917;
+  aspect-ratio: 8 / 5;
+  container-type: inline-size;
   display: grid;
   place-items: center;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border: 1px solid #c2a878;
-  cursor: default;
-  user-select: none;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--cn-ink);
+  font-family: var(--font-dossier);
   text-align: center;
-  padding: 4px;
-  box-shadow: 0 1px 0 #fff inset, 0 1px 2px rgba(0, 0, 0, 0.25);
+  --card-bg: var(--cn-paper);
+  --card-img:
+    linear-gradient(180deg, transparent 0 22%, rgba(190, 55, 45, 0.55) 22% calc(22% + 1.5px), transparent calc(22% + 1.5px)),
+    repeating-linear-gradient(180deg, transparent 0 11px, rgba(60, 90, 160, 0.13) 11px 12px),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.35), rgba(0, 0, 0, 0.05)),
+    var(--paper-fibre);
+  background-color: var(--card-bg);
+  background-image: var(--card-img);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.12) inset,
+    0 7px 12px -6px rgba(0, 0, 0, 0.75),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+  transform: rotate(var(--tilt, 0deg));
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) ease;
+  user-select: none;
+  cursor: default;
+}
+
+.cardHole {
+  position: absolute;
+  top: 7%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: #213628;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.cardNo {
+  position: absolute;
+  top: 4%;
+  left: 6%;
+  font-size: max(7px, 6.5cqi);
+  letter-spacing: 0.06em;
+  color: var(--cn-ink-soft);
+  opacity: 0.75;
+}
+
+.cardWord {
+  position: relative;
+  z-index: 1;
+  margin-top: 12%;
+  padding: 0 4px;
+  font-size: clamp(8px, 11.5cqi, 17px);
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+/* The upside-down word, as printed on the real cards. */
+.cardWordFlip {
+  position: absolute;
+  top: 26%;
+  left: 0;
+  right: 0;
+  font-size: clamp(6px, 6.5cqi, 10px);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: rotate(180deg);
+  opacity: 0.32;
 }
 
 .cardClickable {
   cursor: pointer;
 }
-.cardClickable:hover {
-  filter: brightness(1.08);
+
+/* Beat the global button:hover background so the card stays paper. */
+.cardClickable:hover:not(:disabled),
+.cardClickable:focus-visible {
+  background-color: var(--card-bg);
+  background-image: var(--card-img);
+  transform: translateY(-3px) rotate(var(--tilt, 0deg));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 14px 18px -8px rgba(0, 0, 0, 0.8),
+    0 0 0 2px rgba(255, 233, 160, 0.75);
 }
 
-/* Spymaster-key tint (subtle border tag on the unrevealed card). */
-.kindRed {
-  box-shadow: 0 0 0 2px #dc2626 inset;
-}
-.kindBlue {
-  box-shadow: 0 0 0 2px #2563eb inset;
-}
-.kindBystander {
-  box-shadow: 0 0 0 2px #6b7280 inset;
-}
-.kindAssassin {
-  box-shadow: 0 0 0 2px #0a0a0a inset, 0 0 0 4px #fbbf24 inset;
+.cardClickable:focus-visible {
+  outline: 3px solid #ffe08a;
+  outline-offset: 2px;
 }
 
-/* Revealed cards override entirely. */
-.revealed {
-  color: white;
-  cursor: default;
-  box-shadow: none;
-}
-.revealed.kindRed {
-  background: #dc2626;
-}
-.revealed.kindBlue {
-  background: #2563eb;
-}
-.revealed.kindBystander {
-  background: #d6d3d1;
-  color: #1c1917;
-}
-.revealed.kindAssassin {
-  background: #0a0a0a;
-  color: #fbbf24;
+.cardPending {
+  box-shadow:
+    0 0 0 3px var(--cn-stamp),
+    0 14px 18px -8px rgba(0, 0, 0, 0.8);
 }
 
-.cardWord {
-  font-size: 13px;
-  line-height: 1.1;
-}
-
-.cluePanel {
-  display: grid;
-  gap: 10px;
-}
-
-.clueInputRow {
-  display: grid;
-  grid-template-columns: 1fr 90px auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.clueInput {
-  padding: 8px 10px;
-  font-size: 16px;
-  background: #0b1220;
-  border: 1px solid #334155;
-  color: #e2e8f0;
-  border-radius: 6px;
+.pendingStamp {
+  position: absolute;
+  z-index: 2;
+  bottom: 8%;
+  right: 6%;
+  font-size: clamp(7px, 8cqi, 12px);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  color: var(--cn-stamp);
+  border: 2px solid currentColor;
+  padding: 0 4px;
+  transform: rotate(-8deg);
+  animation: global(sd-stamp) 360ms var(--ease-out) both;
 }
 
-.numberInput {
-  padding: 8px 10px;
-  font-size: 16px;
-  background: #0b1220;
-  border: 1px solid #334155;
-  color: #e2e8f0;
-  border-radius: 6px;
-  text-align: center;
+/* Spymaster key tint on face-up cards (also the final reveal). */
+.card[data-tint]::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 22%;
+  height: 34%;
+  border-top-right-radius: 5px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+  background: var(--tint);
 }
 
-.primary {
-  background: #10b981;
-  color: white;
-  font-weight: 700;
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #047857;
-  cursor: pointer;
+.card[data-tint='red'] {
+  --tint: var(--cn-red);
+  --card-bg: #f2c8bd;
+  box-shadow: inset 0 0 0 3px rgba(184, 41, 31, 0.55), 0 7px 12px -6px rgba(0, 0, 0, 0.75);
 }
-.primary:disabled {
+
+.card[data-tint='blue'] {
+  --tint: var(--cn-blue);
+  --card-bg: #c6d4ef;
+  box-shadow: inset 0 0 0 3px rgba(31, 79, 156, 0.55), 0 7px 12px -6px rgba(0, 0, 0, 0.75);
+}
+
+.card[data-tint='bystander'] {
+  --tint: #a58c5c;
+}
+
+.card[data-tint='assassin'] {
+  --tint: #000;
+  color: #f2ead8;
+  --card-bg: #3b3a38;
+  box-shadow: inset 0 0 0 3px #000, 0 7px 12px -6px rgba(0, 0, 0, 0.75);
+}
+
+.card[data-tint='assassin'] .cardNo,
+.card[data-tint='assassin'] .cardWordFlip {
+  color: #f2ead8;
+}
+
+/* ---- Agent cover cards ------------------------------------------------- */
+
+.cover {
+  position: absolute;
+  z-index: 3;
+  inset: -3%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+  border-radius: 6px;
+  transform: rotate(var(--rot, 0deg));
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 0 0 2px rgba(255, 255, 255, 0.12) inset,
+    0 10px 16px -6px rgba(0, 0, 0, 0.85);
+}
+
+.cover[data-kind='red'] {
+  color: #2a0805;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255, 190, 150, 0.4), transparent 55%),
+    linear-gradient(160deg, #d0463a, #861a12);
+}
+
+.cover[data-kind='blue'] {
+  color: #061026;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(170, 205, 255, 0.4), transparent 55%),
+    linear-gradient(160deg, #3d75cf, #143366);
+}
+
+.cover[data-kind='bystander'] {
+  color: #5a4628;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255, 250, 230, 0.55), transparent 55%),
+    linear-gradient(160deg, #e3d2a8, #b79d6c);
+}
+
+.cover[data-kind='assassin'] {
+  color: #2e2e31;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(160, 20, 20, 0.45), transparent 50%),
+    linear-gradient(160deg, #252527, #050505);
+}
+
+.portrait {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.coverLabel {
+  font-family: var(--font-dossier);
+  font-size: clamp(6px, 7.5cqi, 11px);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #f8efd9;
+  background: rgba(0, 0, 0, 0.42);
+  padding: 1px 4px 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cover[data-kind='bystander'] .coverLabel {
+  background: rgba(60, 42, 18, 0.55);
+}
+
+/* Slapped down onto the word. */
+.slap {
+  animation: cn-slap 540ms var(--ease-out) both;
+}
+
+@keyframes cn-slap {
+  0% {
+    opacity: 0;
+    transform: translate(-8%, -55%) rotate(calc(var(--rot, 0deg) - 16deg)) scale(1.55);
+  }
+  55% {
+    opacity: 1;
+    transform: translate(0, 2%) rotate(var(--rot, 0deg)) scale(0.95);
+  }
+  75% {
+    transform: rotate(var(--rot, 0deg)) scale(1.025);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(var(--rot, 0deg)) scale(1);
+  }
+}
+
+/* The word card jolts as the agent card lands on it. */
+.thud {
+  animation: cn-thud 360ms 260ms var(--ease-out) both;
+}
+
+@keyframes cn-thud {
+  0%,
+  100% {
+    transform: rotate(var(--tilt, 0deg));
+  }
+  35% {
+    transform: rotate(var(--tilt, 0deg)) scale(0.965) translateY(2px);
+  }
+}
+
+/* ---- Guess bar ---------------------------------------------------------- */
+
+.guessBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  font-family: var(--font-dossier);
+  color: var(--cn-paper);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(239, 229, 203, 0.15);
+  border-radius: 6px;
+}
+
+.guessTokens {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guessLabel {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-right: 4px;
+}
+
+.guessToken {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(239, 229, 203, 0.7);
+  transition: background var(--dur-fast) ease;
+}
+
+.guessToken[data-bonus] {
+  border-style: dashed;
+}
+
+.guessToken[data-used] {
+  background: var(--cn-paper);
+  animation: global(sd-pop) var(--dur-med) var(--ease-spring) both;
+}
+
+.guessInfinite {
+  font-size: 13px;
+}
+
+.guessHint {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  color: rgba(239, 229, 203, 0.78);
+}
+
+.standDown {
+  font-family: var(--font-dossier);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #ffd9d2;
+  background: transparent;
+  border: 2px solid #e2584b;
+  border-radius: 3px;
+  transform: rotate(-2deg);
+}
+
+.standDown:hover:not(:disabled) {
+  background: rgba(226, 88, 75, 0.18);
+  border-color: #ff7b6b;
+}
+
+.standDown:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.coverScreen {
-  display: grid;
-  place-items: center;
-  padding: 40px 16px;
-  background: #0b1220;
-  border: 1px dashed #334155;
+/* ---- Key card on a light box ------------------------------------------- */
+
+.lightbox {
+  margin: 0;
+  padding: 18px 18px 10px;
   border-radius: 10px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 251, 228, 0.32), rgba(255, 251, 228, 0.06) 55%, transparent 75%),
+    linear-gradient(180deg, #262626, #141414);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 0 40px rgba(255, 248, 220, 0.08), var(--shadow-md);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
 }
 
-.coverInner {
-  text-align: center;
+.keyCard {
+  --start: var(--cn-red);
+  position: relative;
+  padding: 16px 14px;
+  border-radius: 10px;
+  background: linear-gradient(160deg, #1c1c1f, #0a0a0b);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 12px 22px -8px rgba(0, 0, 0, 0.9);
+  animation: cn-lightbox 4.5s ease-in-out infinite;
+}
+
+.keyCard[data-start='blue'] {
+  --start: #3d75cf;
+}
+
+/* The coloured edge lights that tell the spymasters who starts. */
+.keyLight {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--start);
+  box-shadow: 0 0 8px 1px var(--start);
+}
+
+.keyLight[data-side='top'] {
+  top: 6px;
+}
+
+.keyLight[data-side='bottom'] {
+  bottom: 6px;
+}
+
+.keyGrid {
   display: grid;
-  gap: 12px;
-  max-width: 460px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
 }
 
-.dangerBtn {
-  background: #b91c1c;
-  color: white;
-  font-weight: 700;
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid #7f1d1d;
-  cursor: pointer;
+.keySquare {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: #555;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -2px 0 rgba(0, 0, 0, 0.3);
 }
 
-.guessStatusBar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+.keySquare[data-kind='red'] {
+  background: #d23b2e;
+}
+
+.keySquare[data-kind='blue'] {
+  background: #3168c4;
+}
+
+.keySquare[data-kind='bystander'] {
+  background: #dccb9f;
+}
+
+.keySquare[data-kind='assassin'] {
+  background: repeating-linear-gradient(45deg, #000 0 3px, #2a2a2a 3px 6px);
+  box-shadow: inset 0 0 0 1px #8a8a8a;
+}
+
+.keySquare[data-done]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background:
+    linear-gradient(45deg, transparent 44%, rgba(255, 255, 255, 0.85) 45% 55%, transparent 56%),
+    linear-gradient(-45deg, transparent 44%, rgba(255, 255, 255, 0.85) 45% 55%, transparent 56%),
+    rgba(0, 0, 0, 0.45);
+}
+
+@keyframes cn-lightbox {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset, 0 0 16px rgba(255, 246, 210, 0.16), 0 12px 22px -8px rgba(0, 0, 0, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1) inset, 0 0 28px rgba(255, 246, 210, 0.3), 0 12px 22px -8px rgba(0, 0, 0, 0.9);
+  }
+}
+
+.keyCaption {
+  margin-top: 8px;
+  text-align: center;
+  font-family: var(--font-dossier);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(239, 229, 203, 0.6);
+}
+
+/* ---- Case log ------------------------------------------------------------ */
+
+.caseLog {
+  padding: 12px 14px;
+  color: var(--cn-ink);
+  font-family: var(--font-dossier);
+  background-color: var(--cn-paper);
+  background-image:
+    repeating-linear-gradient(180deg, transparent 0 21px, rgba(60, 90, 160, 0.16) 21px 22px),
+    var(--paper-fibre);
+  border-radius: 2px;
+  box-shadow: var(--shadow-md);
+  transform: rotate(0.4deg);
+}
+
+.caseTitle {
+  margin: 0 0 6px;
+  font-family: var(--font-dossier);
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  border-bottom: 2px solid rgba(41, 35, 27, 0.7);
+}
+
+.caseEmpty {
+  margin: 0;
   font-size: 13px;
-  color: #cbd5e1;
+  color: var(--cn-ink-soft);
 }
 
-.clueChip {
-  padding: 4px 10px;
-  background: #1f2937;
-  border-radius: 999px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #fef3c7;
-}
-
-.clueLog {
+.caseList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
   gap: 6px;
-  max-height: 220px;
+  max-height: 360px;
   overflow-y: auto;
-  font-size: 13px;
 }
 
-.clueLogRow {
+.caseRow {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
+  gap: 0 8px;
+  padding-left: 6px;
+  border-left: 4px solid var(--cn-red);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+}
+
+.caseRow[data-team='blue'] {
+  border-left-color: var(--cn-blue);
+}
+
+.caseNo {
+  grid-row: span 2;
+  font-size: 11px;
+  color: var(--cn-ink-soft);
+  padding-top: 2px;
+}
+
+.caseClue {
+  font-size: 15px;
+  letter-spacing: 0.08em;
+}
+
+.caseMeta {
+  font-size: 11px;
+  color: var(--cn-ink-soft);
+}
+
+.caseWords {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.caseWords span {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 0 4px;
+  border-radius: 2px;
+  color: #fff;
+  background: #6b6152;
+}
+
+.caseWords span[data-kind='red'] {
+  background: var(--cn-red);
+}
+
+.caseWords span[data-kind='blue'] {
+  background: var(--cn-blue);
+}
+
+.caseWords span[data-kind='bystander'] {
+  background: #a58c5c;
+}
+
+.caseWords span[data-kind='assassin'] {
+  background: #000;
+}
+
+/* ---- Game over ----------------------------------------------------------- */
+
+.verdict {
+  position: relative;
+  display: grid;
+  place-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  background: #0b1220;
-  border-left: 3px solid #334155;
-  border-radius: 4px;
-}
-
-.clueLogRow.red {
-  border-left-color: #dc2626;
-}
-.clueLogRow.blue {
-  border-left-color: #2563eb;
-}
-
-.gameOverBanner {
+  padding: 18px;
   text-align: center;
-  font-size: 28px;
-  font-weight: 800;
-  padding: 20px;
-  border-radius: 12px;
+  color: var(--cn-ink);
+  font-family: var(--font-dossier);
+  background-color: var(--cn-paper);
+  background-image: var(--paper-fibre);
+  box-shadow: var(--shadow-lg);
+  border-radius: 2px;
+  animation: global(sd-drop-in) var(--dur-slow) var(--ease-out) both;
 }
 
-.gameOverBanner.red {
-  background: linear-gradient(135deg, #7f1d1d, #b91c1c);
-  color: #fff;
+.verdictStamp {
+  font-size: clamp(22px, 4vw, 40px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cn-red);
+  border: 5px double currentColor;
+  padding: 4px 18px;
+  animation: global(sd-stamp) 700ms 200ms var(--ease-out) both;
 }
-.gameOverBanner.blue {
-  background: linear-gradient(135deg, #1e3a8a, #2563eb);
-  color: #fff;
+
+.verdict[data-team='blue'] .verdictStamp {
+  color: var(--cn-blue);
+}
+
+.verdictText {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* ---- Hot-seat folder cover ------------------------------------------------ */
+
+.coverWrap {
+  display: grid;
+  place-items: center;
+  padding: 30px 8px 10px;
+}
+
+.folder {
+  position: relative;
+  width: min(560px, 100%);
+  box-sizing: border-box;
+  padding: 44px 30px 28px;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  color: var(--cn-ink);
+  font-family: var(--font-dossier);
+  background-color: var(--cn-manila);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(0, 0, 0, 0.08)),
+    var(--paper-fibre);
+  border-radius: 4px 14px 6px 6px;
+  border-left: 8px solid var(--cn-red);
+  box-shadow: var(--shadow-lg);
+  animation: global(sd-rise-in) var(--dur-slow) var(--ease-out) both;
+}
+
+.folder[data-team='blue'] {
+  border-left-color: var(--cn-blue);
+}
+
+.folderTab {
+  position: absolute;
+  top: -24px;
+  left: 22px;
+  padding: 4px 16px 3px;
+  border-radius: 8px 8px 0 0;
+  background: var(--cn-manila);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.folderStamp {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  padding: 2px 10px;
+  color: var(--cn-stamp);
+  border: 3px solid currentColor;
+  font-size: 16px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  transform: rotate(-9deg);
+  animation: global(sd-stamp) 620ms 160ms var(--ease-out) both;
+}
+
+.folderTitle {
+  margin: 0;
+  font-family: var(--font-dossier);
+  font-weight: 400;
+  font-size: 24px;
+  letter-spacing: 0.06em;
+}
+
+.folderLine {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.openBtn {
+  margin-top: 8px;
+  font-family: var(--font-dossier);
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  color: #fbf1df;
+  background: linear-gradient(180deg, #3a3329, #1f1a14);
+  border: 1px solid #0d0b08;
+  border-radius: 3px;
+  padding: 8px 16px;
+}
+
+.openBtn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #4a4135, #29231b);
+  border-color: #0d0b08;
+}
+
+.openBtn:focus-visible {
+  outline: 3px solid #ffe08a;
+  outline-offset: 2px;
+}
+
+/* ---- Responsive ------------------------------------------------------------ */
+
+@media (max-width: 980px) {
+  .desk {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sideColumn {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .scoreboards {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .turnCol {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    padding-top: 0;
+  }
+
+  .agentTokens {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typed span,
+  .telegramNumber {
+    animation-delay: 0ms !important;
+  }
+
+  .keyCard {
+    animation: none;
+  }
 }

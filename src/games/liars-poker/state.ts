@@ -68,6 +68,11 @@ export interface RevealRecord {
   allHands: Record<SeatIndex, Card[]>;
 }
 
+export interface ClaimLogEntry {
+  seat: SeatIndex;
+  claim: HandClaim;
+}
+
 export interface RoundSummary {
   roundNumber: number;
   reveal: RevealRecord;
@@ -89,6 +94,8 @@ export interface LiarsPokerPrivateState {
   // Bidding.
   currentClaim: HandClaim | null;
   currentBidder: SeatIndex | null;
+  // Every claim made this round, in order (public: everyone heard them).
+  roundClaims: ClaimLogEntry[];
 
   // Reveal.
   lastReveal: RevealRecord | null;
@@ -99,6 +106,8 @@ export interface LiarsPokerPrivateState {
   history: RoundSummary[];
   matchWinners: SeatIndex[];
 
+  // Host-only. Never copied into a public view: the deal is derived from
+  // it, so a peer holding it could recompute every hand.
   seed: number;
   rngCursor: number;
 }
@@ -111,6 +120,8 @@ export interface PublicPlayer {
   index: SeatIndex;
   name: string;
   cardCount: number;
+  // Cards physically held this round (dummies hold 1).
+  handSize: number;
   isDummy: boolean;
   eliminated: boolean;
   dealAcked: boolean;
@@ -131,9 +142,15 @@ export interface LiarsPokerPublicState {
   dummyHand: boolean;
   currentClaim: HandClaim | null;
   currentBidder: SeatIndex | null;
+  roundClaims: ClaimLogEntry[];
+  // Total cards in play this round (dummies hold 1).
+  totalCards: number;
+  // Only non-null in revealing / roundOver / gameOver.
   lastReveal: RevealRecord | null;
   history: RoundSummary[];
   matchWinners: SeatIndex[];
+  // Seats whose acknowledgement the current ack phase is waiting on.
+  awaitingAck: SeatIndex[];
 
   yourSeat: SeatIndex | null;
   // Your normal hand (empty for dummies — they don't see their own).

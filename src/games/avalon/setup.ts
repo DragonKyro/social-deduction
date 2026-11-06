@@ -1,6 +1,6 @@
-import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
+import { makeRng, rngInt, rngShuffle, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
-import { ROLES, isEvil, isGood } from './roles';
+import { BASE_OPTIONAL_SPECIAL_ROLES, ROLES, isEvil, isGood } from './roles';
 import { alignmentSplit } from './quest-tracks';
 import type { AvalonRoleId, AvalonSeatState } from './state';
 
@@ -21,7 +21,14 @@ export function buildRolePool(
   const seen = new Set<AvalonRoleId>(pool);
   for (const r of enabledSpecials) {
     if (seen.has(r)) continue;
-    if (ROLES[r].required) continue; // already in pool
+    if (ROLES[r]?.required) continue; // already in pool
+    // Only the base-box specials are playable. The Lancelots belong to the
+    // (unimplemented) Two Lancelots module, and anything else is garbage from
+    // a hand-crafted config; dealing either would hand out a role the engine
+    // can't drive.
+    if (!BASE_OPTIONAL_SPECIAL_ROLES.includes(r)) {
+      throw new Error(`Role ${String(r)} is not available in base Avalon`);
+    }
     pool.push(r);
     seen.add(r);
   }
@@ -78,7 +85,7 @@ export function dealRoles(
 export function pickStartingLeader(seatCount: number, seed: number): SeatIndex {
   // Use a derived seed so leader pick doesn't waste an "interesting" slot
   // from the same RNG as role shuffle.
-  const rng = makeRng(seed ^ 0x5a17_a1ea);
+  const rng = makeRng(subSeed(seed, 0x5a17_a1ea));
   return rngInt(rng, seatCount);
 }
 

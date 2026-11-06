@@ -1,12 +1,11 @@
 # store/
 
-Zustand stores. Two of them, kept narrow:
+Zustand stores, kept narrow:
 
-- **`gameStore`** — current public view (per-seat redacted), the local seat index, and the dispatch API the UI calls. On the host, also holds the full private state. Exposes `registerBroadcastHandler` so `networkStore` can wire up action forwarding without `gameStore` importing from `net/`.
-- **`networkStore`** — connection state, role (solo/host/guest/spectator), lobby, chat, peer presence.
+- **`gameStore`** — current public view (per-seat redacted), the local seat, and the `dispatch` API the UI calls. On the host (solo, hot-seat, or online host) it also holds the full private state, applies actions (`hostApply`), and runs the **AI loop** for AI seats. It enforces which seats this device may view or act as (`controllableSeats`): online that's only your own seat; in hot-seat it's every human seat, never an AI seat. UIs use `useSeatSwitching()` for pass-and-play controls.
+- **`networkStore`** — online play: connection, role (solo / host / guest / spectator), lobby, chat, presence, errors. Talks to the room through `net/transport` (Firebase in the app, `fakeTransport` in tests).
+- **`hostLogic.ts`** — pure host-side decisions (seat requests, inbound-action vetting, per-device view fan-out), unit-tested in `hostLogic.test.ts`.
 
-A third store may be added later for a log/timeline (Catan has one), but until we ship a replay feature there's no need.
+## Why the handler indirection?
 
-## Why the broadcast handler indirection?
-
-`gameStore` should not import from `net/`. The network store registers its broadcaster into the game store after both stores have been created, breaking the cycle. Same pattern as the Catan reference project.
+`gameStore` must not import from `net/` or `networkStore`. The network store registers three hooks into the game store instead: `broadcastHandler` (guest: forward actions to the host), `hostAppliedListener` (host: publish views after every applied action), and `exitHandler` (what "Exit" means online — the host ends the match for everyone; a guest steps out to the lobby and can return).

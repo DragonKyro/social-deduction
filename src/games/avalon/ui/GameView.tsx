@@ -1,833 +1,947 @@
-import { useState } from 'react';
-import { useGameStore } from '@/store/gameStore';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { SeatIndex } from '@/engine/types';
+import { FlipCard } from '@/ui/shared/FlipCard';
+import { useGameStore, useSeatSwitching } from '@/store/gameStore';
 import type { AvalonAction } from '../actions';
-import type { AvalonPublicState, AvalonPublicSeatState } from '../state';
-import { ROLES } from '../roles';
 import { MAX_REJECTED_PROPOSALS } from '../quest-tracks';
-import { RoleArt, AlignmentBadge } from './RoleArt';
+import { ROLES } from '../roles';
+import type { AvalonPublicState, AvalonRoleId } from '../state';
+import { QuestBoard } from './QuestBoard';
+import { RoleArt, RoleCardBack, RoleCardFace } from './RoleArt';
+import { RoundTable, type TableMode } from './RoundTable';
+import { DaggerIcon, QuestCardBack, QuestCardFace, SeatShield, VoteTokenFace } from './Tokens';
+import { endReason, nextLocalActor, questRevealOrder, roman } from './turns';
 import styles from './GameView.module.css';
+
+// ============================================================================
+// Avalon game view
+//
+// Works the same for every way of playing, driven only by the public view:
+//   - online: you act only for your own seat (seat switching disabled);
+//   - solo vs AI: one human seat, AI seats act on their own;
+//   - hot-seat (several humans, one device): whenever the next seat that owes
+//     an action isn't the one on screen, an opaque "pass the device" cover
+//     goes up; secrets (role card, knowledge, your vote, Fail button) are only
+//     shown after that player confirms, and are locked again after they act.
+// Seat switching only ever goes through `useSeatSwitching()`.
+// ============================================================================
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 export function AvalonGameView() {
   const publicView = useGameStore((s) => s.publicView);
+  if (!publicView) return null;
+  return <AvalonTable view={publicView.view as AvalonPublicState} />;
+}
+
+function AvalonTable({ view }: { view: AvalonPublicState }) {
   const localSeat = useGameStore((s) => s.localSeat);
-  const setLocalSeat = useGameStore((s) => s.setLocalSeat);
   const dispatch = useGameStore((s) => s.dispatch);
   const exitGame = useGameStore((s) => s.exitGame);
+  const isHost = useGameStore((s) => s.isHost);
+  const aiSeats = useGameStore((s) => s.aiSeats);
+  const { enabled: switching, canView, setLocalSeat } = useSeatSwitching();
 
-  if (!publicView) return null;
-  const view = publicView.view as AvalonPublicState;
+  const mayAct = (s: SeatIndex) => s === localSeat || (switching && canView(s));
+  const humanSeats = switching ? view.seats.map((s) => s.index).filter(canView) : [];
+  const multiHuman = humanSeats.length > 1;
 
-  const dispatchAction = (a: AvalonAction) => dispatch(a);
-  const rotateSeat = (seat: number) => setLocalSeat(seat);
+  // Hot-seat privacy: whose secrets are currently uncovered on this screen.
+  const [unlockedFor, setUnlockedFor] = useState<SeatIndex | null>(null);
+  const [coverTarget, setCoverTarget] = useState<SeatIndex | null>(null);
+  const secretsOpen = !multiHuman || (unlockedFor !== null && unlockedFor === localSeat);
+  // The side role card: face-up by default on a private screen; in hot-seat
+  // it starts face-down for every newly uncovered player.
+  const [cardUp, setCardUp] = useState(!multiHuman);
+  useEffect(() => {
+    setCardUp(!multiHuman);
+  }, [multiHuman, unlockedFor, localSeat]);
+
+  const actor = nextLocalActor(view, localSeat, mayAct);
+  const autoCover = multiHuman && actor !== null && (actor !== localSeat || !secretsOpen);
+  const cover = coverTarget ?? (autoCover ? actor : null);
+
+  const uncover = (seat: SeatIndex) => {
+    if (seat !== localSeat) setLocalSeat(seat);
+    setUnlockedFor(seat);
+    setCoverTarget(null);
+  };
+
+  const act = (a: AvalonAction) => {
+    dispatch(a);
+    // Lock secrets again once a hot-seat player has acted (the leader keeps
+    // the screen through to their own vote).
+    if (multiHuman && a.type !== 'proposeTeam') setUnlockedFor(null);
+  };
+
+  // --- staged reveals ------------------------------------------------------
+  const [votesRevealed, setVotesRevealed] = useState(false);
+  useEffect(() => {
+    if (view.phase !== 'teamVoteReveal') {
+      setVotesRevealed(false);
+      return;
+    }
+    const t = setTimeout(() => setVotesRevealed(true), prefersReducedMotion() ? 0 : 450);
+    return () => clearTimeout(t);
+  }, [view.phase, view.proposalHistory.length]);
+
+  const lastQuest = view.questHistory[view.questHistory.length - 1];
+  const [questRevealDone, setQuestRevealDone] = useState<number | null>(null);
+  const holdQuest =
+    view.phase === 'questResolution' && lastQuest && lastQuest.questNumber !== questRevealDone ? lastQuest.questNumber : null;
+
+  const [endRevealDone, setEndRevealDone] = useState(false);
+  const revealRoles = view.phase === 'gameOver' && (view.assassinationTarget === null || endRevealDone);
+
+  // --- table picking -------------------------------------------------------
+  const [picks, setPicks] = useState<SeatIndex[]>([]);
+  useEffect(() => {
+    setPicks([]);
+  }, [view.phase, view.currentLeaderSeat, view.currentQuestNumber, localSeat]);
+
+  const spec = view.questTrack[view.currentQuestNumber - 1]!;
+  const iAmLeaderNow = view.phase === 'teamProposal' && actor === localSeat && localSeat === view.currentLeaderSeat && secretsOpen;
+  const iAmAssassinNow = view.phase === 'assassinPick' && secretsOpen && view.yourRole === 'assassin';
+  const knownTeammates = new Set(view.yourRoleKnowledge.map((k) => k.seat));
+  const mode: TableMode = iAmLeaderNow ? 'pickTeam' : iAmAssassinNow ? 'pickTarget' : 'idle';
+  const onPick = (seat: SeatIndex) => {
+    if (mode === 'pickTeam') {
+      setPicks((cur) => (cur.includes(seat) ? cur.filter((x) => x !== seat) : cur.length < spec.teamSize ? [...cur, seat] : cur));
+    } else if (mode === 'pickTarget') {
+      setPicks((cur) => (cur[0] === seat ? [] : [seat]));
+    }
+  };
+  const pickDisabled = (seat: SeatIndex) =>
+    mode === 'pickTarget' ? seat === localSeat || knownTeammates.has(seat) : false;
+
+  const leaderName = view.seats[view.currentLeaderSeat]?.name ?? '';
+  const showKnowledge = secretsOpen && cardUp && localSeat !== null;
 
   return (
     <div className={styles.root}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+      <div className={`${styles.torch} ${styles.torchLeft}`} aria-hidden />
+      <div className={`${styles.torch} ${styles.torchRight}`} aria-hidden />
+
+      <header className={styles.header}>
         <div>
-          <h2 className={styles.title}>Avalon</h2>
+          <h1 className={styles.title}>Avalon</h1>
           <p className={styles.subtitle}>
-            Quest {view.currentQuestNumber} of 5 ·{' '}
-            <SeatLabel view={view} seat={view.currentLeaderSeat} /> is leader
+            {view.phase === 'gameOver' ? (
+              'The tale is told'
+            ) : view.phase === 'setup' ? (
+              'The knights take their seats'
+            ) : view.phase === 'assassinPick' ? (
+              'The Assassin draws a blade'
+            ) : (
+              <>
+                Quest {roman(view.currentQuestNumber)} · <b>{leaderName}</b> leads · proposal{' '}
+                {Math.min(view.failedProposalsThisQuest + 1, MAX_REJECTED_PROPOSALS)} of {MAX_REJECTED_PROPOSALS}
+              </>
+            )}
           </p>
         </div>
-        <button onClick={exitGame}>Exit</button>
+        <div className={styles.headerActions}>
+          {multiHuman && view.phase !== 'setup' && (
+            <label className={styles.peekSelect}>
+              <span>Check a role</span>
+              <select
+                value=""
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== '') setCoverTarget(Number(v));
+                }}
+              >
+                <option value="">Whose?</option>
+                {humanSeats.map((s) => (
+                  <option key={s} value={s}>
+                    {view.seats[s]!.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {localSeat === null && <span className={styles.spectating}>Spectating</span>}
+          <button type="button" className={styles.ghostButton} onClick={exitGame}>
+            Leave the hall
+          </button>
+        </div>
       </header>
 
-      <QuestTrack view={view} />
-      <RejectMeter count={view.failedProposalsThisQuest} />
+      <QuestBoard view={view} holdQuest={holdQuest} />
 
-      <PhasePanel
-        view={view}
-        localSeat={localSeat}
-        dispatch={dispatchAction}
-        rotateSeat={rotateSeat}
-      />
+      <div className={styles.main}>
+        <RoundTable
+          view={view}
+          localSeat={localSeat}
+          mode={mode}
+          picked={picks}
+          onPick={onPick}
+          disabled={pickDisabled}
+          showKnowledge={showKnowledge}
+          aiSeats={aiSeats}
+          votesRevealed={votesRevealed}
+          struckSeat={view.phase === 'gameOver' ? view.assassinationTarget : null}
+          revealRoles={revealRoles}
+          centre={<TableCentre view={view} />}
+        />
 
-      <SeatRoster view={view} localSeat={localSeat} />
+        <aside className={styles.side}>
+          {localSeat !== null && view.yourRole && view.phase !== 'setup' && view.phase !== 'gameOver' && (
+            <YourRole
+              view={view}
+              open={secretsOpen}
+              cardUp={cardUp}
+              onToggle={() => (secretsOpen ? setCardUp((c) => !c) : setCoverTarget(localSeat))}
+            />
+          )}
+          <section className={styles.panel} aria-live="polite">
+            <PhasePanel
+              view={view}
+              localSeat={localSeat}
+              actor={actor}
+              secretsOpen={secretsOpen}
+              multiHuman={multiHuman}
+              humanSeats={humanSeats}
+              isHost={isHost}
+              aiSeats={aiSeats}
+              picks={picks}
+              setPicks={setPicks}
+              act={act}
+              requestCover={setCoverTarget}
+              questRevealDone={questRevealDone}
+              onQuestRevealDone={setQuestRevealDone}
+              onEndRevealDone={() => setEndRevealDone(true)}
+              exitGame={exitGame}
+            />
+          </section>
+        </aside>
+      </div>
 
-      {view.questHistory.length > 0 && <QuestHistory view={view} />}
+      <Chronicle view={view} holdQuest={holdQuest} />
+
+      {cover !== null && (
+        <PassCover
+          name={view.seats[cover]?.name ?? `Seat ${cover + 1}`}
+          seat={cover}
+          reason={coverTarget !== null ? 'check' : view.phase}
+          onConfirm={() => uncover(cover)}
+          onCancel={coverTarget !== null ? () => setCoverTarget(null) : undefined}
+        />
+      )}
     </div>
   );
 }
 
 // ============================================================================
-// Phase panel — switches on phase and renders the right active controls.
+// Pass-the-device cover (hot-seat only). Fully opaque; renders no secrets.
 // ============================================================================
 
-function PhasePanel({
+function PassCover({
+  name,
+  seat,
+  reason,
+  onConfirm,
+  onCancel,
+}: {
+  name: string;
+  seat: SeatIndex;
+  reason: string;
+  onConfirm: () => void;
+  onCancel?: () => void;
+}) {
+  const why: Record<string, string> = {
+    setup: 'to learn your role in secret',
+    teamProposal: 'to choose the quest team',
+    teamVote: 'to cast your vote in secret',
+    questExecution: 'to play your quest card in secret',
+    assassinPick: 'to see whether you hold the blade',
+    check: 'to look at your role card',
+  };
+  return (
+    <div className={styles.cover} role="dialog" aria-modal="true" aria-labelledby="avalon-cover-title">
+      <div className={styles.coverInner}>
+        <SeatShield seat={seat} name={name} size={84} />
+        <h2 id="avalon-cover-title">Pass the device to {name}</h2>
+        <p>Only {name} should look at the screen, {why[reason] ?? 'to continue'}.</p>
+        <div className={styles.coverButtons}>
+          <button type="button" className={styles.goldButton} onClick={onConfirm} autoFocus>
+            I am {name}
+          </button>
+          {onCancel && (
+            <button type="button" className={styles.ghostButton} onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Your role (side card)
+// ============================================================================
+
+function YourRole({
   view,
-  localSeat,
-  dispatch,
-  rotateSeat,
+  open,
+  cardUp,
+  onToggle,
 }: {
   view: AvalonPublicState;
-  localSeat: number | null;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
+  open: boolean;
+  cardUp: boolean;
+  onToggle: () => void;
 }) {
+  const role = view.yourRole!;
+  const up = open && cardUp;
+  return (
+    <section className={styles.yourRole} aria-label="Your role">
+      <FlipCard
+        width={118}
+        height={165}
+        radius={10}
+        revealed={up}
+        lift
+        onClick={onToggle}
+        title={up ? 'Hide your role' : 'Reveal your role'}
+        back={<RoleCardBack label={open ? 'Tap to peek' : 'Locked'} />}
+        front={up ? <RoleCardFace role={role} compact /> : <RoleCardBack />}
+      />
+      <div className={styles.yourRoleText}>
+        <span className={styles.kicker}>Your role</span>
+        {up ? (
+          <>
+            <strong className={styles.roleTitle}>{ROLES[role].name}</strong>
+            <KnowledgeList view={view} />
+          </>
+        ) : (
+          <p className={styles.dim}>{open ? 'Hidden. Tap the card to peek.' : 'Covered. Tap to pass the device back to you.'}</p>
+        )}
+        <button type="button" className={styles.linkButton} onClick={onToggle}>
+          {up ? 'Hide' : 'Peek'}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function KnowledgeList({ view }: { view: AvalonPublicState }) {
+  const role = view.yourRole;
+  if (!role) return null;
+  const k = view.yourRoleKnowledge;
+  const intro: Partial<Record<AvalonRoleId, string>> = {
+    merlin: 'Your sight reveals these servants of Mordred:',
+    percival: 'One is Merlin, one is Morgana. You cannot tell which:',
+    assassin: 'Your fellow servants of Mordred:',
+    morgana: 'Your fellow servants of Mordred:',
+    mordred: 'Your fellow servants of Mordred:',
+    minionOfMordred: 'Your fellow servants of Mordred:',
+  };
+  if (k.length === 0) {
+    const none =
+      role === 'oberon'
+        ? 'You walk alone. You do not know the other evils, and they do not know you.'
+        : 'You know nothing of the others. Trust carefully.';
+    return <p className={styles.dim}>{none}</p>;
+  }
+  return (
+    <div className={styles.knowledge}>
+      <p className={styles.dim}>{intro[role] ?? 'You see:'}</p>
+      <ul>
+        {k.map((x) => (
+          <li key={x.seat} className={x.label === 'Evil' ? styles.knowEvilRow : styles.knowMerlinRow}>
+            <span>{view.seats[x.seat]?.name ?? `Seat ${x.seat + 1}`}</span>
+            <em>{x.label}</em>
+          </li>
+        ))}
+      </ul>
+      {role === 'merlin' && view.rolesInPlay.includes('mordred') && (
+        <p className={styles.dim}>Mordred is hidden from you.</p>
+      )}
+      {(role === 'merlin' || role === 'percival') && <p className={styles.dim}>If good wins, the Assassin will hunt Merlin. Be subtle.</p>}
+    </div>
+  );
+}
+
+// ============================================================================
+// Table centre: face-down quest cards piling up during the quest.
+// ============================================================================
+
+function TableCentre({ view }: { view: AvalonPublicState }) {
+  if (view.phase !== 'questExecution' || view.questCardsSubmitted === 0) return null;
+  return (
+    <div className={styles.pile} aria-label={`${view.questCardsSubmitted} quest cards played`}>
+      {Array.from({ length: view.questCardsSubmitted }, (_, i) => (
+        <span key={i} className={styles.pileCard} style={{ transform: `translate(${(i - 1) * 3}px, ${-i * 2}px) rotate(${(i % 2 ? 1 : -1) * (4 + i * 3)}deg)` }}>
+          <QuestCardBack />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================================
+// Phase panel
+// ============================================================================
+
+interface PanelProps {
+  view: AvalonPublicState;
+  localSeat: SeatIndex | null;
+  actor: SeatIndex | null;
+  secretsOpen: boolean;
+  multiHuman: boolean;
+  humanSeats: SeatIndex[];
+  isHost: boolean;
+  aiSeats: SeatIndex[];
+  picks: SeatIndex[];
+  setPicks: (p: SeatIndex[]) => void;
+  act: (a: AvalonAction) => void;
+  requestCover: (seat: SeatIndex) => void;
+  questRevealDone: number | null;
+  onQuestRevealDone: (q: number) => void;
+  onEndRevealDone: () => void;
+  exitGame: () => void;
+}
+
+function PhasePanel(p: PanelProps) {
+  const { view } = p;
   switch (view.phase) {
     case 'setup':
-      return <RoleRevealScreen view={view} dispatch={dispatch} rotateSeat={rotateSeat} />;
+      return <SetupPanel {...p} />;
     case 'teamProposal':
-      return (
-        <TeamProposalPanel
-          view={view}
-          localSeat={localSeat}
-          dispatch={dispatch}
-          rotateSeat={rotateSeat}
-        />
-      );
+      return <ProposalPanel {...p} />;
     case 'teamVote':
-      return (
-        <TeamVotePanel
-          view={view}
-          localSeat={localSeat}
-          dispatch={dispatch}
-          rotateSeat={rotateSeat}
-        />
-      );
+      return <VotePanel {...p} />;
     case 'teamVoteReveal':
-      return <TeamVoteRevealPanel view={view} dispatch={dispatch} />;
+      return <VoteRevealPanel {...p} />;
     case 'questExecution':
-      return (
-        <QuestExecutionPanel
-          view={view}
-          localSeat={localSeat}
-          dispatch={dispatch}
-          rotateSeat={rotateSeat}
-        />
-      );
+      return <QuestPlayPanel {...p} />;
     case 'questResolution':
-      return <QuestResolutionPanel view={view} dispatch={dispatch} />;
+      return <QuestRevealPanel key={view.questHistory.length} {...p} />;
     case 'assassinPick':
-      return (
-        <AssassinPickPanel
-          view={view}
-          localSeat={localSeat}
-          dispatch={dispatch}
-          rotateSeat={rotateSeat}
-        />
-      );
+      return <AssassinPanel {...p} />;
     case 'gameOver':
-      return <GameOverPanel view={view} />;
+      return <GameOverPanel key={view.assassinationTarget ?? 'none'} {...p} />;
     default:
+      // Optional-module phases are never entered (scaffolded only).
       return null;
   }
 }
 
-// ============================================================================
-// Phase: setup — role reveal in hot-seat (cover-up screen between seats)
-// ============================================================================
+const nameOf = (view: AvalonPublicState, s: SeatIndex) => view.seats[s]?.name ?? `Seat ${s + 1}`;
 
-function RoleRevealScreen({
-  view,
-  dispatch,
-  rotateSeat,
-}: {
-  view: AvalonPublicState;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
-}) {
-  // Walk seats in order; show "Pass to <name>" between reveals.
-  const nextUnacked = view.seats.find((s) => !s.hasAckedSetup);
-  const [covered, setCovered] = useState(true);
-
-  if (!nextUnacked) {
-    // All acked — shouldn't normally see this since phase transitions, but guard.
-    return (
-      <div className={styles.panel}>
-        <p>Everyone has seen their role. Starting…</p>
-      </div>
-    );
-  }
-
-  const seatIdx = nextUnacked.index;
-  // If the local viewer isn't the seat being shown, switch viewers first.
-  const needsRotate = view.yourSeat !== seatIdx;
-
-  if (needsRotate || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Pass the device</h2>
-          <p>It&apos;s {nextUnacked.name}&apos;s turn to look at their role.</p>
-          <p style={{ fontSize: 12, color: '#94a3b8' }}>
-            Everyone else should look away.
-          </p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (needsRotate) rotateSeat(seatIdx);
-              setCovered(false);
-            }}
-          >
-            I am {nextUnacked.name} — show my role
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Local seat now matches the seat being shown; render the role card.
-  const role = view.yourRole;
-  if (!role || view.yourAlignment === null) {
-    return <div className={styles.panel}>Loading role…</div>;
-  }
-  const spec = ROLES[role];
+function Heading({ kicker, children }: { kicker?: string; children: ReactNode }) {
   return (
-    <div className={`${styles.panel} ${styles.roleReveal}`}>
-      <RoleArt role={role} size={140} />
-      <div>
-        <p style={{ margin: 0, color: '#94a3b8', fontSize: 13 }}>You are</p>
-        <h2 className={styles.roleName}>{spec.name}</h2>
-        <span className={`${styles.roleAlignment} ${styles[view.yourAlignment]}`}>
-          {view.yourAlignment === 'good' ? 'Loyal Servant of Arthur' : 'Minion of Mordred'}
-        </span>
-      </div>
-      <p style={{ maxWidth: 460, lineHeight: 1.5, color: '#cbd5e1' }}>{spec.description}</p>
+    <header className={styles.panelHead}>
+      {kicker && <span className={styles.kicker}>{kicker}</span>}
+      <h2>{children}</h2>
+    </header>
+  );
+}
 
-      {view.yourRoleKnowledge.length > 0 && (
-        <div style={{ width: '100%', maxWidth: 360 }}>
-          <p style={{ margin: '8px 0', color: '#94a3b8', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            You see:
-          </p>
-          <div className={styles.knownList}>
-            {view.yourRoleKnowledge.map((k) => (
-              <div key={k.seat} className={styles.knownItem}>
-                <span>{view.seats[k.seat]?.name ?? `Seat ${k.seat}`}</span>
-                <span style={{ color: '#fbbf24', fontSize: 12 }}>{k.label}</span>
-              </div>
-            ))}
+function Waiting({ children }: { children: ReactNode }) {
+  return (
+    <p className={styles.waiting}>
+      <span className={styles.waitDots} aria-hidden>
+        <i />
+        <i />
+        <i />
+      </span>
+      {children}
+    </p>
+  );
+}
+
+function TeamChips({ view, team }: { view: AvalonPublicState; team: SeatIndex[] }) {
+  return (
+    <ul className={`${styles.teamChips} sd-stagger`}>
+      {team.map((s, i) => (
+        <li key={s} style={{ ['--i' as string]: i }}>
+          <SeatShield seat={s} name={nameOf(view, s)} size={22} />
+          {nameOf(view, s)}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// --- setup -----------------------------------------------------------------
+
+function SetupPanel({ view, localSeat, actor, secretsOpen, act }: PanelProps) {
+  const [flipped, setFlipped] = useState(false);
+  useEffect(() => setFlipped(false), [localSeat]);
+  const mine = actor !== null && actor === localSeat && secretsOpen && view.yourRole;
+  const waitingOn = view.seats.filter((s) => !s.hasAckedSetup);
+  if (mine) {
+    const role = view.yourRole!;
+    return (
+      <div className={styles.reveal}>
+        <Heading kicker="In secret">Your role</Heading>
+        <FlipCard
+          width={200}
+          height={280}
+          radius={12}
+          revealed={flipped}
+          lift={!flipped}
+          onClick={() => setFlipped(true)}
+          title="Reveal your role"
+          back={<RoleCardBack label="Tap to reveal" />}
+          front={flipped ? <RoleCardFace role={role} /> : <RoleCardBack />}
+          className={styles.revealCard}
+        />
+        {!flipped ? (
+          <button type="button" className={styles.goldButton} onClick={() => setFlipped(true)}>
+            Turn over your card
+          </button>
+        ) : (
+          <div className={`${styles.revealText} sd-rise-in`}>
+            <p>{ROLES[role].description}</p>
+            <KnowledgeList view={view} />
+            <button type="button" className={styles.goldButton} onClick={() => act({ type: 'ackRoleReveal', bySeat: localSeat! })}>
+              I have memorised my role
+            </button>
           </div>
-        </div>
-      )}
-
-      <button
-        className={styles.primary}
-        onClick={() => {
-          dispatch({ type: 'ackRoleReveal', bySeat: seatIdx });
-          setCovered(true);
-        }}
-      >
-        I have memorised my role
-      </button>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: teamProposal — leader picks team
-// ============================================================================
-
-function TeamProposalPanel({
-  view,
-  localSeat,
-  dispatch,
-  rotateSeat,
-}: {
-  view: AvalonPublicState;
-  localSeat: number | null;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
-}) {
-  const isLeader = localSeat === view.currentLeaderSeat;
-  const [picks, setPicks] = useState<number[]>([]);
-  const spec = view.questTrack[view.currentQuestNumber - 1]!;
-
-  // If local viewer isn't the leader, show the pass-device screen.
-  if (!isLeader) {
-    const leaderName = view.seats[view.currentLeaderSeat]?.name ?? '';
-    return (
-      <div className={styles.panel}>
-        <p style={{ margin: 0 }}>
-          Waiting for <b>{leaderName}</b> to propose a team of {spec.teamSize}.
-        </p>
-        <div style={{ marginTop: 12 }}>
-          <button onClick={() => rotateSeat(view.currentLeaderSeat)}>
-            Pass device to {leaderName}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const toggle = (seat: number) => {
-    setPicks((cur) =>
-      cur.includes(seat)
-        ? cur.filter((x) => x !== seat)
-        : cur.length < spec.teamSize
-          ? [...cur, seat]
-          : cur,
-    );
-  };
-
-  return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0 }}>
-        Pick a team of {spec.teamSize}
-        {spec.failsRequired > 1 && (
-          <span style={{ marginLeft: 8, color: '#fbbf24', fontSize: 12 }}>
-            (needs {spec.failsRequired} fails to fail)
-          </span>
         )}
-      </h3>
-      <p className={styles.subtitle}>Tap players to add/remove them from the quest team.</p>
-      <div className={styles.seatGrid} style={{ marginTop: 12 }}>
-        {view.seats.map((s) => (
-          <SeatCard
-            key={s.index}
-            seat={s}
-            isLocal={s.index === localSeat}
-            selectable
-            selected={picks.includes(s.index)}
-            onClick={() => toggle(s.index)}
-          />
-        ))}
-      </div>
-      <div className={styles.actions} style={{ marginTop: 16 }}>
-        <button
-          className={styles.primary}
-          disabled={picks.length !== spec.teamSize}
-          onClick={() => dispatch({ type: 'proposeTeam', bySeat: view.currentLeaderSeat, team: picks })}
-        >
-          Propose team ({picks.length}/{spec.teamSize})
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: teamVote — everyone votes
-// ============================================================================
-
-function TeamVotePanel({
-  view,
-  localSeat,
-  dispatch,
-  rotateSeat,
-}: {
-  view: AvalonPublicState;
-  localSeat: number | null;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
-}) {
-  // Hot-seat: walk seats in order, asking each to privately vote behind a cover.
-  // We use the private view's `votedSeats` indicator (votes are hidden mid-vote,
-  // but we know how many votes have been cast from the visible state... actually
-  // it's hidden during teamVote — fall back to using the public state behavior
-  // and ordering by seat index).
-  //
-  // Simpler: track who has voted via local UI state. Since the engine hides
-  // mid-vote `voteApprove`, we need a UI-side flag. We track it via the
-  // engine's view: a seat that has voted will have voteApprove=null during
-  // teamVote (it's hidden) — so we can't differentiate by view alone.
-  // Use a local "who's been through" counter keyed on the tick.
-
-  const [doneSeats, setDoneSeats] = useState<Set<number>>(new Set());
-  const [covered, setCovered] = useState(true);
-
-  const nextSeat = view.seats.find((s) => !doneSeats.has(s.index));
-  if (!nextSeat) {
-    // Should have transitioned to teamVoteReveal already; show a thinking dot.
-    return (
-      <div className={styles.panel}>
-        <p>Tallying votes…</p>
       </div>
     );
   }
-
-  const seatIdx = nextSeat.index;
-  const isLocal = localSeat === seatIdx;
-
-  if (!isLocal || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Vote on the team</h2>
-          <ProposedTeamSummary view={view} />
-          <p>It&apos;s {nextSeat.name}&apos;s turn to vote.</p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (!isLocal) rotateSeat(seatIdx);
-              setCovered(false);
-            }}
-          >
-            I am {nextSeat.name} — show my vote
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const submit = (approve: boolean) => {
-    dispatch({ type: 'castTeamVote', bySeat: seatIdx, approve });
-    setDoneSeats((cur) => new Set(cur).add(seatIdx));
-    setCovered(true);
-  };
-
-  return (
-    <div className={`${styles.panel} ${styles.roleReveal}`}>
-      <p style={{ margin: 0, color: '#94a3b8', fontSize: 13 }}>Your vote, {nextSeat.name}</p>
-      <ProposedTeamSummary view={view} />
-      <div className={styles.actions} style={{ marginTop: 12 }}>
-        <button className={styles.success} onClick={() => submit(true)}>
-          Approve
-        </button>
-        <button className={styles.danger} onClick={() => submit(false)}>
-          Reject
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ProposedTeamSummary({ view }: { view: AvalonPublicState }) {
   return (
     <div>
-      <p style={{ margin: '0 0 6px', color: '#94a3b8', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-        Proposed team (Quest {view.currentQuestNumber})
-      </p>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {view.proposedTeam.map((s) => (
-          <span
-            key={s}
-            style={{
-              padding: '4px 10px',
-              borderRadius: 999,
-              background: '#1f2937',
-              border: '1px solid #fbbf24',
-              fontSize: 13,
-            }}
-          >
-            {view.seats[s]?.name ?? `Seat ${s}`}
-          </span>
+      <Heading kicker="Before the first quest">The knights learn their roles</Heading>
+      <Waiting>
+        {waitingOn.length === 0 ? 'All are ready.' : `Waiting for ${waitingOn.map((s) => s.name).join(', ')}.`}
+      </Waiting>
+      <RolesInPlay view={view} />
+    </div>
+  );
+}
+
+function RolesInPlay({ view }: { view: AvalonPublicState }) {
+  const counts = new Map<AvalonRoleId, number>();
+  for (const r of view.rolesInPlay) counts.set(r, (counts.get(r) ?? 0) + 1);
+  return (
+    <div className={styles.rolesInPlay}>
+      <span className={styles.kicker}>Characters in this game</span>
+      <ul>
+        {[...counts].map(([r, c]) => (
+          <li key={r} className={ROLES[r].alignment === 'good' ? styles.rolesGood : styles.rolesEvil}>
+            <RoleArt role={r} size={30} />
+            <span>
+              {ROLES[r].name}
+              {c > 1 ? ` ×${c}` : ''}
+            </span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
 
-// ============================================================================
-// Phase: teamVoteReveal — show results
-// ============================================================================
+// --- proposal --------------------------------------------------------------
 
-function TeamVoteRevealPanel({
-  view,
-  dispatch,
-}: {
-  view: AvalonPublicState;
-  dispatch: (a: AvalonAction) => void;
-}) {
-  const approveCount = view.seats.filter((s) => s.voteApprove === true).length;
-  const rejectCount = view.seats.filter((s) => s.voteApprove === false).length;
-  const approved = approveCount > rejectCount;
-
+function ProposalPanel({ view, localSeat, actor, secretsOpen, picks, setPicks, act }: PanelProps) {
+  const spec = view.questTrack[view.currentQuestNumber - 1]!;
+  const leader = view.currentLeaderSeat;
+  // Same condition the table uses for its pick mode.
+  const canPick = actor !== null && actor === localSeat && localSeat === leader && secretsOpen;
   return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0 }}>
-        Team {approved ? 'APPROVED' : 'REJECTED'} ({approveCount}–{rejectCount})
-      </h3>
-      <p className={styles.subtitle}>
-        {approved
-          ? 'The team will now go on the quest.'
-          : `Leader passes. ${MAX_REJECTED_PROPOSALS - view.failedProposalsThisQuest - 1} rejection(s) remain before evil wins.`}
-      </p>
-      <div className={styles.seatGrid} style={{ marginTop: 12 }}>
-        {view.seats.map((s) => (
-          <SeatCard key={s.index} seat={s} isLocal={false} />
-        ))}
-      </div>
-      <div className={styles.actions} style={{ marginTop: 16 }}>
-        <button className={styles.primary} onClick={() => dispatch({ type: 'ackTeamVoteReveal' })}>
-          Continue
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: questExecution — team members play success/fail privately
-// ============================================================================
-
-function QuestExecutionPanel({
-  view,
-  localSeat,
-  dispatch,
-  rotateSeat,
-}: {
-  view: AvalonPublicState;
-  localSeat: number | null;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
-}) {
-  // Walk the proposed team in order; each member submits a card behind a cover.
-  const [doneSeats, setDoneSeats] = useState<Set<number>>(new Set());
-  const [covered, setCovered] = useState(true);
-
-  const nextSeat = view.proposedTeam.find((s) => !doneSeats.has(s));
-  if (nextSeat === undefined) {
-    return (
-      <div className={styles.panel}>
-        <p>Resolving quest…</p>
-      </div>
-    );
-  }
-
-  const isLocal = localSeat === nextSeat;
-  const seatName = view.seats[nextSeat]?.name ?? `Seat ${nextSeat}`;
-
-  if (!isLocal || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Play your quest card</h2>
-          <ProposedTeamSummary view={view} />
-          <p>{seatName} is on the team — pass them the device.</p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (!isLocal) rotateSeat(nextSeat);
-              setCovered(false);
-            }}
-          >
-            I am {seatName} — show my card choice
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const alignment = view.yourAlignment;
-  const canFail = alignment === 'evil';
-
-  const submit = (success: boolean) => {
-    dispatch({ type: 'playQuestCard', bySeat: nextSeat, success });
-    setDoneSeats((cur) => new Set(cur).add(nextSeat));
-    setCovered(true);
-  };
-
-  return (
-    <div className={`${styles.panel} ${styles.roleReveal}`}>
-      <p style={{ margin: 0, color: '#94a3b8', fontSize: 13 }}>{seatName}, choose your card</p>
-      <p className={styles.subtitle}>
-        {canFail
-          ? 'As an evil player, you may play Success or Fail.'
-          : 'Good players must play Success.'}
-      </p>
-      <div className={styles.actions}>
-        <button className={styles.success} onClick={() => submit(true)}>
-          Success
-        </button>
-        <button className={styles.danger} disabled={!canFail} onClick={() => submit(false)}>
-          Fail
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: questResolution — reveal pass/fail
-// ============================================================================
-
-function QuestResolutionPanel({
-  view,
-  dispatch,
-}: {
-  view: AvalonPublicState;
-  dispatch: (a: AvalonAction) => void;
-}) {
-  const lastQuest = view.questHistory[view.questHistory.length - 1];
-  if (!lastQuest) return null;
-  const passed = lastQuest.result === 'success';
-  return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0, color: passed ? '#60a5fa' : '#f87171' }}>
-        Quest {lastQuest.questNumber} {passed ? 'SUCCEEDED' : 'FAILED'}
-      </h3>
-      <p className={styles.subtitle}>
-        Fail cards played: <b>{lastQuest.failCount}</b>
-        {lastQuest.failsRequired > 1 && ` (needed ${lastQuest.failsRequired} to fail)`}
-      </p>
-      <div className={styles.actions} style={{ marginTop: 16 }}>
-        <button className={styles.primary} onClick={() => dispatch({ type: 'ackQuestResolution' })}>
-          Continue
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: assassinPick — assassin picks Merlin
-// ============================================================================
-
-function AssassinPickPanel({
-  view,
-  localSeat,
-  dispatch,
-  rotateSeat,
-}: {
-  view: AvalonPublicState;
-  localSeat: number | null;
-  dispatch: (a: AvalonAction) => void;
-  rotateSeat: (seat: number) => void;
-}) {
-  // We don't know who the assassin IS publicly. We hand control to the
-  // evil player who has yourRole === 'assassin'. In hot-seat mode the
-  // store rotates seats; if the local seat isn't the assassin, prompt to
-  // pass the device. Since the assassin's identity must stay secret to
-  // good players, we use a "Are you the Assassin?" gate: the only way to
-  // tell is to be that seat.
-  const isAssassin = view.yourRole === 'assassin';
-  const [pick, setPick] = useState<number | null>(null);
-
-  if (!isAssassin) {
-    return (
-      <div className={styles.panel}>
-        <h3 style={{ marginTop: 0 }}>Good won the quest race</h3>
-        <p className={styles.subtitle}>
-          The Assassin now gets one chance to identify Merlin. Pass the device discreetly
-          to whichever evil player is the Assassin.
-        </p>
-        <div className={styles.actions}>
-          {view.seats.map((s) => (
-            <button key={s.index} onClick={() => rotateSeat(s.index)} disabled={localSeat === s.index}>
-              I am {s.name}
+    <div>
+      <Heading kicker={`Quest ${roman(view.currentQuestNumber)}`}>
+        {canPick ? `Choose ${spec.teamSize} knights` : `${nameOf(view, leader)} is choosing a team`}
+      </Heading>
+      {spec.failsRequired > 1 && <p className={styles.note}>This quest fails only if {spec.failsRequired} Fail cards are played.</p>}
+      {canPick ? (
+        <>
+          <p className={styles.dim}>Tap knights at the table to give them a quest token. You may include yourself.</p>
+          {picks.length > 0 && <TeamChips view={view} team={[...picks].sort((a, b) => a - b)} />}
+          <div className={styles.buttonRow}>
+            <button
+              type="button"
+              className={styles.goldButton}
+              disabled={picks.length !== spec.teamSize}
+              onClick={() => act({ type: 'proposeTeam', bySeat: leader, team: [...picks].sort((a, b) => a - b) })}
+            >
+              Propose this team ({picks.length}/{spec.teamSize})
             </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const goodSeats = view.seats; // Assassin can shoot anyone; only good targets actually matter.
-  return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0 }}>Assassin: pick the seat you believe is Merlin</h3>
-      <p className={styles.subtitle}>Hit Merlin → evil wins. Miss → good wins.</p>
-      <div className={styles.seatGrid} style={{ marginTop: 12 }}>
-        {goodSeats.map((s) => (
-          <SeatCard
-            key={s.index}
-            seat={s}
-            isLocal={s.index === localSeat}
-            selectable
-            selected={pick === s.index}
-            onClick={() => setPick(s.index)}
-          />
-        ))}
-      </div>
-      <div className={styles.actions} style={{ marginTop: 16 }}>
-        <button
-          className={styles.danger}
-          disabled={pick === null}
-          onClick={() =>
-            pick !== null &&
-            dispatch({
-              type: 'assassinateMerlin',
-              bySeat: view.yourSeat ?? 0,
-              target: pick,
-            })
-          }
-        >
-          Assassinate
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Phase: gameOver
-// ============================================================================
-
-function GameOverPanel({ view }: { view: AvalonPublicState }) {
-  const winner = view.winnerTeam ?? 'good';
-  return (
-    <div className={styles.panel}>
-      <div className={`${styles.gameOverBanner} ${styles[winner]}`}>
-        {winner === 'good' ? '⚜ Good Wins' : '☠ Evil Wins'}
-      </div>
-      {view.assassinationTarget !== null && (
-        <p style={{ textAlign: 'center', marginTop: 12 }}>
-          Assassin targeted <b>{view.seats[view.assassinationTarget]?.name}</b>
-          {view.seats[view.assassinationTarget]?.revealedRole === 'merlin'
-            ? ' — and they were Merlin.'
-            : ' — but they were not Merlin.'}
-        </p>
-      )}
-      <div className={styles.seatGrid} style={{ marginTop: 16 }}>
-        {view.seats.map((s) => (
-          <RevealedSeatCard key={s.index} seat={s} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RevealedSeatCard({ seat }: { seat: AvalonPublicSeatState }) {
-  if (!seat.revealedRole) return null;
-  const role = seat.revealedRole;
-  return (
-    <div className={styles.seat}>
-      <RoleArt role={role} size={40} />
-      <div>
-        <div className={styles.seatName}>{seat.name}</div>
-        <div className={styles.seatMeta}>
-          <AlignmentBadge alignment={seat.revealedAlignment ?? 'good'} /> {ROLES[role].name}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Shared bits
-// ============================================================================
-
-function QuestTrack({ view }: { view: AvalonPublicState }) {
-  return (
-    <div className={styles.questTrack}>
-      {view.questTrack.map((q, i) => {
-        const questNum = i + 1;
-        const past = view.questHistory.find((h) => h.questNumber === questNum);
-        const isCurrent = questNum === view.currentQuestNumber && view.phase !== 'gameOver';
-        const cls = [
-          styles.questTile,
-          past?.result === 'success' && styles.success,
-          past?.result === 'fail' && styles.fail,
-          isCurrent && styles.current,
-        ]
-          .filter(Boolean)
-          .join(' ');
-        return (
-          <div key={i} className={cls}>
-            <span className={styles.questNumber}>Quest {questNum}</span>
-            <span className={styles.teamSize}>{q.teamSize}</span>
-            {q.failsRequired > 1 && (
-              <span className={styles.failsRequired}>×{q.failsRequired} fails</span>
+            {picks.length > 0 && (
+              <button type="button" className={styles.ghostButton} onClick={() => setPicks([])}>
+                Clear
+              </button>
             )}
           </div>
-        );
-      })}
+        </>
+      ) : (
+        <Waiting>
+          {nameOf(view, leader)} will name {spec.teamSize} knights for the quest.
+        </Waiting>
+      )}
+      {view.failedProposalsThisQuest === MAX_REJECTED_PROPOSALS - 1 && (
+        <p className={styles.warn}>This is the fifth proposal. If it is rejected, evil wins.</p>
+      )}
     </div>
   );
 }
 
-function RejectMeter({ count }: { count: number }) {
+// --- vote ------------------------------------------------------------------
+
+function VotePanel({ view, localSeat, actor, secretsOpen, act }: PanelProps) {
+  const placed = view.seats.filter((s) => s.hasVoted).length;
+  const n = view.seats.length;
+  const myTurn = actor !== null && actor === localSeat && secretsOpen;
   return (
     <div>
-      <div className={styles.subtitle}>
-        Rejected proposals this round: {count} / {MAX_REJECTED_PROPOSALS} (5 = evil wins)
-      </div>
-      <div className={styles.rejectMeter}>
-        {Array.from({ length: MAX_REJECTED_PROPOSALS }, (_, i) => (
-          <div key={i} className={`${styles.rejectDot} ${i < count ? styles.filled : ''}`} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SeatRoster({ view, localSeat }: { view: AvalonPublicState; localSeat: number | null }) {
-  return (
-    <div>
-      <p className={styles.subtitle} style={{ marginBottom: 6 }}>
-        Players
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => (
-          <SeatCard key={s.index} seat={s} isLocal={s.index === localSeat} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SeatCard({
-  seat,
-  isLocal,
-  selectable,
-  selected,
-  onClick,
-}: {
-  seat: AvalonPublicSeatState;
-  isLocal: boolean;
-  selectable?: boolean;
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  const cls = [
-    styles.seat,
-    selectable && styles.selectable,
-    selected && styles.selected,
-    seat.isCurrentLeader && styles.leader,
-    isLocal && styles.you,
-  ]
-    .filter(Boolean)
-    .join(' ');
-  return (
-    <div className={cls} onClick={onClick}>
-      <div className={styles.seatAvatar}>{seat.name.slice(0, 1).toUpperCase()}</div>
-      <div>
-        <div className={styles.seatName}>
-          {seat.name}
-          {isLocal && (
-            <span style={{ color: '#60a5fa', fontSize: 11, marginLeft: 6 }}>(you)</span>
-          )}
-        </div>
-        <div className={styles.seatMeta}>
-          {seat.isCurrentLeader && '👑 leader '}
-          {seat.isOnProposedTeam && '⚔ on team '}
-          {seat.voteApprove !== null && (
-            <span
-              className={`${styles.seatVote} ${seat.voteApprove ? styles.approve : styles.reject}`}
-            >
-              {seat.voteApprove ? 'Approve' : 'Reject'}
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SeatLabel({ view, seat }: { view: AvalonPublicState; seat: number }) {
-  return <b>{view.seats[seat]?.name ?? `Seat ${seat}`}</b>;
-}
-
-function QuestHistory({ view }: { view: AvalonPublicState }) {
-  return (
-    <div>
-      <p className={styles.subtitle} style={{ marginBottom: 6 }}>
-        Quest history
-      </p>
-      <div className={styles.questHistory}>
-        {view.questHistory.map((q) => (
-          <div key={q.questNumber} className={styles.questHistoryRow}>
-            <span>Quest {q.questNumber}</span>
-            <span>
-              Team:{' '}
-              {q.team
-                .map((s) => view.seats[s]?.name ?? `Seat ${s}`)
-                .join(', ')}
-            </span>
-            <span
-              style={{
-                color: q.result === 'success' ? '#60a5fa' : '#f87171',
-                fontWeight: 700,
-              }}
-            >
-              {q.result === 'success' ? 'Success' : `Fail (${q.failCount})`}
-            </span>
+      <Heading kicker={`Proposed by ${nameOf(view, view.currentLeaderSeat)}`}>Approve this team?</Heading>
+      <TeamChips view={view} team={view.proposedTeam} />
+      {myTurn ? (
+        <>
+          <p className={styles.dim}>Your vote stays hidden until every token is down.</p>
+          <div className={styles.tokenChoice}>
+            <button type="button" className={styles.tokenButton} onClick={() => act({ type: 'castTeamVote', bySeat: localSeat!, approve: true })} aria-label="Approve the team">
+              <VoteTokenFace approve />
+            </button>
+            <button type="button" className={styles.tokenButton} onClick={() => act({ type: 'castTeamVote', bySeat: localSeat!, approve: false })} aria-label="Reject the team">
+              <VoteTokenFace approve={false} />
+            </button>
           </div>
+        </>
+      ) : (
+        <>
+          {secretsOpen && view.yourVote !== null && (
+            <p className={styles.note}>Your token is down: <b>{view.yourVote ? 'Approve' : 'Reject'}</b>.</p>
+          )}
+          <Waiting>
+            {placed} of {n} tokens placed.
+          </Waiting>
+        </>
+      )}
+      {view.failedProposalsThisQuest === MAX_REJECTED_PROPOSALS - 1 && (
+        <p className={styles.warn}>Fifth proposal: a rejection hands victory to evil.</p>
+      )}
+    </div>
+  );
+}
+
+function HostContinue({ isHost, onContinue, label = 'Continue' }: { isHost: boolean; onContinue: () => void; label?: string }) {
+  return isHost ? (
+    <button type="button" className={styles.goldButton} onClick={onContinue}>
+      {label}
+    </button>
+  ) : (
+    <Waiting>Waiting for the host to continue.</Waiting>
+  );
+}
+
+function VoteRevealPanel({ view, isHost, act }: PanelProps) {
+  const last = view.proposalHistory[view.proposalHistory.length - 1];
+  const approves = view.seats.filter((s) => s.voteApprove === true);
+  const rejects = view.seats.filter((s) => s.voteApprove === false);
+  const approved = last?.approved ?? approves.length > rejects.length;
+  const fatal = !approved && view.failedProposalsThisQuest >= MAX_REJECTED_PROPOSALS - 1;
+  const next = view.seats[(view.currentLeaderSeat + 1) % view.seats.length]!;
+  return (
+    <div>
+      <Heading kicker="The tokens are turned">The table has spoken</Heading>
+      <div className={`${styles.stamp} ${approved ? styles.stampGood : styles.stampEvil}`}>
+        {approved ? 'Approved' : 'Rejected'} {approves.length}–{rejects.length}
+      </div>
+      <div className={styles.voteLists}>
+        <div>
+          <span className={styles.kicker}>Approve</span>
+          <p>{approves.map((s) => s.name).join(', ') || 'No one'}</p>
+        </div>
+        <div>
+          <span className={styles.kicker}>Reject</span>
+          <p>{rejects.map((s) => s.name).join(', ') || 'No one'}</p>
+        </div>
+      </div>
+      <p className={fatal ? styles.warn : styles.dim}>
+        {approved
+          ? 'The team rides out on the quest.'
+          : fatal
+            ? 'Five teams rejected. The realm falls into discord, and evil wins.'
+            : `The crown passes to ${next.name}. ${MAX_REJECTED_PROPOSALS - view.failedProposalsThisQuest - 1} rejection(s) remain before evil wins.`}
+      </p>
+      <HostContinue isHost={isHost} onContinue={() => act({ type: 'ackTeamVoteReveal' })} />
+    </div>
+  );
+}
+
+// --- quest -----------------------------------------------------------------
+
+function QuestPlayPanel({ view, localSeat, actor, secretsOpen, act }: PanelProps) {
+  const myTurn = actor !== null && actor === localSeat && secretsOpen;
+  const canFail = view.yourAlignment === 'evil';
+  const size = view.proposedTeam.length;
+  return (
+    <div>
+      <Heading kicker={`Quest ${roman(view.currentQuestNumber)}`}>The quest is under way</Heading>
+      <TeamChips view={view} team={view.proposedTeam} />
+      {myTurn ? (
+        <>
+          <p className={styles.dim}>
+            {canFail
+              ? 'Play Success to stay hidden, or Fail to sabotage. No one will know which card was yours.'
+              : 'Loyal servants of Arthur may only play Success.'}
+          </p>
+          <div className={styles.cardChoice}>
+            <button type="button" className={styles.questCardButton} onClick={() => act({ type: 'playQuestCard', bySeat: localSeat!, success: true })} aria-label="Play Success">
+              <QuestCardFace success />
+            </button>
+            <button
+              type="button"
+              className={styles.questCardButton}
+              disabled={!canFail}
+              onClick={() => act({ type: 'playQuestCard', bySeat: localSeat!, success: false })}
+              aria-label={canFail ? 'Play Fail' : 'Fail (only evil may play it)'}
+            >
+              <QuestCardFace success={false} />
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {secretsOpen && localSeat !== null && view.proposedTeam.includes(localSeat) && view.yourQuestCard !== null && (
+            <p className={styles.note}>Your card is in.</p>
+          )}
+          <Waiting>
+            {view.questCardsSubmitted} of {size} cards played.
+          </Waiting>
+        </>
+      )}
+    </div>
+  );
+}
+
+function QuestRevealPanel({ view, isHost, act, questRevealDone, onQuestRevealDone }: PanelProps) {
+  const q = view.questHistory[view.questHistory.length - 1]!;
+  const order = useMemo(() => questRevealOrder(q.questNumber, q.teamSize, q.failCount), [q.questNumber, q.teamSize, q.failCount]);
+  const already = questRevealDone === q.questNumber || prefersReducedMotion();
+  // stage: 0 = shuffling, 1 = spread, then flips 1..n, done at n+1
+  const [flips, setFlips] = useState(already ? order.length : 0);
+  const [shuffling, setShuffling] = useState(!already);
+  useEffect(() => {
+    if (already) {
+      onQuestRevealDone(q.questNumber);
+      return;
+    }
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    timers.push(setTimeout(() => setShuffling(false), 1300));
+    order.forEach((_, i) => timers.push(setTimeout(() => setFlips(i + 1), 1700 + i * 750)));
+    timers.push(setTimeout(() => onQuestRevealDone(q.questNumber), 1700 + order.length * 750 + 200));
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.questNumber]);
+  const done = flips >= order.length && !shuffling;
+  const skip = () => {
+    setShuffling(false);
+    setFlips(order.length);
+    onQuestRevealDone(q.questNumber);
+  };
+  const failsShown = order.slice(0, flips).filter((c) => !c).length;
+  return (
+    <div>
+      <Heading kicker={`Quest ${roman(q.questNumber)}`}>The cards are shuffled and turned</Heading>
+      <div className={`${styles.revealRow} ${shuffling ? styles.shuffling : ''}`} aria-label={done ? `${q.failCount} fail card(s) among ${q.teamSize}` : 'Revealing quest cards'}>
+        {order.map((success, i) => (
+          <span key={i} className={styles.revealSlot} style={{ ['--i' as string]: i, ['--n' as string]: order.length }}>
+            <FlipCard
+              width={58}
+              height={83}
+              radius={6}
+              revealed={i < flips}
+              back={<QuestCardBack />}
+              front={i < flips ? <QuestCardFace success={success} /> : <QuestCardBack />}
+            />
+          </span>
         ))}
       </div>
+      {done ? (
+        <>
+          <div className={`${styles.stamp} ${q.result === 'success' ? styles.stampGood : styles.stampEvil}`}>
+            Quest {q.result === 'success' ? 'succeeds' : 'fails'}
+          </div>
+          <p className={styles.dim}>
+            {q.failCount === 0
+              ? 'Every card read Success.'
+              : `${q.failCount} Fail card${q.failCount === 1 ? '' : 's'} among the ${q.teamSize}.`}
+            {q.failsRequired > 1 && q.result === 'success' && q.failCount > 0 ? ` This quest needed ${q.failsRequired} to fail.` : ''}
+          </p>
+          <HostContinue isHost={isHost} onContinue={() => act({ type: 'ackQuestResolution' })} />
+        </>
+      ) : (
+        <div className={styles.buttonRow}>
+          <span className={styles.dim}>{failsShown > 0 ? `${failsShown} Fail so far…` : ' '}</span>
+          <button type="button" className={styles.linkButton} onClick={skip}>
+            Skip
+          </button>
+        </div>
+      )}
     </div>
+  );
+}
+
+// --- assassination ---------------------------------------------------------
+
+function AssassinPanel({ view, localSeat, secretsOpen, multiHuman, humanSeats, picks, act, requestCover }: PanelProps) {
+  const iAmAssassin = secretsOpen && view.yourRole === 'assassin';
+  if (iAmAssassin) {
+    const target = picks[0];
+    return (
+      <div className={styles.assassin}>
+        <Heading kicker="Three quests have succeeded">Name Merlin</Heading>
+        <p className={styles.dim}>Choose the knight you believe is Merlin. Strike true and evil wins; miss and Arthur's court prevails.</p>
+        {target !== undefined && <TeamChips view={view} team={[target]} />}
+        <button
+          type="button"
+          className={styles.bloodButton}
+          disabled={target === undefined}
+          onClick={() => target !== undefined && act({ type: 'assassinateMerlin', bySeat: localSeat!, target })}
+        >
+          {target === undefined ? 'Pick a target at the table' : `Strike ${nameOf(view, target)}`}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.assassin}>
+      <Heading kicker="Three quests have succeeded">The Assassin draws a blade</Heading>
+      <p className={styles.dim}>Good has won the quests, but if the Assassin can name Merlin, evil still wins.</p>
+      {secretsOpen && view.yourAlignment === 'evil' && (
+        <p className={styles.note}>Help your Assassin: who has seemed to know too much?</p>
+      )}
+      {multiHuman ? (
+        <>
+          <p className={styles.dim}>Pass the device to whoever holds the Assassin card:</p>
+          <div className={styles.buttonRow}>
+            {humanSeats.map((s) => (
+              <button key={s} type="button" className={styles.ghostButton} onClick={() => requestCover(s)}>
+                {nameOf(view, s)}
+              </button>
+            ))}
+          </div>
+          {secretsOpen && view.yourRole !== null && <p className={styles.dim}>{nameOf(view, localSeat!)} does not hold the blade.</p>}
+        </>
+      ) : (
+        <Waiting>The Assassin studies the table…</Waiting>
+      )}
+    </div>
+  );
+}
+
+// --- game over -------------------------------------------------------------
+
+function GameOverPanel({ view, onEndRevealDone, exitGame }: PanelProps) {
+  const reason = endReason(view);
+  const target = view.assassinationTarget;
+  const targetRole = target !== null ? view.seats[target]?.revealedRole ?? null : null;
+  const [stage, setStage] = useState(target === null || prefersReducedMotion() ? 3 : 0);
+  useEffect(() => {
+    if (stage >= 3) return;
+    const t1 = setTimeout(() => setStage(1), 1400);
+    const t2 = setTimeout(() => setStage(2), 2600);
+    const t3 = setTimeout(() => setStage(3), 3600);
+    return () => [t1, t2, t3].forEach(clearTimeout);
+    // Runs once per mount (the panel is keyed by the assassination target).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (stage >= 3) onEndRevealDone();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
+  const good = view.winnerTeam === 'good';
+  const verdict: Record<string, string> = {
+    assassinHit: 'The Assassin has slain Merlin. Evil triumphs.',
+    assassinMiss: 'The Assassin struck the wrong knight. Arthur’s court prevails.',
+    threeFails: 'Three quests have failed. Mordred’s shadow covers the land.',
+    fiveRejections: 'Five teams were rejected. The fellowship crumbles, and evil wins.',
+    threeSuccesses: 'Three quests have succeeded. Good prevails.',
+  };
+  return (
+    <div className={styles.gameOver}>
+      {target !== null && (
+        <div className={styles.assassination}>
+          <div className={`${styles.dagger} ${styles.daggerStrike}`} aria-hidden>
+            <DaggerIcon />
+          </div>
+          <p className={styles.dim}>The Assassin names <b>{nameOf(view, target)}</b>…</p>
+          <FlipCard
+            width={130}
+            height={182}
+            radius={10}
+            revealed={stage >= 1 && targetRole !== null}
+            back={<RoleCardBack />}
+            front={stage >= 1 && targetRole ? <RoleCardFace role={targetRole} compact /> : <RoleCardBack />}
+            className={stage >= 2 ? (targetRole === 'merlin' ? styles.slain : styles.spared) : ''}
+          />
+        </div>
+      )}
+      {stage >= 2 && (
+        <div className={`${styles.verdict} ${good ? styles.verdictGood : styles.verdictEvil}`}>
+          <span className={styles.verdictTitle}>{good ? 'Good wins' : 'Evil wins'}</span>
+          <span>{reason ? verdict[reason] : ''}</span>
+        </div>
+      )}
+      {stage >= 3 && (
+        <>
+          <span className={styles.kicker}>The roles revealed</span>
+          <ul className={`${styles.revealGrid} sd-stagger`}>
+            {view.seats.map((s, i) =>
+              s.revealedRole ? (
+                <li key={s.index} style={{ ['--i' as string]: i }}>
+                  <div className={styles.miniCard}>
+                    <RoleCardFace role={s.revealedRole} compact />
+                  </div>
+                  <span>{s.name}</span>
+                </li>
+              ) : null,
+            )}
+          </ul>
+          <button type="button" className={styles.goldButton} onClick={exitGame}>
+            Leave the hall
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Chronicle: the public record of quests and votes.
+// ============================================================================
+
+function Chronicle({ view, holdQuest }: { view: AvalonPublicState; holdQuest: number | null }) {
+  if (view.proposalHistory.length === 0) return null;
+  const quests = view.questHistory.filter((q) => q.questNumber !== holdQuest);
+  return (
+    <details className={styles.chronicle}>
+      <summary>Chronicle of the Round Table</summary>
+      <ol className={styles.chronicleList}>
+        {view.proposalHistory.map((p, i) => {
+          const q = p.approved ? quests.find((x) => x.questNumber === p.questNumber) : undefined;
+          return (
+            <li key={i}>
+              <span className={styles.chronQuest}>
+                Q{roman(p.questNumber)}.{p.attempt}
+              </span>
+              <span>
+                <b>{nameOf(view, p.leader)}</b> chose {p.team.map((s) => nameOf(view, s)).join(', ')}
+              </span>
+              <span className={styles.chronVotes} aria-label={`${p.votes.filter(Boolean).length} approve, ${p.votes.filter((v) => !v).length} reject`}>
+                {p.votes.map((v, s) => (
+                  <i key={s} className={v ? styles.dotApprove : styles.dotReject} title={`${nameOf(view, s)}: ${v ? 'approve' : 'reject'}`} />
+                ))}
+              </span>
+              <span className={p.approved ? (q ? (q.result === 'success' ? styles.chronGood : styles.chronEvil) : styles.dim) : styles.dim}>
+                {!p.approved ? 'rejected' : q ? (q.result === 'success' ? `success (${q.failCount} fail)` : `failed (${q.failCount} fail${q.failCount === 1 ? '' : 's'})`) : 'on the quest'}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </details>
   );
 }
 

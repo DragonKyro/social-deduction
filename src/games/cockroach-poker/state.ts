@@ -3,25 +3,24 @@ import type { SeatIndex } from '@/engine/types';
 // ============================================================================
 // Cockroach Poker — host state
 //
-// Deck: 64 cards = 8 creatures × 8 copies. Passes:
-//   - Active seat picks a card from their hand, declares a creature, and
+// Deck: 64 cards = 8 creatures × 8 copies, dealt evenly (leftovers are set
+// aside unseen). A turn:
+//   - The active seat picks a card from their hand, declares a creature, and
 //     passes it FACE-DOWN to another seat with the claim.
-//   - Recipient decides:
-//       a) Accept (believe it's a different creature) → reveal, prove
-//          claim wrong: card goes face-up in front of LIAR (sender). If
-//          claim right, face-up in front of recipient.
-//       b) Challenge (call "I think you're lying") → same reveal logic.
-//       (a/b are equivalent in this build — they're presented as
-//        "believe (true)" / "believe (lie)".)
-//       c) Peek + pass on: look at the card, then pass it onward (possibly
-//          with a new claim). Cannot pass to a seat that already saw it
-//          this chain. If nobody is left to pass to, must accept/challenge.
-// Loss: 4 of any one creature face-up in front of you → you're out (round
-// ends, player is the loser of the match). Also: if all seats except you
-// have seen the in-transit card, you must accept/challenge.
+//   - The holder either
+//       a) calls it: "true" (the claim is right) or "false" (it's a lie).
+//          The card is revealed. A correct call sends it face-up to the
+//          seat that passed it to the holder; a wrong call keeps it face-up
+//          in front of the holder; or
+//       b) peeks at it secretly, and then MUST pass it on with a new (or the
+//          same) claim to a seat that hasn't seen it this chain. If every
+//          other seat has seen it, the holder can't peek and must call.
+//   - Whoever takes the card face-up starts the next turn.
+// Loss: 4 of one creature face-up in front of you, or having to start a
+// turn with no cards in hand. The game ends with that single loser.
 //
-// Hidden info: contents of each seat's hand; contents of the passed card
-// (visible to the original sender and any seat that has peeked).
+// Hidden info: contents of each seat's hand; the in-transit card (visible
+// to the original sender and every seat that peeked it).
 // ============================================================================
 
 export const CREATURES = [
@@ -36,18 +35,22 @@ export const CREATURES = [
 ] as const;
 export type Creature = (typeof CREATURES)[number];
 
+export const COPIES_PER_CREATURE = 8;
+export const LOSING_ROW_COUNT = 4;
+
 export type CockroachPokerPhase =
   // Pre-game ack of the deal (each seat sees their initial hand).
   | 'dealPending'
   // Active seat must pick a card + creature + target.
   | 'passing'
-  // Target must decide accept/challenge/peek-and-pass.
+  // Holder must call true/false, or peek then pass on.
   | 'decide'
   // A card was revealed; show outcome; everyone acks.
   | 'revealing'
-  // Round over — match win/lose state. (Cockroach is a single round of many
-  // passes; "round" here = match.)
+  // A seat has lost; the match is over.
   | 'gameOver';
+
+export type LossReason = 'fourOfAKind' | 'emptyHand';
 
 export interface PlayerState {
   index: SeatIndex;
@@ -56,49 +59,61 @@ export interface PlayerState {
   hand: Creature[];
   // Face-up creatures captured (count per type).
   row: Record<Creature, number>;
-  // True when this player loses (4 of one creature OR forced accept w/ no
-  // pass option).
+  // True when this player has lost.
   lost: boolean;
   // Has acked the initial deal.
   dealAcked: boolean;
 }
 
+export interface ChainHop {
+  from: SeatIndex;
+  to: SeatIndex;
+  claim: Creature;
+}
+
 // The card currently being passed.
 export interface PassState {
-  card: Creature;        // the actual card (hidden from non-peekers)
-  claim: Creature;       // the current claim
+  card: Creature; // the actual card (hidden from non-peekers)
+  claim: Creature; // the current claim
   originalSender: SeatIndex;
   // Seats that have seen the card so far (always includes originalSender;
-  // includes any seat that peeked it during the pass chain).
+  // includes every seat that peeked during the chain).
   seenBy: SeatIndex[];
-  // Current holder — the seat that must decide. Updates as the pass chain
-  // hops.
+  // Current holder — the seat that must act.
   holder: SeatIndex;
-  // History of passes in this chain (for the UI).
-  chain: Array<{ from: SeatIndex; to: SeatIndex; claim: Creature }>;
+  // True once the holder has peeked; they must now pass it on.
+  holderPeeked: boolean;
+  // Passes in this chain (for the UI).
+  chain: ChainHop[];
 }
 
 export interface RevealRecord {
-  // The pass that was resolved.
-  pass: PassState;
-  // The seat that decided (the final holder).
+  // The claim that was called and who made it.
+  claim: Creature;
+  claimant: SeatIndex;
+  // The seat that called (the final holder).
   decider: SeatIndex;
   // The decider's call: 'truth' (claim correct) or 'lie' (claim wrong).
   call: 'truth' | 'lie';
   // Was the call correct?
   callerWon: boolean;
-  // The seat that has to take the card face-up.
+  // The seat that takes the card face-up.
   receiver: SeatIndex;
   // The card (now public).
   card: Creature;
+  // The full chain, for the recap.
+  chain: ChainHop[];
+  seenBy: SeatIndex[];
 }
 
 export interface CockroachPokerPrivateState {
   phase: CockroachPokerPhase;
   seats: Array<{ index: SeatIndex; name: string }>;
   players: Record<SeatIndex, PlayerState>;
-  // Whose turn to pass (between chains). Changes after each chain resolves.
+  // Whose turn to pass (between chains).
   currentSeat: SeatIndex;
+  // Number of chains resolved so far.
+  turnNumber: number;
   // Active pass chain (null between chains).
   pass: PassState | null;
   // Last reveal for the UI.
@@ -109,6 +124,8 @@ export interface CockroachPokerPrivateState {
   matchWinners: SeatIndex[];
   // The single loser seat.
   loserSeat: SeatIndex | null;
+  lossReason: LossReason | null;
+  // Host-only. Never copied into a public view: the deal is derived from it.
   seed: number;
   rngCursor: number;
 }
@@ -133,17 +150,23 @@ export interface CockroachPokerPublicState {
   seats: Array<{ index: SeatIndex; name: string }>;
   players: PublicPlayer[];
   currentSeat: SeatIndex;
+  turnNumber: number;
   // Whoever currently holds the in-transit card (for the UI).
   passHolder: SeatIndex | null;
   passOriginalSender: SeatIndex | null;
   passClaim: Creature | null;
-  passChain: Array<{ from: SeatIndex; to: SeatIndex; claim: Creature }>;
-  // Seats that have already seen the in-transit card this chain (for "you
-  // can't pass back to these" UI).
+  passHolderPeeked: boolean;
+  passChain: ChainHop[];
+  // Seats that have already seen the in-transit card this chain (public in
+  // the real game — everyone watches who peeks).
   passSeenBy: SeatIndex[];
+  // Only non-null in `revealing` / `gameOver`.
   lastReveal: RevealRecord | null;
   matchWinners: SeatIndex[];
   loserSeat: SeatIndex | null;
+  lossReason: LossReason | null;
+  // Seats whose acknowledgement the current ack phase is waiting on.
+  awaitingAck: SeatIndex[];
 
   // Per-seat slots.
   yourSeat: SeatIndex | null;

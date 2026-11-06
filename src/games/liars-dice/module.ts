@@ -1,25 +1,25 @@
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { LiarsDiceAction } from './actions';
 import { aiChooseAction } from './ai';
+import { countMatching, isLegalRaise, isValidBidShape } from './rules';
 import { buildInitial, rerollAll } from './setup';
 import type {
-  Bid,
   DieFace,
   LiarsDicePrivateState,
   LiarsDicePublicState,
   PlayerState,
-  PublicPlayer,
   RevealRecord,
   RoundSummary,
 } from './state';
+import { aliveSeats, totalDiceInPlay, viewFor } from './view';
 
 // ============================================================================
 // Liar's Dice — module
 //
 // Hidden info: each seat's rolled dice values. Public surfaces only dice
-// COUNT per seat. The single chokepoint `viewFor` redacts `yourDice` to the
-// owning seat. On reveal, every seat sees `lastReveal.allDice` (no longer
-// hidden since the challenge resolved).
+// COUNT per seat. The single chokepoint `viewFor` (view.ts) redacts
+// `yourDice` to the owning seat. On reveal, every seat sees
+// `lastReveal.allDice` (no longer hidden since the challenge resolved).
 // ============================================================================
 
 export interface LiarsDiceSeatConfig {
@@ -42,32 +42,9 @@ function getOptions(config: GameConfig): LiarsDiceOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function aliveSeats(state: LiarsDicePrivateState): SeatIndex[] {
-  return state.seats
-    .map((s) => s.index)
-    .filter((i) => !state.players[i]!.eliminated);
-}
-
-function totalDice(state: LiarsDicePrivateState): number {
-  return aliveSeats(state).reduce(
-    (sum, i) => sum + state.players[i]!.diceCount,
-    0,
-  );
-}
-
-// Count total of a given face across all dice, applying wildOnes if enabled.
-// Rule: 1s count as the bid face EXCEPT when the bid IS on 1s.
-function countFace(
-  state: LiarsDicePrivateState,
-  face: DieFace,
-): number {
+function countFace(state: LiarsDicePrivateState, face: DieFace): number {
   let n = 0;
-  for (const i of aliveSeats(state)) {
-    for (const d of state.players[i]!.dice) {
-      if (d === face) n += 1;
-      else if (state.wildOnes && face !== 1 && d === 1) n += 1;
-    }
-  }
+  for (const i of aliveSeats(state)) n += countMatching(state.players[i]!.dice, face, state.wildOnes);
   return n;
 }
 
@@ -100,24 +77,14 @@ function resetAck(state: LiarsDicePrivateState): Record<SeatIndex, boolean> {
   return out;
 }
 
-// Validate a bid is a strict raise over `prev`. Standard rule:
-//   - more dice OR same dice + higher face.
-//   - face must be in 2..6 if prev face is 1 (since 1 is the lowest);
-//     when wildOnes is enabled, a 1-bid HALVES the count (rare) — we
-//     follow the simpler convention: bidding 1s is allowed at any count > prev.
-function isLegalRaise(prev: Bid | null, next: Bid): boolean {
-  if (next.count < 1) return false;
-  if (next.face < 1 || next.face > 6) return false;
-  if (prev === null) return true;
-  if (next.count > prev.count) return true;
-  if (next.count === prev.count && next.face > prev.face) return true;
-  return false;
+/** The acting seat must be a real, still-alive seat. */
+function requireLiveSeat(state: LiarsDicePrivateState, seat: unknown): SeatIndex {
+  if (typeof seat !== 'number' || !Number.isInteger(seat) || !state.players[seat]) {
+    throw new Error('Unknown seat');
+  }
+  if (state.players[seat]!.eliminated) throw new Error('Eliminated seat cannot act');
+  return seat;
 }
-
-function isAllowedFirstBid(prev: Bid | null): boolean {
-  return prev === null;
-}
-void isAllowedFirstBid;
 
 // Resolve a call. Determines actual count, decides winner, drops a die.
 function resolveCall(
@@ -129,24 +96,17 @@ function resolveCall(
   const bidder = state.currentBidder!;
   const actual = countFace(state, bid.face);
 
-  let callerWon: boolean;
-  let loserSeat: SeatIndex;
-  if (kind === 'liar') {
-    // Caller wins if actual < bid.count.
-    callerWon = actual < bid.count;
-    loserSeat = callerWon ? bidder : caller;
-  } else {
-    // spotOn: caller wins if actual === bid.count.
-    callerWon = actual === bid.count;
-    loserSeat = callerWon ? bidder : caller;
-  }
+  // liar: caller wins if the bid was too high. spotOn: caller wins on exact.
+  const callerWon = kind === 'liar' ? actual < bid.count : actual === bid.count;
+  const loserSeat = callerWon ? bidder : caller;
 
   const allDice: Record<SeatIndex, DieFace[]> = {};
   for (const s of state.seats) {
     allDice[s.index] = state.players[s.index]!.dice.slice();
   }
   const reveal: RevealRecord = {
-    bid,
+    bid: { ...bid },
+    bidder,
     caller,
     kind,
     actual,
@@ -158,18 +118,17 @@ function resolveCall(
   // Drop a die from loser.
   const lp = state.players[loserSeat]!;
   const newCount = Math.max(0, lp.diceCount - 1);
-  let next = withPlayer(state, loserSeat, {
+  const next = withPlayer(state, loserSeat, {
     diceCount: newCount,
     eliminated: newCount === 0,
   });
 
-  next = {
+  return {
     ...next,
     phase: 'revealing',
     lastReveal: reveal,
     revealAcked: resetAck(next),
   };
-  return next;
 }
 
 function nextRoundLeader(state: LiarsDicePrivateState): SeatIndex {
@@ -203,13 +162,17 @@ export const liarsDiceModule: GameModule<
         `Liar's Dice requires ${this.minPlayers}-${this.maxPlayers} players (got ${count})`,
       );
     }
+    const startingDice = opts.startingDice ?? 5;
+    if (!Number.isInteger(startingDice) || startingDice < 1 || startingDice > 10) {
+      throw new Error('startingDice must be 1-10');
+    }
     return buildInitial(
       opts.players.map((p) => p.name),
       config.seed,
       {
         wildOnes: opts.wildOnes ?? true,
         spotOn: opts.spotOn ?? true,
-        startingDice: opts.startingDice ?? 5,
+        startingDice,
       },
     );
   },
@@ -218,19 +181,16 @@ export const liarsDiceModule: GameModule<
     state: LiarsDicePrivateState,
     action: LiarsDiceAction,
   ): LiarsDicePrivateState {
+    if (state.phase === 'gameOver') throw new Error('Game is over');
     switch (action.type) {
       case 'ackRoll': {
         if (state.phase !== 'rollPending') {
           throw new Error('ackRoll only valid in rollPending');
         }
-        const p = state.players[action.bySeat]!;
-        if (p.eliminated) {
-          throw new Error('Eliminated seat cannot ack');
-        }
-        const next = withPlayer(state, action.bySeat, { rollAcked: true });
-        const allAcked = aliveSeats(next).every(
-          (i) => next.players[i]!.rollAcked,
-        );
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.players[seat]!.rollAcked) throw new Error('Already acknowledged');
+        const next = withPlayer(state, seat, { rollAcked: true });
+        const allAcked = aliveSeats(next).every((i) => next.players[i]!.rollAcked);
         if (!allAcked) return next;
         return { ...next, phase: 'bidding', currentSeat: next.roundLeader };
       }
@@ -239,20 +199,26 @@ export const liarsDiceModule: GameModule<
         if (state.phase !== 'bidding') {
           throw new Error('placeBid only valid in bidding');
         }
-        if (action.bySeat !== state.currentSeat) {
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (seat !== state.currentSeat) {
           throw new Error('Not your turn');
         }
-        if (!isLegalRaise(state.currentBid, action.bid)) {
-          throw new Error('Illegal bid (must raise count or face)');
+        if (!isValidBidShape(action.bid)) {
+          throw new Error('Malformed bid');
         }
-        if (action.bid.count > totalDice(state)) {
+        const bid = { count: action.bid.count, face: action.bid.face };
+        if (!isLegalRaise(state.currentBid, bid, state.wildOnes)) {
+          throw new Error('Illegal bid (must strictly raise the current bid)');
+        }
+        if (bid.count > totalDiceInPlay(state)) {
           throw new Error('Bid count exceeds total dice in play');
         }
         return {
           ...state,
-          currentBid: action.bid,
-          currentBidder: action.bySeat,
-          currentSeat: nextLive(state, action.bySeat),
+          currentBid: bid,
+          currentBidder: seat,
+          roundBids: [...state.roundBids, { seat, bid }],
+          currentSeat: nextLive(state, seat),
         };
       }
 
@@ -260,40 +226,43 @@ export const liarsDiceModule: GameModule<
         if (state.phase !== 'bidding') {
           throw new Error('call only valid in bidding');
         }
-        if (action.bySeat !== state.currentSeat) {
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (seat !== state.currentSeat) {
           throw new Error('Not your turn');
         }
-        if (state.currentBid === null) {
+        if (state.currentBid === null || state.currentBidder === null) {
           throw new Error('Nothing to call — no bid placed');
+        }
+        if (action.kind !== 'liar' && action.kind !== 'spotOn') {
+          throw new Error('Unknown call');
         }
         if (action.kind === 'spotOn' && !state.spotOn) {
           throw new Error('Spot-on rule disabled');
         }
-        return resolveCall(state, action.bySeat, action.kind);
+        return resolveCall(state, seat, action.kind);
       }
 
       case 'ackReveal': {
         if (state.phase !== 'revealing') {
           throw new Error('ackReveal only valid in revealing');
         }
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.revealAcked[seat]) throw new Error('Already acknowledged');
         const next = {
           ...state,
-          revealAcked: { ...state.revealAcked, [action.bySeat]: true },
+          revealAcked: { ...state.revealAcked, [seat]: true },
         };
-        const allAcked = aliveSeats(next).every(
-          (i) => next.revealAcked[i],
-        );
-        if (!allAcked) return next;
-        // Check match end: only one alive seat.
         const alive = aliveSeats(next);
+        if (!alive.every((i) => next.revealAcked[i])) return next;
+        // The loser of this round was the only seat that could have dropped
+        // out, so "eliminated this round" is just them (if they hit 0).
+        const loser = next.lastReveal!.loserSeat;
+        const summary: RoundSummary = {
+          roundNumber: next.roundNumber,
+          reveal: next.lastReveal!,
+          eliminatedThisRound: next.players[loser]!.eliminated ? [loser] : [],
+        };
         if (alive.length <= 1) {
-          const summary: RoundSummary = {
-            roundNumber: next.roundNumber,
-            reveal: next.lastReveal!,
-            eliminatedThisRound: aliveSeats(state).filter(
-              (i) => next.players[i]!.eliminated,
-            ),
-          };
           return {
             ...next,
             phase: 'gameOver',
@@ -301,13 +270,6 @@ export const liarsDiceModule: GameModule<
             matchWinners: alive,
           };
         }
-        const summary: RoundSummary = {
-          roundNumber: next.roundNumber,
-          reveal: next.lastReveal!,
-          eliminatedThisRound: aliveSeats(state).filter(
-            (i) => next.players[i]!.eliminated,
-          ),
-        };
         return {
           ...next,
           phase: 'roundOver',
@@ -320,72 +282,22 @@ export const liarsDiceModule: GameModule<
         if (state.phase !== 'roundOver') {
           throw new Error('ackRoundOver only valid in roundOver');
         }
+        const seat = requireLiveSeat(state, action.bySeat);
+        if (state.roundOverAcked[seat]) throw new Error('Already acknowledged');
         const next = {
           ...state,
-          roundOverAcked: {
-            ...state.roundOverAcked,
-            [action.bySeat]: true,
-          },
+          roundOverAcked: { ...state.roundOverAcked, [seat]: true },
         };
-        const allAcked = aliveSeats(next).every(
-          (i) => next.roundOverAcked[i],
-        );
-        if (!allAcked) return next;
-        const leader = nextRoundLeader(next);
-        return rerollAll(next, leader);
+        if (!aliveSeats(next).every((i) => next.roundOverAcked[i])) return next;
+        return rerollAll(next, nextRoundLeader(next));
       }
+
+      default:
+        throw new Error('Unknown action');
     }
   },
 
-  viewFor(
-    state: LiarsDicePrivateState,
-    seat: SeatIndex | null,
-  ): LiarsDicePublicState {
-    const players: PublicPlayer[] = state.seats.map((s) => {
-      const p = state.players[s.index]!;
-      return {
-        index: s.index,
-        name: s.name,
-        diceCount: p.diceCount,
-        eliminated: p.eliminated,
-        rollAcked: p.rollAcked,
-      };
-    });
-
-    const yourDice = seat !== null ? state.players[seat]!.dice.slice() : [];
-    const yourSeatSorted = yourDice.slice().sort((a, b) => a - b);
-
-    let yourAckPending = false;
-    if (seat !== null) {
-      const p = state.players[seat]!;
-      if (state.phase === 'rollPending')
-        yourAckPending = !p.rollAcked && !p.eliminated;
-      else if (state.phase === 'revealing')
-        yourAckPending = !state.revealAcked[seat] && !p.eliminated;
-      else if (state.phase === 'roundOver')
-        yourAckPending = !state.roundOverAcked[seat] && !p.eliminated;
-    }
-
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({ index: s.index, name: s.name })),
-      players,
-      currentSeat: state.currentSeat,
-      roundLeader: state.roundLeader,
-      roundNumber: state.roundNumber,
-      wildOnes: state.wildOnes,
-      spotOn: state.spotOn,
-      currentBid: state.currentBid,
-      currentBidder: state.currentBidder,
-      totalDice: totalDice(state),
-      lastReveal: state.lastReveal,
-      history: state.history.slice(),
-      matchWinners: state.matchWinners.slice(),
-      yourSeat: seat,
-      yourDice: yourSeatSorted as DieFace[],
-      yourAckPending,
-    };
-  },
+  viewFor,
 
   isFinished(state: LiarsDicePrivateState): boolean {
     return state.phase === 'gameOver';

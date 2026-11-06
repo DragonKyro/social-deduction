@@ -4,9 +4,11 @@ import { aiChooseAction } from './ai';
 import { ROLES, BASE_OPTIONAL_SPECIAL_ROLES } from './roles';
 import { questTrack, MAX_REJECTED_PROPOSALS } from './quest-tracks';
 import { buildRolePool, dealRoles, pickStartingLeader, buildRoleKnowledge } from './setup';
+import { viewFor } from './view';
 import type {
   AvalonPrivateState,
   AvalonPublicState,
+  AvalonProposalRecord,
   AvalonRoleId,
   AvalonSeatState,
 } from './state';
@@ -19,9 +21,11 @@ export interface AvalonSeatConfig {
 export interface AvalonOptions {
   // List of player names + AI flags. Length determines player count.
   players: AvalonSeatConfig[];
-  // Special roles enabled beyond the required Merlin + Assassin.
+  // Special roles enabled beyond the required Merlin + Assassin. Base-box
+  // specials only (Percival / Morgana / Mordred / Oberon).
   specialRoles: AvalonRoleId[];
-  // Optional-module toggles (scaffolded only — engine doesn't drive them yet).
+  // Optional-module toggles. Scaffolded only: the engine IGNORES these and
+  // never enables a module, so no half-wired phase is reachable.
   ladyOfTheLake: boolean;
   excalibur: boolean;
   twoLancelots: boolean;
@@ -31,7 +35,7 @@ function getOptions(config: GameConfig): AvalonOptions {
   return config.gameOptions as unknown as AvalonOptions;
 }
 
-// === Helper predicates / counters ============================================
+// === Helper predicates / validators ==========================================
 
 function nextLeader(state: AvalonPrivateState): SeatIndex {
   return (state.currentLeaderSeat + 1) % state.seats.length;
@@ -53,6 +57,28 @@ function resetQuestCards(seats: AvalonSeatState[]): AvalonSeatState[] {
   return seats.map((s) => ({ ...s, questCard: null }));
 }
 
+// Online, the network layer guarantees `action.bySeat` is the sender's seat,
+// but the VALUE still comes off the wire: a non-integer like 1.5 or "2" would
+// otherwise slip through `< 0 || >= n` checks and wedge the game (a "team
+// member" that can never play its card).
+function isSeat(state: AvalonPrivateState, seat: unknown): seat is SeatIndex {
+  return typeof seat === 'number' && Number.isInteger(seat) && seat >= 0 && seat < state.seats.length;
+}
+
+function assertSeat(state: AvalonPrivateState, seat: unknown, what = 'seat'): asserts seat is SeatIndex {
+  if (!isSeat(state, seat)) throw new Error(`Invalid ${what} ${String(seat)}`);
+}
+
+function assertBool(v: unknown, what: string): asserts v is boolean {
+  if (typeof v !== 'boolean') throw new Error(`${what} must be a boolean`);
+}
+
+function isApproved(votes: Array<boolean | null>): boolean {
+  // Strict majority approves; a tie rejects (rulebook).
+  const approve = votes.filter((v) => v === true).length;
+  return approve > votes.length - approve;
+}
+
 // === Module ==================================================================
 
 export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, AvalonAction> = {
@@ -69,6 +95,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
       throw new Error(`Avalon requires ${this.minPlayers}-${this.maxPlayers} players (got ${playerCount})`);
     }
 
+    // Throws on Lancelots / unknown ids / alignment overflow.
     const pool = buildRolePool(playerCount, opts.specialRoles ?? []);
     const dealtSeats = dealRoles(playerCount, pool, config.seed);
     // Overlay player names on top of the seat list.
@@ -89,6 +116,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
       currentQuestNumber: 1,
       questTrack: questTrack(playerCount),
       questHistory: [],
+      proposalHistory: [],
       currentLeaderSeat: startLeader,
       proposedTeam: [],
       failedProposalsThisQuest: 0,
@@ -96,6 +124,8 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
       seed: config.seed,
       winnerTeam: null,
       assassinationTarget: null,
+      // Optional modules are scaffolded only — never enabled, whatever the
+      // options say.
       ladyOfTheLake: null,
       excalibur: null,
       lancelotSwapDeck: null,
@@ -104,14 +134,15 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
   },
 
   applyAction(state: AvalonPrivateState, action: AvalonAction): AvalonPrivateState {
-    // Wrap most branches in a fresh state object so reducers stay immutable.
+    if (state.phase === 'gameOver') throw new Error('The game is over');
     switch (action.type) {
       case 'ackRoleReveal': {
         if (state.phase !== 'setup') {
           throw new Error('ackRoleReveal only valid in setup phase');
         }
-        if (action.bySeat < 0 || action.bySeat >= state.seats.length) {
-          throw new Error(`Invalid seat ${action.bySeat}`);
+        assertSeat(state, action.bySeat);
+        if (state.setupAcked[action.bySeat]) {
+          throw new Error(`Seat ${action.bySeat} already acknowledged their role`);
         }
         const acked: Record<SeatIndex, boolean> = { ...state.setupAcked, [action.bySeat]: true };
         const everyone = state.seats.every((s) => acked[s.index]);
@@ -126,16 +157,16 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (state.phase !== 'teamProposal') {
           throw new Error('proposeTeam only valid in teamProposal phase');
         }
+        assertSeat(state, action.bySeat);
         if (action.bySeat !== state.currentLeaderSeat) {
           throw new Error('Only the current leader can propose a team');
         }
+        if (!Array.isArray(action.team)) throw new Error('team must be an array of seats');
+        for (const s of action.team) assertSeat(state, s, 'team seat');
         const spec = currentSpec(state);
         const team = [...new Set(action.team)].sort((a, b) => a - b);
-        if (team.length !== spec.teamSize) {
-          throw new Error(`Quest ${state.currentQuestNumber} needs ${spec.teamSize} players`);
-        }
-        for (const s of team) {
-          if (s < 0 || s >= state.seats.length) throw new Error(`Invalid seat ${s}`);
+        if (team.length !== spec.teamSize || action.team.length !== spec.teamSize) {
+          throw new Error(`Quest ${state.currentQuestNumber} needs ${spec.teamSize} distinct players`);
         }
         return {
           ...state,
@@ -149,9 +180,8 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (state.phase !== 'teamVote') {
           throw new Error('castTeamVote only valid in teamVote phase');
         }
-        if (action.bySeat < 0 || action.bySeat >= state.seats.length) {
-          throw new Error(`Invalid seat ${action.bySeat}`);
-        }
+        assertSeat(state, action.bySeat);
+        assertBool(action.approve, 'approve');
         if (state.seats[action.bySeat]!.voteApprove !== null) {
           throw new Error(`Seat ${action.bySeat} has already voted`);
         }
@@ -162,16 +192,34 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (!everyoneVoted) {
           return { ...state, seats };
         }
-        return { ...state, seats, phase: 'teamVoteReveal' };
+        // Last token is down — the votes become public together, so this is
+        // also the moment they enter the (public) proposal log.
+        const votes = seats.map((s) => s.voteApprove === true);
+        const record: AvalonProposalRecord = {
+          questNumber: state.currentQuestNumber,
+          attempt: state.failedProposalsThisQuest + 1,
+          leader: state.currentLeaderSeat,
+          team: state.proposedTeam.slice(),
+          votes,
+          approved: isApproved(votes),
+        };
+        return {
+          ...state,
+          seats,
+          phase: 'teamVoteReveal',
+          proposalHistory: [...state.proposalHistory, record],
+        };
       }
 
+      // Seatless "Continue" control. Online, only the host may send actions
+      // without `bySeat` (enforced by the network layer). It's safe for anyone
+      // who CAN send it: it is only valid in the reveal phase, carries no
+      // payload, and its outcome is fully determined by votes already cast.
       case 'ackTeamVoteReveal': {
         if (state.phase !== 'teamVoteReveal') {
           throw new Error('ackTeamVoteReveal only valid in teamVoteReveal phase');
         }
-        const approveCount = state.seats.filter((s) => s.voteApprove === true).length;
-        const rejectCount = state.seats.length - approveCount;
-        const approved = approveCount > rejectCount;
+        const approved = isApproved(state.seats.map((s) => s.voteApprove));
 
         if (approved) {
           // Move to quest execution. Clear quest cards on the new team.
@@ -208,6 +256,8 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (state.phase !== 'questExecution') {
           throw new Error('playQuestCard only valid in questExecution phase');
         }
+        assertSeat(state, action.bySeat);
+        assertBool(action.success, 'success');
         if (!state.proposedTeam.includes(action.bySeat)) {
           throw new Error(`Seat ${action.bySeat} is not on this quest team`);
         }
@@ -226,7 +276,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (!allPlayed) {
           return { ...state, seats };
         }
-        // Resolve quest.
+        // Resolve quest. Only the COUNT of fails is recorded.
         const spec = currentSpec(state);
         const failCount = state.proposedTeam.filter((s) => seats[s]!.questCard === false).length;
         const result: 'success' | 'fail' = failCount >= spec.failsRequired ? 'fail' : 'success';
@@ -234,7 +284,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
           questNumber: state.currentQuestNumber,
           teamSize: spec.teamSize,
           failsRequired: spec.failsRequired,
-          team: state.proposedTeam,
+          team: state.proposedTeam.slice(),
           failCount,
           result,
         };
@@ -246,6 +296,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         };
       }
 
+      // Seatless "Continue" control — see ackTeamVoteReveal.
       case 'ackQuestResolution': {
         if (state.phase !== 'questResolution') {
           throw new Error('ackQuestResolution only valid in questResolution phase');
@@ -254,13 +305,14 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         const fails = countQuestResult(state.questHistory, 'fail');
 
         if (fails >= 3) {
-          return { ...state, phase: 'gameOver', winnerTeam: 'evil' };
+          return { ...state, phase: 'gameOver', winnerTeam: 'evil', seats: resetQuestCards(state.seats) };
         }
         if (successes >= 3) {
-          // Good wins the quest race; assassin gets a shot at Merlin.
+          // Good wins the quest race; the Assassin (always dealt) gets a shot
+          // at Merlin.
           const hasAssassin = state.seats.some((s) => s.role === 'assassin');
           if (hasAssassin) {
-            return { ...state, phase: 'assassinPick' };
+            return { ...state, phase: 'assassinPick', seats: resetQuestCards(state.seats) };
           }
           return { ...state, phase: 'gameOver', winnerTeam: 'good' };
         }
@@ -280,12 +332,20 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         if (state.phase !== 'assassinPick') {
           throw new Error('assassinateMerlin only valid in assassinPick phase');
         }
+        assertSeat(state, action.bySeat);
         const assassinSeat = state.seats.find((s) => s.role === 'assassin');
         if (!assassinSeat || assassinSeat.index !== action.bySeat) {
           throw new Error('Only the Assassin can perform this action');
         }
-        if (action.target < 0 || action.target >= state.seats.length) {
-          throw new Error(`Invalid assassination target ${action.target}`);
+        assertSeat(state, action.target, 'assassination target');
+        // The Assassin names a GOOD player: not themselves, and not one of
+        // the evil teammates they can see.
+        if (action.target === assassinSeat.index) {
+          throw new Error('The Assassin cannot target themselves');
+        }
+        const knownTeammates = (state.roleKnowledge[assassinSeat.index] ?? []).map((k) => k.seat);
+        if (knownTeammates.includes(action.target)) {
+          throw new Error('The Assassin must name a player they believe is good');
         }
         const targetRole = state.seats[action.target]!.role;
         const winner: 'good' | 'evil' = targetRole === 'merlin' ? 'evil' : 'good';
@@ -297,75 +357,21 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
         };
       }
 
-      // --- Optional modules (scaffolded; not yet driven) ------------------
+      // --- Optional modules (scaffolded; not driven) ------------------------
+      // Rejected outright rather than silently accepted: a no-op "success"
+      // would still bump the tick and fan out views for nothing.
       case 'ladyInvestigate':
       case 'ladyDeclare':
       case 'assignExcalibur':
       case 'useExcalibur':
-        return state;
+        throw new Error(`${action.type}: optional modules are not implemented`);
+
+      default:
+        throw new Error(`Unknown action ${String((action as { type?: unknown }).type)}`);
     }
   },
 
-  viewFor(state: AvalonPrivateState, seat: SeatIndex | null): AvalonPublicState {
-    const own = seat === null ? null : state.seats[seat] ?? null;
-    const gameOver = state.phase === 'gameOver';
-
-    // During teamVote phase we suppress all per-seat votes so they can't be
-    // observed mid-tally. They become public on the teamVoteReveal screen.
-    const hideVotes = state.phase === 'teamVote';
-
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({
-        index: s.index,
-        name: s.name,
-        voteApprove: hideVotes ? null : s.voteApprove,
-        isCurrentLeader: s.index === state.currentLeaderSeat,
-        isOnProposedTeam: state.proposedTeam.includes(s.index),
-        hasAckedSetup: !!state.setupAcked[s.index],
-        revealedRole: gameOver ? s.role : null,
-        revealedAlignment: gameOver ? s.alignment : null,
-      })),
-      currentQuestNumber: state.currentQuestNumber,
-      questTrack: state.questTrack,
-      questHistory: state.questHistory,
-      failedProposalsThisQuest: state.failedProposalsThisQuest,
-      proposedTeam: state.proposedTeam,
-      currentLeaderSeat: state.currentLeaderSeat,
-      winnerTeam: state.winnerTeam,
-      questCardsSubmitted:
-        state.phase === 'questExecution'
-          ? state.proposedTeam.filter((s) => state.seats[s]?.questCard !== null).length
-          : 0,
-      assassinationTarget: state.assassinationTarget,
-      ladyOfTheLake: state.ladyOfTheLake
-        ? {
-            enabled: true,
-            holder: state.ladyOfTheLake.holder,
-            pastHolders: state.ladyOfTheLake.pastHolders,
-          }
-        : null,
-      excalibur: state.excalibur
-        ? {
-            enabled: state.excalibur.enabled,
-            holderSeat: state.excalibur.holderSeat,
-            usedOnSeat: state.excalibur.usedOnSeat,
-          }
-        : null,
-      lancelotSwapsApplied: state.lancelotSwapDeck ? state.lancelotSwapsApplied : null,
-      yourSeat: seat,
-      yourRole: own?.role ?? null,
-      yourAlignment: own?.alignment ?? null,
-      yourRoleKnowledge: seat === null ? [] : state.roleKnowledge[seat] ?? [],
-      yourQuestCard: own?.questCard ?? null,
-      yourLadyOfTheLakeReveals:
-        seat === null || !state.ladyOfTheLake
-          ? []
-          : state.ladyOfTheLake.privateReveals
-              .filter((r) => r.by === seat)
-              .map((r) => ({ target: r.target, alignment: r.alignment })),
-    };
-  },
+  viewFor,
 
   isFinished(state: AvalonPrivateState): boolean {
     return state.phase === 'gameOver';
@@ -375,7 +381,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
 
   defaultConfig(playerCount: number): GameConfig {
     // Default special-role recipe: Percival + Morgana first, then Mordred at
-    // 7+, then Oberon at 10. Common practice.
+    // 7+. Common practice.
     const specialRoles: AvalonRoleId[] = [];
     if (playerCount >= 5) {
       specialRoles.push('percival', 'morgana');
@@ -407,7 +413,7 @@ export const avalonModule: GameModule<AvalonPrivateState, AvalonPublicState, Ava
 
 // Used by both `defaultConfig` and the lobby UI to clamp special-role
 // selections to the alignment quotas for the player count.
-function trimToFit(playerCount: number, specialRoles: AvalonRoleId[]): AvalonRoleId[] {
+export function trimToFit(playerCount: number, specialRoles: AvalonRoleId[]): AvalonRoleId[] {
   try {
     buildRolePool(playerCount, specialRoles);
     return specialRoles;
@@ -428,4 +434,4 @@ function trimToFit(playerCount: number, specialRoles: AvalonRoleId[]): AvalonRol
 }
 
 // Re-exports for UI consumers.
-export { ROLES, BASE_OPTIONAL_SPECIAL_ROLES };
+export { ROLES, BASE_OPTIONAL_SPECIAL_ROLES, viewFor };

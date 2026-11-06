@@ -4,13 +4,13 @@ Context for Claude working in this repo.
 
 ## What this is
 
-A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, **Coup**, **Codenames**, **Cross Clues**, **Love Letter**, **Skull**, **Liar's Dice**, **Liar's Poker**, and **Cockroach Poker**, hosted on GitHub Pages. WebRTC peer-to-peer multiplayer via Trystero; AI seats supported. No backend.
+A multi-game social-deduction app: **One Night Ultimate Werewolf**, **Secret Hitler**, **Avalon**, **Coup**, **Codenames**, **Cross Clues**, **Love Letter**, **Skull**, **Liar's Dice**, **Liar's Poker**, and **Cockroach Poker**, hosted on GitHub Pages. Online multiplayer runs over Firebase Realtime Database (shared project `github-games-e7c7d`, data under `/social-deduction`); AI seats supported in solo and online. No server code — the host's browser is the authority.
 
 The Catan project one directory up (`../catan/`) is the inspirational reference for the engine / store / net layering. Read its CLAUDE.md for the patterns we're echoing — they're proven against 6 expansions there. **One critical difference: this app is host-authoritative with redacted per-peer views, not full-state replication.** Catan can replicate the full state because Catan has no hidden information beyond dev cards (and even those leak from action logs); social deduction breaks if every peer holds every role. See the "Hidden info model" section below.
 
 ## Tech stack (locked)
 
-TypeScript, Vite, React 19, Trystero (WebRTC torrent), Zustand for state, Vitest for tests. No backend — GitHub Pages is static-only.
+TypeScript, Vite, React 19, Firebase (Realtime Database + anonymous Auth, lazy-loaded), Zustand for state, Vitest for tests. Fonts are self-hosted via @fontsource. No server code — GitHub Pages is static-only; the database only relays and enforces access rules.
 
 ## Architecture
 
@@ -18,9 +18,9 @@ Five layers, separated by directory:
 
 - **`src/engine/`** — pure game-agnostic plumbing. Defines the `GameModule` contract (private state, action, public view + per-seat redactor) and the cross-game registry. No React, no DOM, no network imports.
 - **`src/games/<id>/`** — one folder per game. Each implements `GameModule` and ships its own state/actions/AI/UI. Currently: `onuw/`, `secret-hitler/`, `avalon/`, `coup/`, `codenames/`, `cross-clues/`, `love-letter/`, `skull/`, `liars-dice/`, `liars-poker/`, `cockroach-poker/`. Adding a new game = new folder + registry entry, no engine changes.
-- **`src/net/`** — Trystero wrapper. Typed channels for hello/lobby/seatReq/start/action/view/snap/chat, persistent UUID via localStorage. Consumed only by `networkStore`.
+- **`src/net/`** — room transport. `firebaseRoom.ts` (Firebase RTDB) behind the `RoomTransport` interface, `fakeTransport.ts` for tests, identity / room codes / `?room=` links. Consumed only by `networkStore`. See `src/net/README.md` for the room layout and who can read what.
 - **`src/store/`** — two Zustand stores: `gameStore` (private state on host, public view everywhere) and `networkStore` (connection, role, lobby, chat).
-- **`src/ui/`** — React. `home/` and `lobby/` are game-agnostic; `game/GameRouter.tsx` dispatches to the per-game UI under `src/games/<id>/ui/`.
+- **`src/ui/`** — React. `home/` and `lobby/` are game-agnostic; `game/GameRouter.tsx` dispatches to the per-game UI under `src/games/<id>/ui/`; `shared/` is the cross-game art + motion kit (theme tokens, fonts, `sd-*` keyframes, `FlipCard`, SVG filter helpers, `launchGame`, `OnlineHostToggle`, `ChatPanel`).
 
 The game logic layer must not import from `src/ui`, `src/net`, or `src/store`. The net layer may import from `src/engine` and `src/games/*/index.ts` (for type unions) but not `src/ui`. Path alias: `@/` → `src/`.
 
@@ -32,25 +32,32 @@ The model:
 
 1. **Host holds the only complete state** (`Private`). Peers hold only their own `Public` view.
 2. Every game module exposes `viewFor(state: Private, seat: SeatIndex | null): Public`. **This is the single chokepoint that redacts hidden info.** Spectators pass `seat = null`.
-3. The network layer sends `view` messages individually addressed per peer. Peer A never receives Peer B's view. The same `action` action results in N different `view` messages on the wire, one per peer.
+3. The host writes each device's view to `views/{uid}`, which the database rules make readable **only by that uid**. Peer A never receives Peer B's view. One applied action results in N different view writes (one atomic multi-path update).
 4. AI runs on the host only. AI seats receive a private-state slice the same way humans do (`viewFor(state, seat)`).
-5. Host validates every incoming action against the sender's claimed seat + UUID before applying.
+5. Host validates every incoming action: the sender's uid is stamped by the rules, the host derives their seat from it, and `action.bySeat` must equal that seat. Actions without `bySeat` (phase controls) are host-only. See `src/store/hostLogic.ts`.
+6. **The RNG seed never leaves the host.** It's generated at match start; it is not in the lobby or any view (seed + options = every deal).
+7. **Seat switching is gated.** `gameStore.controllableSeats` decides which seats this device may render/act as — only your own seat online, every human seat in hot-seat, never an AI seat. UIs must use `useSeatSwitching()` instead of calling `setLocalSeat` from seat panels.
+8. **AI plays fair.** `aiChooseAction(state, seat)` gets the private state but must only use what that seat knows (derive from `viewFor(state, seat)`).
 
 What this means for new code:
 
 - **Adding hidden state to a game?** Put it in `Private` only. Redact it in `viewFor`. Add a `yourFoo` slot in `Public` if the owning seat needs to see it.
 - **Adding a new game?** Don't reach for full-state replication "for simplicity". The cost shows up as a cheating exploit the day someone opens devtools.
+- **Spectators** get `viewFor(state, null)` and anyone with the room code can be one — it must contain nothing hidden from any player until the reveal.
+- **Never add a room-level `.read` rule** in `database.rules.json`; rules cascade and it would open every view.
 
 ## Multiplayer model
 
-- **Trystero `/torrent`** for WebRTC signaling. No backend. App ID `social-deduction-v1`; room code doubles as the password for E2E encryption.
-- Trystero `peerId` is volatile. Stable identity is a `localStorage` UUID (`social-deduction.uuid`), exchanged via the `hello` channel. Local-testing escape hatch: append `?fresh` to switch to sessionStorage.
+- **Firebase Realtime Database** (project `github-games-e7c7d`, shared with the other game apps). Everything lives under `/social-deduction`; `database.rules.json` defines only that key and `scripts/merge-db-rules.mjs` (predeploy hook) merges it into the live rules so other apps are untouched. Deploy rules with `npm run deploy:rules`.
+- **Identity** is the anonymous Firebase uid (persisted by Firebase Auth). Local-testing escape hatch: append `?fresh` to keep auth + name per tab.
+- **Room codes** are 5 characters (no 0/O/1/I/L), generated by the host. `?room=CODE` in the URL joins on load (invite links; reload rejoins).
 - **Host-authoritative reduction**. Only the host applies actions. Host sends back per-peer redacted views.
 - **Lobby**: host-authoritative. Guests `seatReq`; host integrates and rebroadcasts `lobby`.
-- **Rejoin / spectator**: when a peer joins mid-game, the host responds with `snap` (current view + chat history). Newcomer's role: UUID matches a seat → guest; otherwise spectator.
-- **Disconnect**: pause indefinitely. UI shows offline dot. Multiple peers can map to one UUID (testing); we only emit "disconnected" once the last peer for that UUID leaves.
+- **Rejoin / spectator**: a device's latest view persists in `views/{uid}`, so reconnecting is instant; a newcomer mid-match is written a view when their presence appears. uid matches a seat → guest; otherwise spectator. **Host reload** resumes from the host-only saved state.
+- **Disconnect**: pause indefinitely. Presence (`onDisconnect`) drives online dots; guests see a banner while the host is away.
 - **AI in online**: only the host runs AI. If the host drops, AIs freeze. Same as Catan.
-- **Chat**: in-memory in `networkStore.chat`, not part of `Private`. Game-specific phases may gate chat (e.g. ONUW night phase silences chat).
+- **Chat**: stored in the room (`chat/`, last 100 loaded), mirrored in `networkStore.chat`, not part of `Private`. In-game it's a drawer (`ui/game/OnlineOverlay.tsx`). Phase-gating (e.g. ONUW night silence) is still TODO.
+- **Exit** online: the host ends the match for everyone (back to the lobby); a guest steps out to the lobby and can return to the running match.
 - No anti-cheat — friends-only.
 
 ## Game-specific notes
@@ -98,18 +105,19 @@ See each game's README:
 - [x] Phase 3 — Secret Hitler base game (5–10p)
 - [x] Phase 4 — Avalon base box (Merlin, Assassin, Percival, Morgana, Mordred, Oberon)
 - [ ] Phase 4b — Avalon optional modules (Lady of the Lake, Excalibur, Two Lancelots) — scaffolded only
-- [x] Phase 5/5b/c — Coup Classic + G54 + Anarchy as a unified picker. All 37 characters playable end-to-end. Engine handles pile-on (Capitalist / Financier), group-rally chip-in (Protestor / Anarchist), force-swap (Newscaster / Reporter / Producer / Lobbyist / Diplomat), token grants (Peacekeeping / Treaty / weapons / reviveBlessed), custom-amount steal (Speculator), expanded block tables (Bishop / Lawyer / Judge / Paramilitary / Guerrilla coup-block), and wealth redistribution (Treasurer / Socialist / World Bank). Same-role-only blocking applies in G54 mode; Classic keeps cross-blocking. Category balance enforced strictly on total count; non-blocking warning when distribution drifts off one-per-category. House-rule characters prefixed `(house rule)` in their description. Social Media general action still deferred.
-- [x] Phase 6 — Online multiplayer wiring (Trystero, host-redacted views, lobby, rejoin)
+- [x] Phase 5/5b/c — Coup Classic + G54 + Anarchy as a unified picker. All 37 characters playable end-to-end. Engine handles pile-on (Capitalist / Financier), group-rally chip-in (Protestor / Anarchist), force-swap (Newscaster / Reporter / Producer / Lobbyist / Diplomat), token grants (Peacekeeping / Treaty / weapons / reviveBlessed), custom-amount steal (Speculator), expanded block tables (Bishop / Lawyer / Judge / Paramilitary / Guerrilla coup-block), and wealth redistribution (Treasurer / Socialist / World Bank). Blocks come from each character's own block list (targeted actions: target-only blocks; Foreign Aid: anyone). Three documented G54 house rules prevent infinite games (a 10+-coin forced Coup is unblockable; one revive per seat per game; a Treaty is void when its pair are the last two alive). Action cost is refunded when the claim is successfully challenged, kept when blocked. Category balance enforced strictly on total count; non-blocking warning when distribution drifts off one-per-category. House-rule characters prefixed `(house rule)` in their description. Social Media general action still deferred.
+- [x] Phase 6 — Online multiplayer wiring (host-redacted views, lobby, rejoin)
+- [x] Phase 6b — Port from Trystero/WebRTC to Firebase RTDB: per-uid view mailboxes enforced by security rules, generated room codes + invite links, host-reload resume, room chat, stale-room sweep
 - [x] Phase 7 — Heuristic AI for all 11 games. Probability-driven where applicable (binomial for Liar's Dice, Monte-Carlo for Liar's Poker, Bayesian-prior bluff scheduler for Coup, suspicion-graph for Secret Hitler / Avalon). All AIs that bluff include randomized action-mixing so they're not exploitable by pattern-recognition.
 - [ ] Phase 8 — In-game chat + phase-gated visibility (night-silence, dead-spectate, etc.)
 - [ ] Phase 9 — Game history / replay (host records action log, redacted per-seat replay)
 - [x] Phase 10 — Cross Clues (coop word game): 5×5 secret-word grid, 25-coord deck, host-authoritative clue-giver redaction, themed word packs (Standard / Spicy / Kids), final-score tiers (16 great / 21 legendary / 25 perfect). No winner team — uses `score` + `scoreRating` instead.
 - [x] Phase 11 — Codenames (party word-association, 2-team)
-- [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players. Per-seat single hidden card is the only redaction; Priest peek is privately addressed to the actor. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
-- [x] Phase 13 — Skull (3–6p bluffing): 3 roses + 1 skull per seat, single chokepoint stack redaction. Configurable challenge target (1/2/3 wins, default 2). Challenger flips own stack first, then chooses opponent stacks; hit a skull → drop a disk (rose preferred). AI uses a skull-density posterior for flip selection.
-- [x] Phase 14 — Liar's Dice (2–8p): 5 dice per seat, per-seat `yourDice` redacted, on-reveal `lastReveal.allDice` becomes public. Options: 1s-wild, spot-on. Binomial-prior AI with bluff-mix on raises.
-- [x] Phase 15 — Liar's Poker (2–8p): 52-card deck, configurable 1–5 cards/seat. Combined-pool verification across all hands. Standard 8-category ranking EXCEPT plain flushes: **lower top card is stronger** (must have exact top + 4 strictly-lower same-suit cards). Straight flushes use standard high-rank-wins. Optional dummy-hand "last life" — losing your last card gives you one round with a card you can't see but everyone else can. Monte-Carlo prior AI with bluff-mix.
-- [x] Phase 16 — Cockroach Poker (3–6p): 64-card deck (8 creatures × 8). Pass face-down with a claim; receiver believes / rejects / peeks + passes onward. Chokepoint redaction includes peek-chain tracking (`pass.seenBy`). Lose on 4 of any one creature face-up.
+- [x] Phase 12 — Love Letter (16-card micro deduction): 2–4 players. Per-seat hidden hand; Priest peek, Baron comparison and King trade are private to the seats involved (`yourSecret`; others only see the Baron loser's face-up card); the host tracks each seat's legitimate knowledge (`yourKnowledge`) for the AI. Full effect resolution incl. Countess-with-King/Prince force, Prince-on-Princess elimination, redraw-from-setAside on empty deck, deck-exhaustion compare + discard-sum tiebreak. Token target scales with player count (2p:7, 3p:5, 4p:4).
+- [x] Phase 13 — Skull (3–6p bluffing): 3 roses + 1 skull per seat, single chokepoint stack redaction. Configurable challenge target (1/2/3 wins, default 2). Challenger flips own stack first, then chooses opponent stacks; flipped disks return to their owners. Hit someone else's skull → one of the challenger's disks is removed at random, hidden from everyone else; hit your own → the challenger chooses (`discardDisk`). Last player standing wins; next-round leader per official rules (`chooseLeader` when the challenger knocked themselves out). AI uses a skull-density posterior from its own view only.
+- [x] Phase 14 — Liar's Dice (2–8p): 5 dice per seat, per-seat `yourDice` redacted, on-reveal `lastReveal.allDice` becomes public. Options: 1s-wild (Perudo conversion: no opening on 1s; to 1s needs ⌈n/2⌉, from 1s needs 2n+1), spot-on (house rule: bidder loses a die). Binomial-prior AI with bluff-mix on raises.
+- [x] Phase 15 — Liar's Poker (2–8p): 52-card deck, configurable 1–5 cards/seat. Combined-pool verification across all hands. Standard 8-category ranking EXCEPT plain flushes: **lower top card is stronger** (must have exact top + 4 strictly-lower same-suit cards). Straight flushes use standard high-rank-wins; A-2-3-4-5 counts as a 5-high straight. Claims are normalised/validated (no impossible flushes). Optional dummy-hand "last life" — losing your last card gives you one round with a card you can't see but everyone else can. Monte-Carlo prior AI with bluff-mix.
+- [x] Phase 16 — Cockroach Poker (3–6p): 64-card deck (8 creatures × 8). Pass face-down with a claim; receiver believes / rejects / `peek`s then must `passOn` with a new claim (the last unseen holder must call). A player who must start a turn with an empty hand loses. Chokepoint redaction includes peek-chain tracking (`pass.seenBy`). Lose on 4 of any one creature face-up.
 
 ## Non-goals (do not implement)
 
@@ -129,4 +137,4 @@ Open work, roughly in priority order:
 
 ## Reference: Catan project
 
-`../catan/` is a working full-replication multiplayer Trystero app with 6 expansions, 9 Seafarers scenarios, 8 Fun Maps, and a complete heuristic AI. **Patterns to copy**: action-union engine, store layering, Trystero room binding, persistent UUID + ?fresh escape hatch, GitHub Pages deploy workflow, dev-card-style hidden info logging (deliberately omits stolen resource). **Patterns to deliberately diverge from**: full-state replication (we go host-authoritative), all-peers-reduce (we go host-reduces-only), action broadcast (we go peer→host action / host→peer view).
+`../catan/` is a working full-replication multiplayer Firebase RTDB app with 6 expansions, 9 Seafarers scenarios, 8 Fun Maps, and a complete heuristic AI. **Patterns to copy**: action-union engine, store layering, Firebase room transport + rules-merge deploy, ?fresh escape hatch, GitHub Pages deploy workflow, dev-card-style hidden info logging (deliberately omits stolen resource). **Patterns to deliberately diverge from**: full-state replication (we go host-authoritative), all-peers-reduce (we go host-reduces-only), action broadcast (we go peer→host action / host→peer view).

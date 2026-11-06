@@ -2,22 +2,23 @@ import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { CockroachPokerAction } from './actions';
 import { aiChooseAction } from './ai';
 import { buildInitial } from './setup';
-import { CREATURES } from './state';
+import { CREATURES, LOSING_ROW_COUNT } from './state';
 import type {
   CockroachPokerPrivateState,
   CockroachPokerPublicState,
   Creature,
+  LossReason,
   PassState,
   PlayerState,
-  PublicPlayer,
   RevealRecord,
 } from './state';
+import { aliveSeats, passTargets, viewFor } from './view';
 
 // ============================================================================
 // Cockroach Poker — module
 //
 // Hidden info: each seat's hand + the in-transit card (visible only to the
-// original sender and any peeker). `viewFor` redacts both.
+// original sender and any peeker). `viewFor` (view.ts) redacts both.
 // ============================================================================
 
 export interface CockroachPokerSeatConfig {
@@ -37,10 +38,8 @@ function getOptions(config: GameConfig): CockroachPokerOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function aliveSeats(state: CockroachPokerPrivateState): SeatIndex[] {
-  return state.seats
-    .map((s) => s.index)
-    .filter((i) => !state.players[i]!.lost);
+export function isCreature(c: unknown): c is Creature {
+  return typeof c === 'string' && (CREATURES as readonly string[]).includes(c);
 }
 
 function nextLive(state: CockroachPokerPrivateState, from: SeatIndex): SeatIndex {
@@ -72,20 +71,36 @@ function resetAck(state: CockroachPokerPrivateState): Record<SeatIndex, boolean>
   return out;
 }
 
-// Apply a face-up creature to the receiver's row. If they hit 4 of a kind →
-// match ends with that seat as the loser.
-function placeFaceUp(
-  state: CockroachPokerPrivateState,
-  receiver: SeatIndex,
-  card: Creature,
-): CockroachPokerPrivateState {
-  const p = state.players[receiver]!;
-  const newRow = { ...p.row, [card]: p.row[card] + 1 };
-  let next = withPlayer(state, receiver, { row: newRow });
-  if (newRow[card] >= 4) {
-    next = withPlayer(next, receiver, { lost: true });
+/** A real seat index that hasn't lost. */
+function requireSeat(state: CockroachPokerPrivateState, seat: unknown, what = 'seat'): SeatIndex {
+  if (typeof seat !== 'number' || !Number.isInteger(seat) || !state.players[seat]) {
+    throw new Error(`Unknown ${what}`);
   }
-  return next;
+  if (state.players[seat]!.lost) throw new Error(`That ${what} is out`);
+  return seat;
+}
+
+function requireHolder(state: CockroachPokerPrivateState, bySeat: unknown): PassState {
+  if (state.phase !== 'decide' || !state.pass) throw new Error('No card is being passed');
+  const seat = requireSeat(state, bySeat);
+  if (seat !== state.pass.holder) throw new Error('Not your decision');
+  return state.pass;
+}
+
+function endGame(
+  state: CockroachPokerPrivateState,
+  loser: SeatIndex,
+  reason: LossReason,
+): CockroachPokerPrivateState {
+  const players = { ...state.players, [loser]: { ...state.players[loser]!, lost: true } };
+  return {
+    ...state,
+    players,
+    phase: 'gameOver',
+    loserSeat: loser,
+    lossReason: reason,
+    matchWinners: state.seats.map((s) => s.index).filter((i) => i !== loser),
+  };
 }
 
 // Resolve a pass when the holder decides truth/lie.
@@ -96,68 +111,32 @@ function resolveDecision(
 ): CockroachPokerPrivateState {
   const pass = state.pass!;
   const claimCorrect = pass.card === pass.claim;
-  // The decider says either:
-  //   'truth' → "I believe the claim is correct."
-  //   'lie' → "I think you're lying."
-  // The "right" decider (matches actual truth) puts the card on the LIAR.
-  // The "wrong" decider takes the card themselves.
-  const callerWon =
-    (call === 'truth' && claimCorrect) ||
-    (call === 'lie' && !claimCorrect);
-  // The most-recent sender (the one who handed the card to `decider`).
-  const lastChain = pass.chain[pass.chain.length - 1];
-  const liar = lastChain ? lastChain.from : pass.originalSender;
-  const receiver = callerWon ? liar : decider;
-  let next = placeFaceUp(state, receiver, pass.card);
+  const callerWon = (call === 'truth' && claimCorrect) || (call === 'lie' && !claimCorrect);
+  // The seat that handed the card to the decider made the claim being called.
+  const claimant = pass.chain[pass.chain.length - 1]!.from;
+  const receiver = callerWon ? claimant : decider;
+
+  const p = state.players[receiver]!;
+  const row = { ...p.row, [pass.card]: p.row[pass.card] + 1 };
+  const next = withPlayer(state, receiver, { row });
   const reveal: RevealRecord = {
-    pass,
+    claim: pass.claim,
+    claimant,
     decider,
     call,
     callerWon,
     receiver,
     card: pass.card,
+    chain: pass.chain.map((h) => ({ ...h })),
+    seenBy: pass.seenBy.slice(),
   };
-  next = {
+  return {
     ...next,
     phase: 'revealing',
     pass: null,
+    turnNumber: state.turnNumber + 1,
     lastReveal: reveal,
     revealAcked: resetAck(next),
-  };
-  return next;
-}
-
-// Pass to another seat with a new claim.
-function applyPeekAndPass(
-  state: CockroachPokerPrivateState,
-  decider: SeatIndex,
-  claim: Creature,
-  target: SeatIndex,
-): CockroachPokerPrivateState {
-  const pass = state.pass!;
-  if (pass.seenBy.includes(target)) {
-    throw new Error("That seat has already seen this card");
-  }
-  if (target === decider) {
-    throw new Error("Can't pass to yourself");
-  }
-  if (state.players[target]!.lost) {
-    throw new Error('That seat is out');
-  }
-  const newPass: PassState = {
-    card: pass.card,
-    claim,
-    originalSender: pass.originalSender,
-    seenBy: pass.seenBy.includes(decider)
-      ? pass.seenBy
-      : [...pass.seenBy, decider],
-    holder: target,
-    chain: [...pass.chain, { from: decider, to: target, claim }],
-  };
-  return {
-    ...state,
-    phase: 'decide',
-    pass: newPass,
   };
 }
 
@@ -190,172 +169,123 @@ export const cockroachPokerModule: GameModule<
     state: CockroachPokerPrivateState,
     action: CockroachPokerAction,
   ): CockroachPokerPrivateState {
+    if (state.phase === 'gameOver') throw new Error('Game is over');
     switch (action.type) {
       case 'ackDeal': {
         if (state.phase !== 'dealPending') {
           throw new Error('ackDeal only valid in dealPending');
         }
-        const next = withPlayer(state, action.bySeat, { dealAcked: true });
-        const allAcked = aliveSeats(next).every(
-          (i) => next.players[i]!.dealAcked,
-        );
-        if (!allAcked) return next;
-        return { ...next, phase: 'passing', currentSeat: next.currentSeat };
+        const seat = requireSeat(state, action.bySeat);
+        if (state.players[seat]!.dealAcked) throw new Error('Already acknowledged');
+        const next = withPlayer(state, seat, { dealAcked: true });
+        if (!aliveSeats(next).every((i) => next.players[i]!.dealAcked)) return next;
+        return { ...next, phase: 'passing' };
       }
 
       case 'startPass': {
         if (state.phase !== 'passing') {
           throw new Error('startPass only valid in passing');
         }
-        if (action.bySeat !== state.currentSeat) {
-          throw new Error('Not your turn');
-        }
-        if (state.players[action.bySeat]!.lost) {
-          throw new Error('You are out');
-        }
-        if (state.players[action.target]!.lost) {
-          throw new Error('Target is out');
-        }
-        if (action.target === action.bySeat) {
-          throw new Error("Can't pass to yourself");
-        }
-        const sender = state.players[action.bySeat]!;
-        if (action.handIndex < 0 || action.handIndex >= sender.hand.length) {
+        const seat = requireSeat(state, action.bySeat);
+        if (seat !== state.currentSeat) throw new Error('Not your turn');
+        const target = requireSeat(state, action.target, 'target');
+        if (target === seat) throw new Error("Can't pass to yourself");
+        if (!isCreature(action.claim)) throw new Error('Unknown creature');
+        const sender = state.players[seat]!;
+        const idx = action.handIndex;
+        if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 || idx >= sender.hand.length) {
           throw new Error('Invalid card index');
         }
-        const card = sender.hand[action.handIndex]!;
+        const card = sender.hand[idx]!;
         const hand = sender.hand.slice();
-        hand.splice(action.handIndex, 1);
-        let next = withPlayer(state, action.bySeat, { hand });
+        hand.splice(idx, 1);
         const pass: PassState = {
           card,
           claim: action.claim,
-          originalSender: action.bySeat,
-          seenBy: [action.bySeat],
-          holder: action.target,
-          chain: [{ from: action.bySeat, to: action.target, claim: action.claim }],
+          originalSender: seat,
+          seenBy: [seat],
+          holder: target,
+          holderPeeked: false,
+          chain: [{ from: seat, to: target, claim: action.claim }],
         };
-        next = { ...next, phase: 'decide', pass };
-        return next;
+        return { ...withPlayer(state, seat, { hand }), phase: 'decide', pass };
       }
 
       case 'decide': {
-        if (state.phase !== 'decide') {
-          throw new Error('decide only valid in decide phase');
-        }
-        const p = state.pass;
-        if (!p) throw new Error('No active pass');
-        if (action.bySeat !== p.holder) {
-          throw new Error('Not your decision');
-        }
-        return resolveDecision(state, action.bySeat, action.call);
+        const pass = requireHolder(state, action.bySeat);
+        if (pass.holderPeeked) throw new Error('You peeked — you must pass it on');
+        if (action.call !== 'truth' && action.call !== 'lie') throw new Error('Unknown call');
+        return resolveDecision(state, pass.holder, action.call);
       }
 
-      case 'peekAndPass': {
-        if (state.phase !== 'decide') {
-          throw new Error('peekAndPass only valid in decide phase');
+      case 'peek': {
+        const pass = requireHolder(state, action.bySeat);
+        if (pass.holderPeeked) throw new Error('Already peeked');
+        if (passTargets(state, pass).length === 0) {
+          throw new Error('Everyone else has seen this card — you must call it');
         }
-        const p = state.pass;
-        if (!p) throw new Error('No active pass');
-        if (action.bySeat !== p.holder) {
-          throw new Error('Not your decision');
+        return {
+          ...state,
+          pass: {
+            ...pass,
+            holderPeeked: true,
+            seenBy: pass.seenBy.includes(pass.holder) ? pass.seenBy : [...pass.seenBy, pass.holder],
+          },
+        };
+      }
+
+      case 'passOn': {
+        const pass = requireHolder(state, action.bySeat);
+        if (!pass.holderPeeked) throw new Error('Peek at the card before passing it on');
+        if (!isCreature(action.claim)) throw new Error('Unknown creature');
+        const target = requireSeat(state, action.target, 'target');
+        if (!passTargets(state, pass).includes(target)) {
+          throw new Error('That seat has already seen this card');
         }
-        return applyPeekAndPass(state, action.bySeat, action.claim, action.target);
+        return {
+          ...state,
+          pass: {
+            ...pass,
+            claim: action.claim,
+            holder: target,
+            holderPeeked: false,
+            chain: [...pass.chain, { from: pass.holder, to: target, claim: action.claim }],
+          },
+        };
       }
 
       case 'ackReveal': {
         if (state.phase !== 'revealing') {
           throw new Error('ackReveal only valid in revealing');
         }
+        const seat = requireSeat(state, action.bySeat);
+        if (state.revealAcked[seat]) throw new Error('Already acknowledged');
         const next = {
           ...state,
-          revealAcked: { ...state.revealAcked, [action.bySeat]: true },
+          revealAcked: { ...state.revealAcked, [seat]: true },
         };
-        const allAcked = aliveSeats(next).every(
-          (i) => next.revealAcked[i],
-        );
-        if (!allAcked) return next;
-        // After reveal: check match end.
-        const lost = next.seats
-          .map((s) => s.index)
-          .find((i) => next.players[i]!.lost);
-        if (lost !== undefined) {
-          const winners = next.seats
-            .map((s) => s.index)
-            .filter((i) => !next.players[i]!.lost);
-          return {
-            ...next,
-            phase: 'gameOver',
-            matchWinners: winners,
-            loserSeat: lost,
-          };
-        }
-        // Next turn: the receiver of the face-up card leads the next pass.
+        if (!aliveSeats(next).every((i) => next.revealAcked[i])) return next;
+
         const r = next.lastReveal!;
-        let nextSeat = r.receiver;
-        if (next.players[nextSeat]!.lost) {
-          nextSeat = nextLive(next, nextSeat);
+        if (next.players[r.receiver]!.row[r.card] >= LOSING_ROW_COUNT) {
+          return endGame(next, r.receiver, 'fourOfAKind');
         }
-        return {
-          ...next,
-          phase: 'passing',
-          currentSeat: nextSeat,
-          lastReveal: null,
-        };
+        // Whoever took the card starts the next turn — and loses if they
+        // have nothing left to pass.
+        let starter = r.receiver;
+        if (next.players[starter]!.lost) starter = nextLive(next, starter);
+        if (next.players[starter]!.hand.length === 0) {
+          return endGame(next, starter, 'emptyHand');
+        }
+        return { ...next, phase: 'passing', currentSeat: starter, lastReveal: null };
       }
+
+      default:
+        throw new Error('Unknown action');
     }
   },
 
-  viewFor(
-    state: CockroachPokerPrivateState,
-    seat: SeatIndex | null,
-  ): CockroachPokerPublicState {
-    const players: PublicPlayer[] = state.seats.map((s) => {
-      const p = state.players[s.index]!;
-      return {
-        index: s.index,
-        name: s.name,
-        row: { ...p.row },
-        handSize: p.hand.length,
-        lost: p.lost,
-        dealAcked: p.dealAcked,
-      };
-    });
-
-    const yourHand = seat !== null ? state.players[seat]!.hand.slice() : [];
-    const yourPeekedCard =
-      seat !== null && state.pass !== null && state.pass.seenBy.includes(seat)
-        ? state.pass.card
-        : null;
-
-    let yourAckPending = false;
-    if (seat !== null) {
-      const p = state.players[seat]!;
-      if (state.phase === 'dealPending')
-        yourAckPending = !p.dealAcked && !p.lost;
-      else if (state.phase === 'revealing')
-        yourAckPending = !state.revealAcked[seat] && !p.lost;
-    }
-
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({ index: s.index, name: s.name })),
-      players,
-      currentSeat: state.currentSeat,
-      passHolder: state.pass?.holder ?? null,
-      passOriginalSender: state.pass?.originalSender ?? null,
-      passClaim: state.pass?.claim ?? null,
-      passChain: state.pass?.chain.slice() ?? [],
-      passSeenBy: state.pass?.seenBy.slice() ?? [],
-      lastReveal: state.lastReveal,
-      matchWinners: state.matchWinners.slice(),
-      loserSeat: state.loserSeat,
-      yourSeat: seat,
-      yourHand,
-      yourPeekedCard,
-      yourAckPending,
-    };
-  },
+  viewFor,
 
   isFinished(state: CockroachPokerPrivateState): boolean {
     return state.phase === 'gameOver';

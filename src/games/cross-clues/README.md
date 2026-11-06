@@ -14,23 +14,33 @@ Final score is correct guesses out of 25. Rulebook tiers: **16+ great**, **21+ l
 
 ## File layout
 
-- `state.ts` — phase enum, private state, public view shape (the single redaction chokepoint is `yourCoord`).
+- `state.ts` — phase enum, private state, public view shape.
 - `actions.ts` — discriminated action union (`ackSetup`, `submitClue`, `submitGuess`, `ackReveal`).
-- `setup.ts` — seeded grid-word deal, coord-deck shuffle, and starting-seat pick (independent RNG streams).
-- `module.ts` — `GameModule` impl: phase machine, validation, scoring, redaction.
-- `ai.ts` — heuristic AI for filling solo/hot-seat seats. Not designed to play well.
-- `word-packs/` — three bundled packs: `standard`, `spicy`, `kids`.
-- `ui/CrossCluesSetup.tsx`, `ui/GameView.tsx` — host setup and per-seat play.
-- `module.test.ts` — 31 tests covering deal determinism, phase transitions, redaction, scoring, rotation, AI smoke, and rating tiers.
+- `setup.ts` + `seed.ts` — seeded grid-word deal (public stream), coord-deck shuffle (private stream), starting-seat pick.
+- `rules.ts` — clue validation (`clueProblem` / `normalizeClue`), coordinate checks, labels.
+- `view.ts` — `crossCluesViewFor`, the redaction chokepoint.
+- `module.ts` — `GameModule` impl: phase machine, validation, scoring.
+- `ai.ts` — heuristic AI over the shared association lexicon (`@/games/codenames/lexicon`).
+- `ui/CrossCluesSetup.tsx`, `ui/GameView.tsx` — notebook-themed setup and per-seat play.
+- `module.test.ts`, `audit.test.ts`, `ui/GameView.test.tsx` — rules, redaction, AI self-play, hot-seat covers.
 
 ## Hidden information model
 
-Only the active clue-giver's coordinate is hidden. `viewFor` exposes `yourCoord` **only when** `phase === 'clueGiving'` AND `seat === currentClueGiver`. Spectators and every other seat get `null`. There is no `winnerTeam` (cooperative); `scoreRating` summarises the result instead.
+The held coordinate and the deck order are the only hidden information. `viewFor` exposes `yourCoord` **only** to the current clue-giver, while they hold the card (`clueGiving` and the `guessing` that follows). Spectators and every other seat get `null`; once the round resolves the coordinate is public via `lastRound` and the grid. Tests assert every non-holder view is byte-identical whichever card is held. The deck comes from a separate private derived seed so it can't be recomputed from the public word deal (hardening; see `seed.ts`). There is no `winnerTeam` (cooperative); `scoreRating` summarises the result instead.
+
+## Hot-seat flow
+
+With more than one human on the device (via `useSeatSwitching()`): a "pass the notebook" note covers the grid until the clue-giver claims the device for this round; their card is dealt face-down and flipped up. After the clue is sent the card is covered again before the table sees the board, and the device guesses as the designated guesser (tap a square, then confirm). Setup / reveal acknowledgements are a single press for every human at the device.
+
+## AI
+
+`aiChooseAction` works only from the seat's own view, so an AI guesser never sees the held card (tested). The clue-giver tries every word in the shared lexicon and keeps the one that singles out its square (row word + column word) above every other open square; if none does, it writes a legal blend of the two words (OCEAN × PIANO → "OCEAIANO"). The guesser scores open squares by how strongly the clue relates to both words (themes, rhymes, blends).
 
 ## Rule clarifications
 
-- **One-word clue**: trimmed, no internal whitespace, ≤ 32 chars. Hyphens and apostrophes are allowed (`fire-river`, `don't`). The engine doesn't enforce semantic single-word — that's a social-trust rule, same as the physical game.
+- **One-word clue**: trimmed, no internal whitespace, ≤ 32 chars. Hyphens and apostrophes are allowed (`zz-top`, `don't`), but neither the clue nor any hyphen/apostrophe-separated part may be (a form of) one of the 10 grid words — otherwise `OCEAN-PIANO` would just name the answer. Semantic single-word is a social-trust rule, same as the physical game.
 - **Resolved cells can't be guessed**: the engine throws and the UI disables them.
-- **Wrong guess paints the *true* cell red**, not the guessed cell. The guessed cell remains unresolved.
+- **Wrong guess**: the card is discarded — its *true* cell is crossed out (red), not the guessed cell. The guessed cell remains open.
+- **Designated guesser**: the physical game has the table agree on a guess; here the seat after the clue-giver enters it while the others discuss. The clue-giver can't guess.
 - **2-player game**: roles alternate naturally via `(clueGiver + 1) % 2`. Allowed but flagged "best with 3–6" in setup.
 - **Reveal ack**: every seat must press Continue before the next round starts, matching the cooperative discussion tone.

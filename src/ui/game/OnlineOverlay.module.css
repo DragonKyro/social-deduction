@@ -1,0 +1,105 @@
+.banners {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: grid;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.banner {
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(60, 22, 8, 0.92);
+  border: 1px solid var(--ember);
+  color: #ffe2d1;
+  font-size: 13px;
+  box-shadow: var(--shadow-md);
+  animation: global(sd-drop-in) var(--dur-med) var(--ease-out) both;
+  white-space: nowrap;
+}
+
+.calm {
+  background: rgba(13, 17, 27, 0.92);
+  border-color: var(--line-strong);
+  color: var(--text-dim);
+}
+
+.drawer {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.fab {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #1b1408;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  border: 1px solid var(--gold-deep);
+  box-shadow: 0 3px 0 var(--gold-deep), var(--shadow-lg);
+}
+
+.fab:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fbe39e, var(--gold-bright));
+}
+
+.badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  animation: global(sd-pop) var(--dur-med) var(--ease-spring) both;
+}
+
+.panel {
+  width: min(360px, calc(100vw - 36px));
+  background: rgba(13, 17, 27, 0.97);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: var(--shadow-lg);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+  backdrop-filter: blur(6px);
+}
+
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.panelHead b {
+  font-family: var(--font-regal);
+  letter-spacing: 0.18em;
+  color: var(--gold-bright);
+}
+
+.panelHead button {
+  padding: 2px 8px;
+}

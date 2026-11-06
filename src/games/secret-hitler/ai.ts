@@ -1,420 +1,406 @@
 import { makeRng, rngInt } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { ShAction } from './actions';
-import type { ShPrivateState, ShRoleId, ShSeatState } from './state';
+import { eligibleChancellors, SHARED_ACK_PHASES } from './rules';
+import type { ShPolicy, ShPrivateState, ShPublicState } from './state';
+import { HITLER_CHANCELLOR_THRESHOLD, LIBERAL_TRACK_LENGTH } from './tracks';
+import { viewFor } from './view';
 
 // ============================================================================
 // Secret Hitler AI
 //
-// Plays both teams. We have full host-side knowledge (own role, own party,
-// known fascists for fascist seats), but we must not exploit knowledge of
-// OTHER seats' hidden roles.
+// FAIRNESS: the AI decides from `viewFor(state, seat)` — the exact redacted
+// view a human in that seat would get — and never reads roles, hands, the
+// deck or other seats' investigation results from the private state. The
+// only other private input is `state.seed`, used purely as an entropy source
+// for the AI's own coin flips (it is never used to reconstruct the deal).
+// The redaction test suite checks this by permuting hidden information and
+// asserting the AI's choice doesn't change.
 //
-// Strategy outline:
-//   - Liberals: enact liberal policies, vote down chancellors with a fascist
-//     trail (board pressure + claim history). Investigate / execute seats
-//     flagged by election + policy patterns.
-//   - Fascists / Hitler: enact fascist policies when not caught (discard a
-//     liberal whenever the cover story holds). Vote up government when
-//     chancellor is on-team or board is close to a fascist win. Hitler
-//     stays quiet — votes ja on its own fascist team and looks liberal.
+// Strategy outline (heuristic, with randomised mixing so it isn't trivially
+// readable):
+//   - Liberals: enact liberal policies, distrust governments that enacted
+//     fascist policies, fear untested chancellors once Hitler can win by
+//     election, investigate / execute the most suspicious seat.
+//   - Fascists: know their team (and Hitler); pass fascist policies when
+//     they can get away with it, back team governments, push Hitler into the
+//     chancellorship once 3 fascist policies are down, never shoot a
+//     teammate.
+//   - Hitler: plays like a cautious liberal to build trust; at small tables
+//     it knows its fascist and leans on them.
 //
 // Pure file: no DOM / no net / no store imports.
 // ============================================================================
 
-function rngForSeat(state: ShPrivateState, seat: SeatIndex, salt: number): number {
-  const rng = makeRng(
-    (state.seed ^ (seat * 0x5a17) ^ (state.log.length * 17) ^ (salt * 101)) >>> 0,
-  );
-  return rngInt(rng, 10000) / 10000;
+type Rand = (salt: number) => number;
+
+function makeRand(state: ShPrivateState, seat: SeatIndex): Rand {
+  const base = (state.seed ^ Math.imul(seat + 1, 0x5a17_9e37) ^ Math.imul(state.log.length + 1, 0x2c1b_3c6d)) >>> 0;
+  return (salt: number) => {
+    const rng = makeRng((base ^ Math.imul(salt + 1, 0x27d4_eb2f)) >>> 0);
+    return rngInt(rng, 1_000_000) / 1_000_000;
+  };
 }
 
-function aliveSeats(state: ShPrivateState): SeatIndex[] {
-  return state.seats.filter((s) => s.alive).map((s) => s.index);
+export function aiChooseAction(state: ShPrivateState, seat: SeatIndex): ShAction | null {
+  if (!state.seats[seat]) return null;
+  return decide(viewFor(state, seat), makeRand(state, seat));
 }
 
-function knownFascistsTo(state: ShPrivateState, seat: SeatIndex): Set<SeatIndex> {
-  // Re-derive from the role table — same rule as buildPartyKnowledge:
-  // small-table (5-6p), fascists see all fascists + Hitler. 7+p, Hitler sees
-  // nobody; regular fascists see each other + Hitler.
-  const me = state.seats[seat];
-  if (!me) return new Set();
-  const out = new Set<SeatIndex>();
-  const playerCount = state.seats.length;
-  const smallTable = playerCount <= 6;
-  if (me.role === 'liberal') return out;
-  if (me.role === 'fascist') {
-    for (const s of state.seats) {
-      if (s.index !== seat && (s.role === 'fascist' || s.role === 'hitler')) {
-        out.add(s.index);
-      }
+// ---------------------------------------------------------------------------
+// Knowledge derived from the view
+// ---------------------------------------------------------------------------
+
+interface Mind {
+  v: ShPublicState;
+  me: SeatIndex;
+  fascistTeam: boolean;
+  isHitler: boolean;
+  /** Teammates this seat KNOWS (fascists see Hitler; small-table Hitler sees fascists). */
+  allies: Set<SeatIndex>;
+  hitler: SeatIndex | null;
+  /** Higher = more likely fascist, from this seat's point of view. */
+  sus: Map<SeatIndex, number>;
+  /** Chancellors elected after 3+ fascist policies without the game ending. */
+  notHitler: Set<SeatIndex>;
+  rand: Rand;
+}
+
+function buildMind(v: ShPublicState, rand: Rand): Mind | null {
+  const me = v.yourSeat;
+  if (me === null || v.yourRole === null) return null;
+  const fascistTeam = v.yourParty === 'fascist';
+  const allies = new Set<SeatIndex>();
+  let hitler: SeatIndex | null = v.yourRole === 'hitler' ? me : null;
+  for (const k of v.yourPartyKnowledge) {
+    allies.add(k.seat);
+    if (k.role === 'hitler') hitler = k.seat;
+  }
+
+  const sus = new Map<SeatIndex, number>();
+  for (const s of v.seats) if (s.index !== me) sus.set(s.index, 0);
+  const bump = (s: SeatIndex, d: number) => {
+    if (sus.has(s)) sus.set(s, (sus.get(s) ?? 0) + d);
+  };
+
+  const notHitler = new Set<SeatIndex>();
+  // Policies already on the board before the first logged one (the
+  // rebalanced-6p variant starts with one).
+  let fascistSoFar =
+    v.board.fascistEnacted -
+    v.log.filter(
+      (e) => (e.kind === 'policyEnacted' || e.kind === 'topDeckEnacted') && e.policy === 'fascist',
+    ).length;
+  let lastGov: { votes: Array<'ja' | 'nein' | null> } | null = null;
+  for (const e of v.log) {
+    switch (e.kind) {
+      case 'electionResult':
+        if (e.approved) {
+          lastGov = e;
+          if (fascistSoFar >= HITLER_CHANCELLOR_THRESHOLD) notHitler.add(e.chancellor);
+        }
+        break;
+      case 'policyEnacted':
+        if (e.policy === 'fascist') {
+          bump(e.president, 1);
+          bump(e.chancellor, 1.4);
+          if (lastGov) lastGov.votes.forEach((vote, i) => vote === 'ja' && bump(i, 0.15));
+        } else {
+          bump(e.president, -0.5);
+          bump(e.chancellor, -0.7);
+        }
+        lastGov = null;
+        fascistSoFar += e.policy === 'fascist' ? 1 : 0;
+        break;
+      case 'topDeckEnacted':
+        fascistSoFar += e.policy === 'fascist' ? 1 : 0;
+        break;
+      case 'vetoUsed':
+        lastGov = null;
+        break;
+      default:
+        break;
     }
-    return out;
   }
-  // Hitler
-  if (smallTable) {
-    for (const s of state.seats) {
-      if (s.role === 'fascist') out.add(s.index);
-    }
-  }
-  return out;
+
+  for (const inv of v.yourInvestigations) bump(inv.target, inv.party === 'fascist' ? 8 : -5);
+  // Fascists rate their own team as "fascist" so liberal-looking logic still
+  // works when reused; callers check `allies` explicitly where it matters.
+  for (const a of allies) bump(a, 10);
+
+  return {
+    v,
+    me,
+    fascistTeam,
+    isHitler: v.yourRole === 'hitler',
+    allies,
+    hitler,
+    sus,
+    notHitler,
+    rand,
+  };
 }
 
-// Compute a "suspicion score" per seat from the public history. Higher = more
-// likely fascist. Uses public log + investigation results visible to seat.
-function suspicion(
-  state: ShPrivateState,
-  viewer: SeatIndex,
-): Map<SeatIndex, number> {
-  const out = new Map<SeatIndex, number>();
-  for (const s of aliveSeats(state)) out.set(s, 0);
-
-  // Anyone present at a fascist enact gets +1 (president + chancellor).
-  for (const entry of state.log) {
-    if (entry.kind === 'policyEnacted' && entry.policy === 'fascist') {
-      out.set(entry.president, (out.get(entry.president) ?? 0) + 1);
-      out.set(entry.chancellor, (out.get(entry.chancellor) ?? 0) + 1);
-    }
-  }
-  // Investigation results known to viewer.
-  for (const inv of state.investigations) {
-    if (inv.by !== viewer) continue;
-    out.set(inv.target, (out.get(inv.target) ?? 0) + (inv.party === 'fascist' ? 3 : -3));
-  }
-  // Known fascists are flat-out fascist to us (for fascist seats).
-  for (const f of knownFascistsTo(state, viewer)) {
-    out.set(f, (out.get(f) ?? 0) + 10);
-  }
-  // The viewer themselves is not a target of suspicion to themselves.
-  out.delete(viewer);
-  return out;
+function susOf(m: Mind, s: SeatIndex): number {
+  return m.sus.get(s) ?? 0;
 }
 
-function mostSuspicious(state: ShPrivateState, viewer: SeatIndex): SeatIndex | null {
-  const sus = suspicion(state, viewer);
-  let best: SeatIndex | null = null;
-  let bestVal = -Infinity;
-  for (const [s, v] of sus) {
-    if (state.seats[s]!.alive && v > bestVal) {
-      bestVal = v;
-      best = s;
-    }
-  }
-  return best;
-}
-
-function leastSuspicious(state: ShPrivateState, viewer: SeatIndex): SeatIndex | null {
-  const sus = suspicion(state, viewer);
+/** Pick the candidate with the lowest (or highest) score, with a little jitter. */
+function pickBy(
+  m: Mind,
+  candidates: SeatIndex[],
+  score: (s: SeatIndex) => number,
+  salt: number,
+  lowest = true,
+): SeatIndex | null {
+  if (candidates.length === 0) return null;
   let best: SeatIndex | null = null;
   let bestVal = Infinity;
-  for (const [s, v] of sus) {
-    if (state.seats[s]!.alive && v < bestVal) {
-      bestVal = v;
-      best = s;
+  for (const c of candidates) {
+    const jitter = m.rand(salt * 31 + c) * 0.6;
+    const val = (lowest ? score(c) : -score(c)) + jitter;
+    if (val < bestVal) {
+      bestVal = val;
+      best = c;
     }
   }
   return best;
 }
 
-function isFascistTeam(role: ShRoleId): boolean {
-  return role === 'fascist' || role === 'hitler';
+function alive(m: Mind): SeatIndex[] {
+  return m.v.seats.filter((s) => s.alive).map((s) => s.index);
 }
 
-// Should we vote Ja on this government?
-function voteJa(state: ShPrivateState, seat: SeatIndex): boolean {
-  const me = state.seats[seat]!;
-  const chancellor = state.chancellorCandidateSeat;
-  if (chancellor === null) return false;
-  const r = rngForSeat(state, seat, 3);
-
-  if (isFascistTeam(me.role)) {
-    // Fascist: vote up if chancellor is fascist OR if it's me. Always ja on a
-    // known-team chancellor. Otherwise mostly ja to advance fascist agenda
-    // unless board pressure is high.
-    const known = knownFascistsTo(state, seat);
-    if (chancellor === seat) return true;
-    if (known.has(chancellor)) return true;
-    // Hitler-elected check: at 3+ fascist policies, electing Hitler is an
-    // instant fascist win. If chancellor IS hitler (from a fascist's view),
-    // ja.
-    if (state.board.fascistEnacted >= 3 && state.seats[chancellor]!.role === 'hitler') {
-      return true;
-    }
-    // Otherwise, 60% ja to keep the game moving.
-    return r < 0.6;
-  }
-
-  // Liberal: vote against known-bad governments. Vote down if either the
-  // president or chancellor has high suspicion. Otherwise ja.
-  const sus = suspicion(state, seat);
-  const presSus = sus.get(state.presidentSeat) ?? 0;
-  const chanSus = sus.get(chancellor) ?? 0;
-  // At 3+ fascist policies, never approve a fresh, untested chancellor —
-  // they could be Hitler.
-  if (state.board.fascistEnacted >= 3 && chanSus >= 0 && r < 0.45) {
-    return false;
-  }
-  if (presSus >= 2 || chanSus >= 2) return false;
-  return r < 0.85;
+function count(hand: readonly ShPolicy[], p: ShPolicy): number {
+  return hand.filter((x) => x === p).length;
 }
 
-// Discard a policy from a 3-card hand (president).
-function presidentDiscard(
-  state: ShPrivateState,
-  seat: SeatIndex,
-): 0 | 1 | 2 {
-  const me = state.seats[seat]!;
-  const hand = state.legislativeHand;
-  // Index where each policy lives.
-  const liberalIdx: number[] = [];
-  const fascistIdx: number[] = [];
-  for (let i = 0; i < hand.length; i++) {
-    if (hand[i] === 'liberal') liberalIdx.push(i);
-    else fascistIdx.push(i);
+// ---------------------------------------------------------------------------
+// Decisions
+// ---------------------------------------------------------------------------
+
+export function decide(v: ShPublicState, rand: Rand): ShAction | null {
+  const m = buildMind(v, rand);
+  if (!m) return null;
+  const me = m.me;
+  const mySeat = v.seats[me]!;
+
+  // Shared reveal screens: leave them for a human to dismiss so people can
+  // read the result. Only an all-AI table dismisses them itself.
+  if (SHARED_ACK_PHASES.has(v.phase)) {
+    if (!v.seats.every((s) => s.isAI)) return null;
+    const firstAlive = v.seats.find((s) => s.alive)?.index ?? 0;
+    if (me !== firstAlive) return null;
+    if (v.phase === 'electionReveal') return { type: 'ackElectionReveal', bySeat: me };
+    if (v.phase === 'policyReveal') return { type: 'ackPolicyReveal', bySeat: me };
+    return { type: 'ackTopDeckReveal', bySeat: me };
   }
-  if (isFascistTeam(me.role)) {
-    // Fascist: discard a liberal if possible (always).
-    if (liberalIdx.length > 0) return liberalIdx[0] as 0 | 1 | 2;
-    return fascistIdx[0] as 0 | 1 | 2;
+
+  if (v.phase === 'setup') {
+    return mySeat.hasAckedSetup ? null : { type: 'ackRoleReveal', bySeat: me };
   }
-  // Liberal: discard a fascist if possible.
-  if (fascistIdx.length > 0) return fascistIdx[0] as 0 | 1 | 2;
-  return liberalIdx[0] as 0 | 1 | 2;
-}
+  if (!mySeat.alive) return null;
 
-// Enact from a 2-card hand (chancellor).
-function chancellorEnact(state: ShPrivateState, seat: SeatIndex): 0 | 1 {
-  const me = state.seats[seat]!;
-  const hand = state.legislativeHand;
-  const liberalIdx = hand.findIndex((p) => p === 'liberal');
-  const fascistIdx = hand.findIndex((p) => p === 'fascist');
-  if (isFascistTeam(me.role)) {
-    if (fascistIdx >= 0) return fascistIdx as 0 | 1;
-    return 0;
-  }
-  if (liberalIdx >= 0) return liberalIdx as 0 | 1;
-  return 0;
-}
-
-// Used when nominating a chancellor: term-limit-aware pick.
-function termLimitedSet(state: ShPrivateState): Set<SeatIndex> {
-  const out = new Set<SeatIndex>();
-  if (state.lastElectedChancellor !== null) out.add(state.lastElectedChancellor);
-  const alive = aliveSeats(state).length;
-  if (alive > 5 && state.lastElectedPresident !== null) {
-    out.add(state.lastElectedPresident);
-  }
-  return out;
-}
-
-function pickChancellor(state: ShPrivateState, seat: SeatIndex): SeatIndex | null {
-  const me = state.seats[seat]!;
-  const limited = termLimitedSet(state);
-  const candidates = aliveSeats(state).filter(
-    (i) => i !== seat && !limited.has(i),
-  );
-  if (candidates.length === 0) return null;
-
-  if (isFascistTeam(me.role)) {
-    // Fascist nominee: prefer a known fascist team member. If at >= 3 fascist
-    // policies, prefer Hitler if available (instant win condition).
-    const known = knownFascistsTo(state, seat);
-    if (state.board.fascistEnacted >= 3) {
-      const hitler = candidates.find(
-        (i) => state.seats[i]!.role === 'hitler',
-      );
-      if (hitler !== undefined) return hitler;
-    }
-    const knownAlive = candidates.find((i) => known.has(i));
-    if (knownAlive !== undefined) return knownAlive;
-    // Fall back to least-suspicious so we look honest.
-    const lowSus = leastSuspicious(state, seat);
-    if (lowSus !== null && candidates.includes(lowSus)) return lowSus;
-    return candidates[0]!;
-  }
-  // Liberal: pick the lowest-suspicion candidate.
-  const sus = suspicion(state, seat);
-  candidates.sort((a, b) => (sus.get(a) ?? 0) - (sus.get(b) ?? 0));
-  return candidates[0]!;
-}
-
-// =============================================================================
-// Top-level
-// =============================================================================
-
-export function aiChooseAction(
-  state: ShPrivateState,
-  seat: SeatIndex,
-): ShAction | null {
-  const me = state.seats[seat];
-  if (!me || !me.alive) return null;
-
-  switch (state.phase) {
-    case 'setup': {
-      if (state.setupAcked[seat]) return null;
-      return { type: 'ackRoleReveal', bySeat: seat };
-    }
-
+  const isPresident = me === v.presidentSeat;
+  switch (v.phase) {
     case 'nomination': {
-      if (seat !== state.presidentSeat) return null;
-      const chancellor = pickChancellor(state, seat);
-      if (chancellor === null) return null;
-      return { type: 'nominateChancellor', bySeat: seat, chancellor };
+      if (!isPresident) return null;
+      const chancellor = chooseChancellor(m);
+      return chancellor === null ? null : { type: 'nominateChancellor', bySeat: me, chancellor };
     }
-
     case 'electionVote': {
-      if (!state.seats[seat]!.alive) return null;
-      if (state.seats[seat]!.voteCast !== null) return null;
-      return {
-        type: 'castVote',
-        bySeat: seat,
-        vote: voteJa(state, seat) ? 'ja' : 'nein',
-      };
+      if (mySeat.hasVoted) return null;
+      return { type: 'castVote', bySeat: me, vote: voteJa(m) ? 'ja' : 'nein' };
     }
-
-    case 'electionReveal': {
-      // Any seat may ack — game advances when an alive seat acks. For
-      // simplicity ack from the president if they're alive, else any seat.
-      const aliveFirst = state.seats.find((s) => s.alive)?.index ?? null;
-      if (aliveFirst === null) return null;
-      if (seat !== aliveFirst) return null;
-      return { type: 'ackElectionReveal', bySeat: seat };
-    }
-
     case 'legislativePresident': {
-      if (seat !== state.presidentSeat) return null;
-      if (state.legislativeHand.length !== 3) return null;
-      return {
-        type: 'presidentDiscard',
-        bySeat: seat,
-        discardIndex: presidentDiscard(state, seat),
-      };
+      const hand = v.yourLegislativeHand;
+      if (!isPresident || !hand || hand.length !== 3) return null;
+      return { type: 'presidentDiscard', bySeat: me, discardIndex: chooseDiscard(m, hand) };
     }
-
     case 'legislativeChancellor': {
-      if (seat !== state.chancellorCandidateSeat) return null;
-      if (state.legislativeHand.length !== 2) return null;
-      // Should we request a veto? Only if vetoUnlocked AND we hold two
-      // fascists AND we're liberal (we'd rather not enact). Or fascist with
-      // two liberals when we don't want a liberal track lead.
-      if (state.board.vetoUnlocked) {
-        const lib = state.legislativeHand.filter((p) => p === 'liberal').length;
-        const myMe = state.seats[seat]!;
-        const r = rngForSeat(state, seat, 5);
-        if (isFascistTeam(myMe.role) && lib >= 2 && r < 0.6) {
-          return { type: 'chancellorRequestVeto', bySeat: seat };
-        }
-        if (!isFascistTeam(myMe.role) && lib === 0 && r < 0.6) {
-          return { type: 'chancellorRequestVeto', bySeat: seat };
-        }
-      }
-      return {
-        type: 'chancellorEnact',
-        bySeat: seat,
-        enactIndex: chancellorEnact(state, seat),
-      };
+      const hand = v.yourLegislativeHand;
+      if (me !== v.chancellorCandidateSeat || !hand || hand.length !== 2) return null;
+      if (wantsVeto(m, hand)) return { type: 'chancellorRequestVeto', bySeat: me };
+      return { type: 'chancellorEnact', bySeat: me, enactIndex: chooseEnact(m, hand) };
     }
-
     case 'vetoRequested': {
-      if (seat !== state.presidentSeat) return null;
-      const me2 = state.seats[seat]!;
-      // Accept veto if we're on the same team as the chancellor's apparent
-      // motive (proxy via our own role + remaining cards).
-      const lib = state.legislativeHand.filter((p) => p === 'liberal').length;
-      const r = rngForSeat(state, seat, 6);
-      if (isFascistTeam(me2.role)) {
-        return { type: 'presidentRespondVeto', bySeat: seat, accept: lib === 2 && r < 0.7 };
-      }
-      // Liberal: accept veto when there's no liberal to enact.
-      return { type: 'presidentRespondVeto', bySeat: seat, accept: lib === 0 && r < 0.7 };
+      if (!isPresident) return null;
+      return { type: 'presidentRespondVeto', bySeat: me, accept: acceptVeto(m) };
     }
-
-    case 'policyReveal': {
-      // Any alive seat may ack. Have the lowest-index alive seat advance.
-      const aliveFirst = state.seats.find((s) => s.alive)?.index ?? null;
-      if (aliveFirst === null) return null;
-      if (seat !== aliveFirst) return null;
-      return { type: 'ackPolicyReveal', bySeat: seat };
-    }
-
-    case 'topDeckReveal': {
-      const aliveFirst = state.seats.find((s) => s.alive)?.index ?? null;
-      if (aliveFirst === null) return null;
-      if (seat !== aliveFirst) return null;
-      return { type: 'ackTopDeckReveal', bySeat: seat };
-    }
-
     case 'execInvestigate': {
-      if (seat !== state.presidentSeat) return null;
-      // Pick an alive seat who hasn't been investigated.
-      const candidates = state.seats.filter(
-        (s) => s.alive && s.index !== seat && !s.hasBeenInvestigated,
-      );
-      if (candidates.length === 0) return null;
-      const me2 = state.seats[seat]!;
-      let target: ShSeatState | undefined;
-      if (isFascistTeam(me2.role)) {
-        // Investigate a liberal so we can later claim they're fascist with a
-        // "trust me" lie. Pick least suspicious target.
-        const lowSus = leastSuspicious(state, seat);
-        target = lowSus !== null ? candidates.find((c) => c.index === lowSus) : undefined;
-      } else {
-        const highSus = mostSuspicious(state, seat);
-        target = highSus !== null ? candidates.find((c) => c.index === highSus) : undefined;
-      }
-      if (!target) target = candidates[0];
-      return { type: 'execInvestigate', bySeat: seat, target: target!.index };
+      if (!isPresident) return null;
+      const candidates = v.seats
+        .filter((s) => s.alive && s.index !== me && !s.investigated)
+        .map((s) => s.index);
+      const target = m.fascistTeam
+        ? // Investigate someone off-team; the result is cover for a lie.
+          pickBy(m, nonAllies(m, candidates), (s) => susOf(m, s), 11)
+        : pickBy(m, candidates, (s) => susOf(m, s), 11, false);
+      const pick = target ?? candidates[0];
+      return pick === undefined ? null : { type: 'execInvestigate', bySeat: me, target: pick };
     }
-
-    case 'execInvestigateReveal': {
-      if (seat !== state.presidentSeat) return null;
-      return { type: 'ackInvestigateReveal', bySeat: seat };
-    }
-
+    case 'execInvestigateReveal':
+      return isPresident ? { type: 'ackInvestigateReveal', bySeat: me } : null;
     case 'execSpecialElection': {
-      if (seat !== state.presidentSeat) return null;
-      const me2 = state.seats[seat]!;
-      const candidates = state.seats.filter((s) => s.alive && s.index !== seat);
-      if (candidates.length === 0) return null;
-      let pick: number;
-      if (isFascistTeam(me2.role)) {
-        const known = knownFascistsTo(state, seat);
-        const knownPick = candidates.find((c) => known.has(c.index));
-        pick = knownPick ? knownPick.index : candidates[0]!.index;
-      } else {
-        const low = leastSuspicious(state, seat);
-        pick = low !== null && candidates.some((c) => c.index === low) ? low : candidates[0]!.index;
+      if (!isPresident) return null;
+      const candidates = alive(m).filter((s) => s !== me);
+      let pick: SeatIndex | null = null;
+      if (m.fascistTeam) {
+        const team = candidates.filter((s) => m.allies.has(s));
+        pick = team.length > 0 && m.rand(12) < 0.8 ? pickBy(m, team, () => 0, 12) : null;
       }
-      return { type: 'execSpecialElection', bySeat: seat, nextPresident: pick };
+      // Otherwise hand it to whoever looks most trustworthy (to a fascist:
+      // by public record, so the choice doesn't out the team).
+      pick ??= pickBy(m, candidates, (s) => (m.fascistTeam ? publicSus(m, s) : susOf(m, s)), 13);
+      return pick === null ? null : { type: 'execSpecialElection', bySeat: me, nextPresident: pick };
     }
-
-    case 'execPeek': {
-      if (seat !== state.presidentSeat) return null;
-      return { type: 'ackPeek', bySeat: seat };
-    }
-
+    case 'execPeek':
+      return isPresident ? { type: 'ackPeek', bySeat: me } : null;
     case 'execExecute': {
-      if (seat !== state.presidentSeat) return null;
-      const me2 = state.seats[seat]!;
-      const candidates = state.seats.filter((s) => s.alive && s.index !== seat);
-      if (candidates.length === 0) return null;
-      let pick: number;
-      if (isFascistTeam(me2.role)) {
-        // Avoid killing teammates and especially avoid killing Hitler.
-        const known = knownFascistsTo(state, seat);
-        const safeTargets = candidates.filter(
-          (c) => !known.has(c.index) && state.seats[c.index]!.role !== 'hitler',
-        );
-        pick = safeTargets.length > 0 ? safeTargets[0]!.index : candidates[0]!.index;
+      if (!isPresident) return null;
+      const candidates = alive(m).filter((s) => s !== me);
+      let pick: SeatIndex | null;
+      if (m.fascistTeam && m.allies.size > 0) {
+        // Never shoot a known teammate. Remove whoever the table trusts most.
+        const targets = nonAllies(m, candidates);
+        pick = pickBy(m, targets.length ? targets : candidates, (s) => susOf(m, s), 14);
       } else {
-        const high = mostSuspicious(state, seat);
-        pick = high !== null && candidates.some((c) => c.index === high) ? high : candidates[0]!.index;
+        // Liberals (and blind Hitler, for cover) shoot the most suspicious.
+        pick = pickBy(m, candidates, (s) => susOf(m, s), 14, false);
       }
-      return { type: 'execExecute', bySeat: seat, target: pick };
+      return pick === null ? null : { type: 'execExecute', bySeat: me, target: pick };
     }
-
-    case 'gameOver':
+    default:
       return null;
   }
-  return null;
+}
+
+function nonAllies(m: Mind, seats: SeatIndex[]): SeatIndex[] {
+  return seats.filter((s) => !m.allies.has(s));
+}
+
+/** Liberals (and Hitler, for cover) judge governments the same way. */
+function liberalRisk(m: Mind, president: SeatIndex, chancellor: SeatIndex): number {
+  let risk = Math.max(0, susOf(m, president)) * 0.6 + susOf(m, chancellor);
+  // Once Hitler can win by election, an untested chancellor is a gamble.
+  if (
+    m.v.board.fascistEnacted >= HITLER_CHANCELLOR_THRESHOLD &&
+    !m.notHitler.has(chancellor) &&
+    chancellor !== m.me
+  ) {
+    risk += m.v.board.fascistEnacted >= 4 ? 2.2 : 1.4;
+  }
+  return risk;
+}
+
+function chooseChancellor(m: Mind): SeatIndex | null {
+  const eligible = eligibleChancellors(m.v);
+  if (eligible.length === 0) return null;
+  const f = m.v.board.fascistEnacted;
+
+  if (m.fascistTeam && m.allies.size > 0) {
+    // Hitler in the chancellorship wins outright at 3+ fascist policies.
+    if (
+      !m.isHitler &&
+      f >= HITLER_CHANCELLOR_THRESHOLD &&
+      m.hitler !== null &&
+      eligible.includes(m.hitler) &&
+      m.rand(1) < 0.85
+    ) {
+      return m.hitler;
+    }
+    const team = eligible.filter((s) => m.allies.has(s));
+    const teamBias = m.isHitler ? 0.3 : 0.5;
+    if (team.length > 0 && m.rand(2) < teamBias) return pickBy(m, team, () => 0, 3);
+    // Otherwise look honest: pick someone the table trusts (by public record).
+    return pickBy(m, nonAllies(m, eligible).length ? nonAllies(m, eligible) : eligible, (s) => publicSus(m, s), 4);
+  }
+  // Liberal, or blind Hitler playing liberal.
+  return pickBy(m, eligible, (s) => liberalRisk(m, m.me, s), 5);
+}
+
+/** Suspicion from public record only (no team knowledge), for bluffing. */
+function publicSus(m: Mind, s: SeatIndex): number {
+  return susOf(m, s) - (m.allies.has(s) ? 10 : 0);
+}
+
+function voteJa(m: Mind): boolean {
+  const v = m.v;
+  const chancellor = v.chancellorCandidateSeat;
+  if (chancellor === null) return false;
+  const president = v.presidentSeat;
+  const chaosNext = v.board.electionTracker >= 2;
+  const r = m.rand(20);
+
+  if (president === m.me || chancellor === m.me) return r < 0.97;
+
+  if (m.fascistTeam && m.allies.size > 0) {
+    if (
+      chancellor === m.hitler &&
+      v.board.fascistEnacted >= HITLER_CHANCELLOR_THRESHOLD
+    ) {
+      return true;
+    }
+    if (m.allies.has(chancellor) || m.allies.has(president)) return r < 0.9;
+    // Mixed: don't be the obvious contrarian.
+    return r < (chaosNext ? 0.6 : 0.5);
+  }
+
+  const risk = liberalRisk(m, president, chancellor);
+  let pJa = risk <= 0.3 ? 0.88 : risk < 1.5 ? 0.6 : risk < 3 ? 0.3 : 0.08;
+  if (chaosNext) pJa += 0.2;
+  if (m.isHitler) pJa += 0.05;
+  return r < pJa;
+}
+
+function chooseDiscard(m: Mind, hand: ShPolicy[]): 0 | 1 | 2 {
+  const lib = hand.map((p, i) => (p === 'liberal' ? i : -1)).filter((i) => i >= 0);
+  const fas = hand.map((p, i) => (p === 'fascist' ? i : -1)).filter((i) => i >= 0);
+  const first = (xs: number[]) => xs[0] as 0 | 1 | 2;
+  if (!m.fascistTeam) return fas.length > 0 ? first(fas) : first(lib);
+  if (lib.length === 0) return first(fas);
+  if (fas.length === 0) return first(lib);
+  // Fascist president with a mixed hand.
+  const chancellor = m.v.chancellorCandidateSeat;
+  const teamChancellor = chancellor !== null && m.allies.has(chancellor);
+  const libsDown = m.v.board.liberalEnacted;
+  const pDumpLiberal = teamChancellor
+    ? 0.95
+    : libsDown >= LIBERAL_TRACK_LENGTH - 2
+      ? 0.9
+      : m.isHitler
+        ? 0.45
+        : 0.65;
+  return m.rand(30) < pDumpLiberal ? first(lib) : first(fas);
+}
+
+function chooseEnact(m: Mind, hand: ShPolicy[]): 0 | 1 {
+  const li = hand.indexOf('liberal');
+  const fi = hand.indexOf('fascist');
+  if (!m.fascistTeam) return (li >= 0 ? li : 0) as 0 | 1;
+  if (fi < 0) return 0;
+  if (li < 0) return fi as 0 | 1;
+  // Fascist chancellor with L+F: usually enact F, sometimes build trust early.
+  const b = m.v.board;
+  const safeToBluff = b.liberalEnacted <= 2 && b.fascistEnacted <= 2;
+  const pBluff = safeToBluff ? (m.isHitler ? 0.4 : 0.2) : 0;
+  return (m.rand(40) < pBluff ? li : fi) as 0 | 1;
+}
+
+function wantsVeto(m: Mind, hand: ShPolicy[]): boolean {
+  const v = m.v;
+  if (!v.board.vetoUnlocked || v.vetoRefused) return false;
+  if (!m.fascistTeam) return count(hand, 'liberal') === 0 && m.rand(50) < 0.92;
+  return (
+    count(hand, 'fascist') === 0 &&
+    v.board.liberalEnacted >= LIBERAL_TRACK_LENGTH - 2 &&
+    m.rand(50) < 0.75
+  );
+}
+
+function acceptVeto(m: Mind): boolean {
+  const passed = m.v.yourPassedPolicies;
+  if (!passed) return false;
+  if (!m.fascistTeam) return count(passed, 'liberal') === 0;
+  return count(passed, 'fascist') === 0 && m.rand(60) < 0.85;
 }

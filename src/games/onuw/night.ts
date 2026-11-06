@@ -1,7 +1,8 @@
 import type { SeatIndex } from '@/engine/types';
-import { ROLES } from './roles';
+import { AWAKE_WOLF_CARDS, ROLES, isWerewolfCard } from './roles';
 import type {
   OnuwNightObservation,
+  OnuwNightStep,
   OnuwPrivateState,
   OnuwRoleId,
   OnuwSeatState,
@@ -11,8 +12,10 @@ import type {
 // Night-action helpers
 //
 // Each helper takes the current state, the acting seat, and any action
-// parameters, and returns the next state. They mutate copies; never the
-// original.
+// parameters, and returns the next state. They copy; never mutate.
+//
+// Looking at a card always shows its PRINTED face (`finalCard` / `card`);
+// teams and win conditions use the EFFECTIVE role (`finalRole` / `role`).
 // ============================================================================
 
 function clone(state: OnuwPrivateState): OnuwPrivateState {
@@ -22,10 +25,16 @@ function clone(state: OnuwPrivateState): OnuwPrivateState {
     centerCards: state.centerCards.map((c) => ({ ...c })),
     nightSchedule: state.nightSchedule.map((step) => ({ ...step, seats: step.seats.slice() })),
     nightStepAcks: { ...state.nightStepAcks },
+    piLooks: { ...state.piLooks },
+    witchPeeks: { ...state.witchPeeks },
+    alphaCenter: state.alphaCenter.slice(),
+    revealed: state.revealed.slice(),
     setupAcked: { ...state.setupAcked },
     voteAcks: state.voteAcks.slice(),
     rolePool: state.rolePool.slice(),
     killedSeats: state.killedSeats.slice(),
+    winners: state.winners.slice(),
+    winningTeams: state.winningTeams.slice(),
     voteTally: { ...state.voteTally },
   };
 }
@@ -40,7 +49,7 @@ function setSeat(
   return next;
 }
 
-function addObservation(
+export function addObservation(
   state: OnuwPrivateState,
   seat: SeatIndex,
   obs: OnuwNightObservation,
@@ -60,6 +69,49 @@ function centerLabel(index: number): string {
   return `Center ${index + 1}`;
 }
 
+function roleName(role: OnuwRoleId): string {
+  return ROLES[role].name;
+}
+
+function neighbors(state: OnuwPrivateState, seat: SeatIndex): [SeatIndex, SeatIndex] {
+  const n = state.seats.length;
+  return [(seat - 1 + n) % n, (seat + 1) % n];
+}
+
+// === Who-is-who at wake time ================================================
+
+// The role the Doppelganger copied, if `seat` is the Doppelganger.
+function doppelRoleOf(state: OnuwPrivateState, seat: SeatIndex): OnuwRoleId | null {
+  return state.doppelCopy && state.doppelCopy.seat === seat ? state.doppelCopy.role : null;
+}
+
+// Seats that open their eyes at the werewolf wake-up: dealt Werewolf /
+// Alpha Wolf / Mystic Wolf, plus a Doppelganger that copied one of them.
+export function awakeWolfSeats(state: OnuwPrivateState): SeatIndex[] {
+  return state.seats
+    .filter((s) => AWAKE_WOLF_CARDS.has(s.dealtRole) || AWAKE_WOLF_CARDS.has(doppelRoleOf(state, s.index) ?? 'villager'))
+    .map((s) => s.index);
+}
+
+// Dream Wolves (incl. a Doppel-Dream Wolf): asleep, but they stick a thumb
+// out so the other werewolves (and the Minion) see them.
+function dreamWolfSeats(state: OnuwPrivateState): SeatIndex[] {
+  return state.seats
+    .filter((s) => s.dealtRole === 'dreamWolf' || doppelRoleOf(state, s.index) === 'dreamWolf')
+    .map((s) => s.index);
+}
+
+// Werewolves `seat` sees at the werewolf wake-up (everyone but itself).
+export function wolvesVisibleTo(state: OnuwPrivateState, seat: SeatIndex): SeatIndex[] {
+  return [...awakeWolfSeats(state), ...dreamWolfSeats(state)]
+    .filter((i, k, arr) => i !== seat && arr.indexOf(i) === k)
+    .sort((a, b) => a - b);
+}
+
+export function isLoneWolf(state: OnuwPrivateState, seat: SeatIndex): boolean {
+  return awakeWolfSeats(state).includes(seat) && wolvesVisibleTo(state, seat).length === 0;
+}
+
 // === Swap helpers ============================================================
 
 export function swapSeatWithSeat(
@@ -69,10 +121,10 @@ export function swapSeatWithSeat(
 ): OnuwPrivateState {
   if (a === b) return state;
   const next = clone(state);
-  const roleA = next.seats[a]!.finalRole;
-  const roleB = next.seats[b]!.finalRole;
-  next.seats[a] = { ...next.seats[a]!, finalRole: roleB };
-  next.seats[b] = { ...next.seats[b]!, finalRole: roleA };
+  const A = next.seats[a]!;
+  const B = next.seats[b]!;
+  next.seats[a] = { ...A, finalRole: B.finalRole, finalCard: B.finalCard };
+  next.seats[b] = { ...B, finalRole: A.finalRole, finalCard: A.finalCard };
   return next;
 }
 
@@ -82,10 +134,10 @@ export function swapSeatWithCenter(
   centerIndex: number,
 ): OnuwPrivateState {
   const next = clone(state);
-  const seatRole = next.seats[seat]!.finalRole;
-  const centerRole = next.centerCards[centerIndex]!.role;
-  next.seats[seat] = { ...next.seats[seat]!, finalRole: centerRole };
-  next.centerCards[centerIndex] = { ...next.centerCards[centerIndex]!, role: seatRole };
+  const S = next.seats[seat]!;
+  const C = next.centerCards[centerIndex]!;
+  next.seats[seat] = { ...S, finalRole: C.role, finalCard: C.card };
+  next.centerCards[centerIndex] = { ...C, role: S.finalRole, card: S.finalCard };
   return next;
 }
 
@@ -96,12 +148,10 @@ export function applySeerLookSeat(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  const targetRole = state.seats[target]!.finalRole;
+  const card = state.seats[target]!.finalCard;
   return addObservation(state, seat, {
-    text: `You looked at ${seatName(state, target)}'s card — they are the ${ROLES[targetRole].name}.`,
-    entries: [
-      { label: seatName(state, target), position: { kind: 'seat', index: target }, role: targetRole },
-    ],
+    text: `You looked at ${seatName(state, target)}'s card: the ${roleName(card)}.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: card }],
   });
 }
 
@@ -111,13 +161,13 @@ export function applySeerLookCenter(
   centerIndices: [number, number],
 ): OnuwPrivateState {
   const [a, b] = centerIndices;
-  const roleA = state.centerCards[a]!.role;
-  const roleB = state.centerCards[b]!.role;
+  const cardA = state.centerCards[a]!.card;
+  const cardB = state.centerCards[b]!.card;
   return addObservation(state, seat, {
-    text: `You peeked two center cards: ${centerLabel(a)} = ${ROLES[roleA].name}, ${centerLabel(b)} = ${ROLES[roleB].name}.`,
+    text: `You looked at two center cards: ${centerLabel(a)} is the ${roleName(cardA)}, ${centerLabel(b)} is the ${roleName(cardB)}.`,
     entries: [
-      { label: centerLabel(a), position: { kind: 'center', index: a }, role: roleA },
-      { label: centerLabel(b), position: { kind: 'center', index: b }, role: roleB },
+      { label: centerLabel(a), position: { kind: 'center', index: a }, role: cardA },
+      { label: centerLabel(b), position: { kind: 'center', index: b }, role: cardB },
     ],
   });
 }
@@ -128,12 +178,11 @@ export function applyRobberSwap(
   target: SeatIndex,
 ): OnuwPrivateState {
   let next = swapSeatWithSeat(state, seat, target);
-  const newRole = next.seats[seat]!.finalRole;
+  const me = next.seats[seat]!;
   next = addObservation(next, seat, {
-    text: `You stole ${seatName(state, target)}'s card. You are now the ${ROLES[newRole].name}.`,
-    entries: [
-      { label: seatName(state, target), position: { kind: 'seat', index: target }, role: newRole },
-    ],
+    text: `You stole ${seatName(state, target)}'s card and looked at it: the ${roleName(me.finalCard)}. You are now ${me.finalCard === me.finalRole ? 'that role' : 'whatever it became'}.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: me.finalCard }],
+    youBecome: me.finalCard,
   });
   return next;
 }
@@ -146,7 +195,7 @@ export function applyTroublemakerSwap(
 ): OnuwPrivateState {
   let next = swapSeatWithSeat(state, a, b);
   next = addObservation(next, seat, {
-    text: `You swapped ${seatName(state, a)} and ${seatName(state, b)}.`,
+    text: `You swapped ${seatName(state, a)}'s and ${seatName(state, b)}'s cards.`,
     entries: [
       { label: seatName(state, a), position: { kind: 'seat', index: a } },
       { label: seatName(state, b), position: { kind: 'seat', index: b } },
@@ -162,43 +211,29 @@ export function applyDrunkSwap(
 ): OnuwPrivateState {
   let next = swapSeatWithCenter(state, seat, centerIndex);
   next = addObservation(next, seat, {
-    text: `You swapped your card with ${centerLabel(centerIndex)}. You do NOT know what you are now.`,
+    text: `You swapped your card with ${centerLabel(centerIndex)} without looking. You no longer know what you are.`,
     entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex } }],
+    youBecome: 'unknown',
   });
   return next;
 }
 
 // === Werewolves =============================================================
 
-// Wake-the-werewolves: each werewolf-seat sees all other werewolf-seats.
-// If a seat is the lone werewolf, they may optionally peek one center card.
 export function applyWerewolfWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  const wolves = state.seats
-    .filter((s) => isWerewolfDealtRole(s.dealtRole) && s.dealtRole !== 'dreamWolf')
-    .map((s) => s.index);
-  const otherWolves = wolves.filter((i) => i !== seat);
-  // Dream wolves are visible to other werewolves but don't wake themselves.
-  const visibleDreamWolves = state.seats
-    .filter((s) => s.dealtRole === 'dreamWolf')
-    .map((s) => s.index);
-  const visible = [...otherWolves, ...visibleDreamWolves].sort((a, b) => a - b);
+  const visible = wolvesVisibleTo(state, seat);
   const text =
     visible.length === 0
-      ? 'You are the lone werewolf. You may peek a center card.'
-      : `Werewolves: ${visible.map((i) => seatName(state, i)).join(', ')}.`;
+      ? 'You are the only werewolf. You may look at one center card.'
+      : `Your fellow werewolves: ${visible.map((i) => seatName(state, i)).join(', ')}.`;
   return addObservation(state, seat, {
     text,
     entries: visible.map((i) => ({
       label: seatName(state, i),
-      position: { kind: 'seat', index: i },
+      position: { kind: 'seat' as const, index: i },
+      shownAs: 'werewolf' as const,
     })),
   });
-}
-
-function isWerewolfDealtRole(r: OnuwRoleId): boolean {
-  return (
-    r === 'werewolf' || r === 'alphaWolf' || r === 'mysticWolf' || r === 'dreamWolf'
-  );
 }
 
 export function applyLoneWolfPeek(
@@ -206,47 +241,49 @@ export function applyLoneWolfPeek(
   seat: SeatIndex,
   centerIndex: number,
 ): OnuwPrivateState {
-  const role = state.centerCards[centerIndex]!.role;
+  const card = state.centerCards[centerIndex]!.card;
   return addObservation(state, seat, {
-    text: `Center card you peeked: ${centerLabel(centerIndex)} = ${ROLES[role].name}.`,
-    entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role }],
+    text: `You looked at ${centerLabel(centerIndex)}: the ${roleName(card)}.`,
+    entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role: card }],
   });
 }
 
 // === Minion =================================================================
 
 export function applyMinionWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  // Minion sees the werewolves; werewolves do NOT see the minion.
-  const wolves = state.seats
-    .filter((s) => isWerewolfDealtRole(s.dealtRole))
-    .map((s) => s.index);
+  // Minion sees every werewolf (incl. Dream Wolf and a Doppel-werewolf);
+  // the werewolves do NOT see the Minion.
+  const wolves = [...awakeWolfSeats(state), ...dreamWolfSeats(state)]
+    .filter((i, k, arr) => i !== seat && arr.indexOf(i) === k)
+    .sort((a, b) => a - b);
   const text =
     wolves.length === 0
-      ? 'No werewolves are awake — they\'re in the center. Try to throw the vote yourself.'
-      : `Werewolves: ${wolves.map((i) => seatName(state, i)).join(', ')}. They do not know you.`;
+      ? 'No player is a werewolf — they are all in the center. Get someone else killed.'
+      : `The werewolves: ${wolves.map((i) => seatName(state, i)).join(', ')}. They do not know you.`;
   return addObservation(state, seat, {
     text,
     entries: wolves.map((i) => ({
       label: seatName(state, i),
-      position: { kind: 'seat', index: i },
+      position: { kind: 'seat' as const, index: i },
+      shownAs: 'werewolf' as const,
     })),
   });
 }
 
 // === Masons =================================================================
 
-export function applyMasonWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  const masons = state.seats.filter((s) => s.dealtRole === 'mason').map((s) => s.index);
-  const others = masons.filter((i) => i !== seat);
+export function applyMasonWake(state: OnuwPrivateState, seat: SeatIndex, stepSeats: readonly SeatIndex[]): OnuwPrivateState {
+  const others = stepSeats.filter((i) => i !== seat);
   const text =
     others.length === 0
-      ? 'You are the only Mason awake. Your fellow Mason is in the center.'
-      : `Other Masons: ${others.map((i) => seatName(state, i)).join(', ')}.`;
+      ? 'You are the only Mason awake.'
+      : `Your fellow Mason${others.length > 1 ? 's' : ''}: ${others.map((i) => seatName(state, i)).join(', ')}.`;
   return addObservation(state, seat, {
     text,
     entries: others.map((i) => ({
       label: seatName(state, i),
-      position: { kind: 'seat', index: i },
+      position: { kind: 'seat' as const, index: i },
+      shownAs: 'mason' as const,
     })),
   });
 }
@@ -254,10 +291,11 @@ export function applyMasonWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPr
 // === Insomniac ==============================================================
 
 export function applyInsomniacWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  const role = state.seats[seat]!.finalRole;
+  const me = state.seats[seat]!;
   return addObservation(state, seat, {
-    text: `End of night — your card is now: ${ROLES[role].name}.`,
-    entries: [{ label: 'Your card', position: { kind: 'seat', index: seat }, role }],
+    text: `You looked at your own card at the end of the night: the ${roleName(me.finalCard)}.`,
+    entries: [{ label: 'Your card', position: { kind: 'seat', index: seat }, role: me.finalCard }],
+    youBecome: me.finalCard,
   });
 }
 
@@ -268,58 +306,77 @@ export function applyDoppelgangerCopy(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  // The Doppelganger LOOKS at the target's card and becomes that role.
-  // Their finalRole becomes the target's role; if that role has a later
-  // wake step, the Doppelganger will participate in it.
-  const targetRole = state.seats[target]!.finalRole;
-  let next = setSeat(state, seat, { finalRole: targetRole });
+  // The Doppelganger LOOKS at the target's card and becomes that role. The
+  // Doppelganger card itself now counts as that role (effective), wherever
+  // it travels — the printed card stays "Doppelganger".
+  const copied = state.seats[target]!.finalCard;
+  let next = setSeat(state, seat, { finalRole: copied });
+  next = { ...next, doppelCopy: { seat, role: copied } };
+  const mode = ROLES[copied].doppel;
+  const how =
+    mode === 'now'
+      ? ' Take that action now.'
+      : mode === 'join'
+        ? ` You will wake with the ${roleName(copied)}.`
+        : mode === 'after'
+          ? ` You will wake again after the ${roleName(copied)}.`
+          : '';
   next = addObservation(next, seat, {
-    text: `You copied ${seatName(state, target)} — you are now the ${ROLES[targetRole].name}. You will act with that role.`,
-    entries: [
-      { label: seatName(state, target), position: { kind: 'seat', index: target }, role: targetRole },
-    ],
+    text: `You looked at ${seatName(state, target)}'s card: the ${roleName(copied)}. You are now the ${roleName(copied)}.${how}`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: copied }],
+    youBecome: copied,
   });
-  // Inject the appropriate downstream step IF the copied role has a wake
-  // order > Doppelganger's (so the Doppelganger acts in the target's slot
-  // later in the night). We add a new schedule entry with `seats: [seat]`
-  // and the copied role's wakeOrder.
-  const copiedSpec = ROLES[targetRole];
-  if (copiedSpec.wakeOrder > ROLES['doppelganger'].wakeOrder && copiedSpec.wakeOrder < 1000) {
-    next = injectFollowupStep(next, seat, targetRole);
-  }
-  return next;
+  return scheduleDoppelganger(next, seat, copied);
 }
 
-function injectFollowupStep(
+// Place the Doppelganger in the rest of the night according to the copied
+// role's `doppel` mode. The schedule is built from the full role pool, so
+// the copied role's own step always exists.
+function scheduleDoppelganger(
   state: OnuwPrivateState,
   seat: SeatIndex,
-  role: OnuwRoleId,
+  copied: OnuwRoleId,
 ): OnuwPrivateState {
+  const mode = ROLES[copied].doppel;
+  if (!mode) return state;
   const next = clone(state);
-  const wo = ROLES[role].wakeOrder;
-  // Find the index to insert at: first existing step whose role wakeOrder > wo
-  // and whose stepIndex > current cursor.
-  const schedule = next.nightSchedule.slice();
-  let insertAt = schedule.length;
-  for (let i = next.nightStepIndex + 1; i < schedule.length; i++) {
-    if (ROLES[schedule[i]!.role].wakeOrder > wo) {
-      insertAt = i;
-      break;
-    }
-  }
-  schedule.splice(insertAt, 0, {
-    stepIndex: -1, // re-numbered below
+  const schedule = next.nightSchedule;
+  const later = (i: number) => i > next.nightStepIndex;
+  const fresh = (role: OnuwRoleId): OnuwNightStep => ({
+    stepIndex: -1,
     role,
     seats: [seat],
+    doppel: true,
     resolved: false,
     interactive: ROLES[role].hasInteractiveAction,
   });
-  // Re-number step indices to stay contiguous.
-  for (let i = 0; i < schedule.length; i++) {
-    schedule[i] = { ...schedule[i]!, stepIndex: i };
+  if (mode === 'now') {
+    schedule.splice(next.nightStepIndex + 1, 0, fresh(copied));
+  } else if (mode === 'join') {
+    // Werewolf variants all open their eyes at the shared werewolf wake.
+    const joinRoles: OnuwRoleId[] = AWAKE_WOLF_CARDS.has(copied) ? ['werewolf', copied] : [copied];
+    for (const role of new Set(joinRoles)) {
+      const i = schedule.findIndex((s, k) => later(k) && s.role === role && !s.doppel);
+      if (i >= 0) schedule[i] = { ...schedule[i]!, seats: [...schedule[i]!.seats, seat] };
+      else schedule.splice(insertionPoint(next, role), 0, fresh(role));
+    }
+  } else {
+    let i = -1;
+    schedule.forEach((s, k) => {
+      if (later(k) && s.role === copied) i = k;
+    });
+    schedule.splice(i >= 0 ? i + 1 : insertionPoint(next, copied), 0, fresh(copied));
   }
-  next.nightSchedule = schedule;
+  next.nightSchedule = schedule.map((s, i) => ({ ...s, stepIndex: i }));
   return next;
+}
+
+function insertionPoint(state: OnuwPrivateState, role: OnuwRoleId): number {
+  const wo = ROLES[role].wakeOrder;
+  for (let i = state.nightStepIndex + 1; i < state.nightSchedule.length; i++) {
+    if (ROLES[state.nightSchedule[i]!.role].wakeOrder > wo) return i;
+  }
+  return state.nightSchedule.length;
 }
 
 export function applyApprenticeSeerLook(
@@ -327,54 +384,65 @@ export function applyApprenticeSeerLook(
   seat: SeatIndex,
   centerIndex: number,
 ): OnuwPrivateState {
-  const role = state.centerCards[centerIndex]!.role;
+  const card = state.centerCards[centerIndex]!.card;
   return addObservation(state, seat, {
-    text: `${centerLabel(centerIndex)} = ${ROLES[role].name}.`,
-    entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role }],
+    text: `You looked at ${centerLabel(centerIndex)}: the ${roleName(card)}.`,
+    entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role: card }],
   });
 }
 
+// Returns the state plus whether the PI converted (and must stop).
 export function applyParanormalLook(
   state: OnuwPrivateState,
   seat: SeatIndex,
   target: SeatIndex,
-): OnuwPrivateState {
-  const targetRole = state.seats[target]!.finalRole;
+): { state: OnuwPrivateState; converted: boolean } {
+  const card = state.seats[target]!.finalCard;
+  const convert = isWerewolfCard(card) || ROLES[card].team === 'tanner';
   let next = addObservation(state, seat, {
-    text: `${seatName(state, target)} = ${ROLES[targetRole].name}.`,
-    entries: [
-      { label: seatName(state, target), position: { kind: 'seat', index: target }, role: targetRole },
-    ],
+    text: convert
+      ? `You looked at ${seatName(state, target)}'s card: the ${roleName(card)}. You feel the pull — you are now the ${roleName(card)}, and must stop.`
+      : `You looked at ${seatName(state, target)}'s card: the ${roleName(card)}.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: card }],
+    ...(convert ? { youBecome: card } : {}),
   });
-  const targetTeam = ROLES[targetRole].team;
-  if (targetTeam === 'werewolves' || targetTeam === 'tanner') {
-    // Investigator joins that team — flip their finalRole's bookkeeping by
-    // setting a "team override" using a synthetic role. Simpler approach:
-    // change finalRole to a copy of the target role so vote-resolution
-    // already handles the team.
-    next = setSeat(next, seat, { finalRole: targetRole });
-    next = addObservation(next, seat, {
-      text: `You felt the pull — you become the ${ROLES[targetRole].name}. Stop investigating.`,
-      entries: [],
-    });
+  if (convert) {
+    // The PI's card now counts as that role (team + win condition).
+    next = setSeat(next, seat, { finalRole: card });
   }
-  return next;
+  next = { ...next, piLooks: { ...next.piLooks, [seat]: [...(next.piLooks[seat] ?? []), target] } };
+  return { state: next, converted: convert };
 }
 
+// Witch, part 1: look at a center card. She must then hand it out.
+export function applyWitchLook(
+  state: OnuwPrivateState,
+  seat: SeatIndex,
+  centerIndex: number,
+): OnuwPrivateState {
+  const card = state.centerCards[centerIndex]!.card;
+  const next = addObservation(state, seat, {
+    text: `You looked at ${centerLabel(centerIndex)}: the ${roleName(card)}. Now you must give it to a player.`,
+    entries: [{ label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role: card }],
+  });
+  return { ...next, witchPeeks: { ...next.witchPeeks, [seat]: centerIndex } };
+}
+
+// Witch, part 2: exchange the looked-at center card with any player's card
+// (including her own). Without a prior look, she looks first.
 export function applyWitchSwap(
   state: OnuwPrivateState,
   seat: SeatIndex,
   centerIndex: number,
   target: SeatIndex,
 ): OnuwPrivateState {
-  // Witch: peek center card, then place it on target. The target's role
-  // returns to the center slot.
-  const centerRole = state.centerCards[centerIndex]!.role;
-  let next = addObservation(state, seat, {
-    text: `You peeked ${centerLabel(centerIndex)} = ${ROLES[centerRole].name}, then gave it to ${seatName(state, target)}.`,
-    entries: [
-      { label: centerLabel(centerIndex), position: { kind: 'center', index: centerIndex }, role: centerRole },
-    ],
+  let next = state.witchPeeks[seat] === centerIndex ? state : applyWitchLook(state, seat, centerIndex);
+  const card = next.centerCards[centerIndex]!.card;
+  const self = target === seat;
+  next = addObservation(next, seat, {
+    text: `You gave ${centerLabel(centerIndex)} (the ${roleName(card)}) to ${self ? 'yourself' : seatName(state, target)}; their old card went to the center.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, ...(self ? { role: card } : {}) }],
+    ...(self ? { youBecome: card } : {}),
   });
   next = swapSeatWithCenter(next, target, centerIndex);
   return next;
@@ -385,27 +453,22 @@ export function applyVillageIdiotShift(
   seat: SeatIndex,
   direction: 'left' | 'right',
 ): OnuwPrivateState {
-  // Rotate every seat's finalRole one slot in `direction`, EXCEPT seat
-  // itself (the Idiot keeps their card). "Left" = role moves to lower
-  // index; "right" = role moves to higher index. We collect all non-Idiot
-  // seats in order and rotate.
+  // Move every card except the Idiot's own one seat to the left (towards
+  // lower indices) or right (towards higher indices), skipping the Idiot.
   const next = clone(state);
   const others = next.seats.filter((s) => s.index !== seat);
-  if (others.length === 0) return state;
-  const roles = others.map((s) => s.finalRole);
-  let rotated: OnuwRoleId[];
-  if (direction === 'left') {
-    rotated = [...roles.slice(1), roles[0]!];
-  } else {
-    rotated = [roles[roles.length - 1]!, ...roles.slice(0, -1)];
-  }
+  if (others.length < 2) return state;
+  const cards = others.map((s) => ({ role: s.finalRole, card: s.finalCard }));
+  const rotated =
+    direction === 'left' ? [...cards.slice(1), cards[0]!] : [cards[cards.length - 1]!, ...cards.slice(0, -1)];
   let idx = 0;
   next.seats = next.seats.map((s) => {
     if (s.index === seat) return s;
-    return { ...s, finalRole: rotated[idx++]! };
+    const c = rotated[idx++]!;
+    return { ...s, finalRole: c.role, finalCard: c.card };
   });
   return addObservation(next, seat, {
-    text: `You shifted everyone's cards one slot to the ${direction}.`,
+    text: `You moved everyone else's card one seat to the ${direction}.`,
     entries: [],
   });
 }
@@ -415,27 +478,16 @@ export function applyRevealerFlip(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  const targetRole = state.seats[target]!.finalRole;
-  const team = ROLES[targetRole].team;
-  let next = state;
-  if (team === 'werewolves' || team === 'tanner') {
-    next = addObservation(next, seat, {
-      text: `You flipped ${seatName(state, target)} — they were a ${ROLES[targetRole].name}. You hide it again.`,
-      entries: [
-        { label: seatName(state, target), position: { kind: 'seat', index: target }, role: targetRole },
-      ],
-    });
-  } else {
-    next = addObservation(next, seat, {
-      text: `You flipped ${seatName(state, target)} — they are the ${ROLES[targetRole].name}. The card stays face-up for the village.`,
-      entries: [
-        { label: seatName(state, target), position: { kind: 'seat', index: target }, role: targetRole },
-      ],
-    });
-    // Make this public: append the observation to every other seat as a
-    // public note. (Cheap implementation — observations are private, so
-    // we'd actually want a separate public log. For now we narrate it on
-    // the Revealer's own observation and rely on the player to announce.)
+  const card = state.seats[target]!.finalCard;
+  const hide = isWerewolfCard(card) || ROLES[card].team === 'tanner';
+  let next = addObservation(state, seat, {
+    text: hide
+      ? `You flipped ${seatName(state, target)}'s card: the ${roleName(card)}. You turned it back face-down.`
+      : `You flipped ${seatName(state, target)}'s card: the ${roleName(card)}. It stays face-up for everyone to see.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: card }],
+  });
+  if (!hide) {
+    next = { ...next, revealed: [...next.revealed, { seat: target, card }] };
   }
   return next;
 }
@@ -445,9 +497,9 @@ export function applyCuratorGive(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  // Curator gives a flavor artifact. We just narrate it.
+  // Artifacts are flavor in this build — narrate only.
   return addObservation(state, seat, {
-    text: `You gave an artifact to ${seatName(state, target)}.`,
+    text: `You placed an artifact on ${seatName(state, target)}'s card.`,
     entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target } }],
   });
 }
@@ -457,16 +509,14 @@ export function applyAlphaWolfConvert(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  // Alpha Wolf swaps the target's card with the "extra werewolf card"
-  // (canonically a 4th werewolf card from the box). In our model, the
-  // simplest equivalent is: the target's finalRole becomes 'werewolf'
-  // and the displaced card goes to the center (slot 0).
-  // We retain rule fidelity by NOT telling the target — they will only
-  // discover their new role if something else (Insomniac etc.) tells them.
-  let next = setSeat(state, target, { finalRole: 'werewolf' });
+  // Exchange the center werewolf card with the target's card. The displaced
+  // card goes to the Alpha's center slot. The target is NOT told.
+  const t = state.seats[target]!;
+  let next = setSeat(state, target, { finalRole: 'werewolf', finalCard: 'werewolf' });
+  next = { ...next, alphaCenter: [...next.alphaCenter, { role: t.finalRole, card: t.finalCard }] };
   next = addObservation(next, seat, {
-    text: `${seatName(state, target)} is now a werewolf (they don't know it).`,
-    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target } }],
+    text: `You gave ${seatName(state, target)} the center werewolf card. They are now a werewolf (and don't know it).`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: 'werewolf' }],
   });
   return next;
 }
@@ -476,63 +526,77 @@ export function applyMysticWolfLook(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  const role = state.seats[target]!.finalRole;
+  const card = state.seats[target]!.finalCard;
   return addObservation(state, seat, {
-    text: `${seatName(state, target)} = ${ROLES[role].name}.`,
-    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role }],
+    text: `You looked at ${seatName(state, target)}'s card: the ${roleName(card)}.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: card }],
   });
 }
 
 // === Bonus roles ============================================================
 
 export function applyBeholderWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  const seers = state.seats.filter((s) => s.dealtRole === 'seer').map((s) => s.index);
+  const seers = state.seats
+    .filter((s) => s.index !== seat && (s.dealtRole === 'seer' || doppelRoleOf(state, s.index) === 'seer'))
+    .map((s) => s.index);
   const text =
     seers.length === 0
-      ? 'The Seer card is in the center. You see no Seer awake.'
-      : `Seer: ${seers.map((i) => seatName(state, i)).join(', ')}.`;
+      ? 'No player is the Seer — the Seer card is in the center.'
+      : `The Seer: ${seers.map((i) => seatName(state, i)).join(', ')}.`;
   return addObservation(state, seat, {
     text,
     entries: seers.map((i) => ({
       label: seatName(state, i),
-      position: { kind: 'seat', index: i },
+      position: { kind: 'seat' as const, index: i },
+      shownAs: 'seer' as const,
     })),
   });
 }
 
 export function applySquireWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  // Squire learns which positions (seat or center) currently hold a
-  // werewolf card — at the time of waking (no swaps have happened yet).
+  // House variant: the Squire learns which positions (seats or center)
+  // currently hold a werewolf CARD — not which werewolf it is.
   const wolfSeats = state.seats
-    .filter((s) => isWerewolfDealtRole(s.dealtRole))
-    .map((s) => ({ label: seatName(state, s.index), position: { kind: 'seat' as const, index: s.index } }));
+    .filter((s) => s.index !== seat && isWerewolfCard(s.finalCard))
+    .map((s) => ({
+      label: seatName(state, s.index),
+      position: { kind: 'seat' as const, index: s.index },
+      shownAs: 'werewolf' as const,
+    }));
   const wolfCenter = state.centerCards
-    .filter((c) => isWerewolfDealtRole(c.role))
-    .map((c) => ({ label: centerLabel(c.index), position: { kind: 'center' as const, index: c.index } }));
+    .filter((c) => isWerewolfCard(c.card))
+    .map((c) => ({
+      label: centerLabel(c.index),
+      position: { kind: 'center' as const, index: c.index },
+      shownAs: 'werewolf' as const,
+    }));
   const all = [...wolfSeats, ...wolfCenter];
   return addObservation(state, seat, {
-    text: all.length === 0 ? 'No werewolf cards are in play (impossible!).' : `Werewolf cards: ${all.map((e) => e.label).join(', ')}.`,
+    text:
+      all.length === 0
+        ? 'There are no werewolf cards anywhere you can see.'
+        : `Werewolf cards lie at: ${all.map((e) => e.label).join(', ')}.`,
     entries: all,
   });
 }
 
 export function applyEmpathWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  const n = state.seats.length;
-  const left = (seat - 1 + n) % n;
-  const right = (seat + 1) % n;
-  const neighborSeats = [left, right];
-  const wolfCount = neighborSeats.filter((i) => isWerewolfDealtRole(state.seats[i]!.dealtRole)).length;
+  const [left, right] = neighbors(state, seat);
+  const near = left === right ? [left] : [left, right];
+  const wolfCount = near.filter((i) => isWerewolfCard(state.seats[i]!.finalCard)).length;
   return addObservation(state, seat, {
-    text: `Among your two neighbors (${seatName(state, left)}, ${seatName(state, right)}), there are ${wolfCount} werewolves.`,
-    entries: neighborSeats.map((i) => ({ label: seatName(state, i), position: { kind: 'seat' as const, index: i } })),
+    text: `Among your neighbors (${near.map((i) => seatName(state, i)).join(', ')}), ${wolfCount === 1 ? 'there is 1 werewolf' : `there are ${wolfCount} werewolves`}.`,
+    entries: [],
   });
 }
 
 export function applyAuraSeerWake(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
-  // Count seats with a dealt role that has a wakeOrder < 1000 (i.e. acts at night).
-  const wokeCount = state.seats.filter((s) => ROLES[s.dealtRole].wakeOrder < 1000 && s.index !== seat).length;
+  // House variant: count the OTHER seats that woke at any point tonight.
+  const woke = new Set<SeatIndex>();
+  for (const step of state.nightSchedule) for (const s of step.seats) woke.add(s);
+  woke.delete(seat);
   return addObservation(state, seat, {
-    text: `${wokeCount} other players woke up at night.`,
+    text: `${woke.size} other player${woke.size === 1 ? '' : 's'} woke up during the night.`,
     entries: [],
   });
 }
@@ -542,10 +606,16 @@ export function applyThingTap(
   seat: SeatIndex,
   target: SeatIndex,
 ): OnuwPrivateState {
-  return addObservation(state, seat, {
-    text: `You tapped ${seatName(state, target)}.`,
+  let next = addObservation(state, seat, {
+    text: `You tapped ${seatName(state, target)} on the shoulder.`,
     entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target } }],
   });
+  // The tapped player feels it — they learn The Thing sits beside them.
+  next = addObservation(next, target, {
+    text: `In the night, someone tapped your shoulder: ${seatName(state, seat)} is The Thing.`,
+    entries: [{ label: seatName(state, seat), position: { kind: 'seat', index: seat }, shownAs: 'thing' }],
+  });
+  return next;
 }
 
 export function applyBodySnatcherSwap(
@@ -554,12 +624,11 @@ export function applyBodySnatcherSwap(
   target: SeatIndex,
 ): OnuwPrivateState {
   let next = swapSeatWithSeat(state, seat, target);
-  const newRole = next.seats[seat]!.finalRole;
+  const me = next.seats[seat]!;
   next = addObservation(next, seat, {
-    text: `You stole ${seatName(state, target)}'s body. You are now the ${ROLES[newRole].name}.`,
-    entries: [
-      { label: seatName(state, target), position: { kind: 'seat', index: target }, role: newRole },
-    ],
+    text: `You took ${seatName(state, target)}'s body: you now hold the ${roleName(me.finalCard)}.`,
+    entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target }, role: me.finalCard }],
+    youBecome: me.finalCard,
   });
   return next;
 }
@@ -574,7 +643,7 @@ export function applyWindyWendyShift(
   const targetSeat = direction === 'left' ? (source - 1 + n) % n : (source + 1) % n;
   let next = swapSeatWithSeat(state, source, targetSeat);
   next = addObservation(next, seat, {
-    text: `You shifted ${seatName(state, source)}'s card to ${seatName(state, targetSeat)}.`,
+    text: `You blew ${seatName(state, source)}'s card over to ${seatName(state, targetSeat)} (and theirs back).`,
     entries: [
       { label: seatName(state, source), position: { kind: 'seat', index: source } },
       { label: seatName(state, targetSeat), position: { kind: 'seat', index: targetSeat } },
@@ -589,35 +658,28 @@ export function applyDefenderProtect(
   target: SeatIndex,
 ): OnuwPrivateState {
   return addObservation(state, seat, {
-    text: `You silently protect ${seatName(state, target)}.`,
+    text: `You silently watched over ${seatName(state, target)}.`,
     entries: [{ label: seatName(state, target), position: { kind: 'seat', index: target } }],
   });
 }
 
-// === Auto / passive wake steps =============================================
+// === Auto / observational wake steps =======================================
 //
-// Some roles auto-resolve when their step comes up (no action submitted):
-// Dream Wolf (no observation), Innocent Bystander, etc. We expose a single
-// "runAutoStep" helper so the dispatch can call it once and move on.
+// Observation-only roles get their information the moment their step comes
+// up; the seat then acknowledges with `nightAck`.
 
-export function runAutoStep(state: OnuwPrivateState, role: OnuwRoleId, seats: readonly SeatIndex[]): OnuwPrivateState {
+export function runAutoStep(state: OnuwPrivateState, step: OnuwNightStep): OnuwPrivateState {
   let next = state;
-  switch (role) {
+  const seats = step.seats;
+  switch (step.role) {
     case 'werewolf':
-    case 'alphaWolf':
-    case 'mysticWolf':
-      // The wake observation is the same for every wolf seat — see the
-      // others. We auto-apply this so the seat just confirms the view.
       for (const s of seats) next = applyWerewolfWake(next, s);
-      return next;
-    case 'dreamWolf':
-      // No-op (Dream Wolf stays asleep).
       return next;
     case 'minion':
       for (const s of seats) next = applyMinionWake(next, s);
       return next;
     case 'mason':
-      for (const s of seats) next = applyMasonWake(next, s);
+      for (const s of seats) next = applyMasonWake(next, s, seats);
       return next;
     case 'insomniac':
       for (const s of seats) next = applyInsomniacWake(next, s);
@@ -639,14 +701,8 @@ export function runAutoStep(state: OnuwPrivateState, role: OnuwRoleId, seats: re
   }
 }
 
-// Some auto roles still want an "ack" from each seat so the host can move
-// the cursor only after every owning seat has tapped through. The list
-// below identifies which observational-only roles surface a per-seat
-// "I saw it" gate.
-export const OBSERVATIONAL_ROLES_NEED_ACK: ReadonlySet<OnuwRoleId> = new Set<OnuwRoleId>([
+export const OBSERVATIONAL_ROLES: ReadonlySet<OnuwRoleId> = new Set<OnuwRoleId>([
   'werewolf',
-  'alphaWolf',
-  'mysticWolf',
   'minion',
   'mason',
   'insomniac',

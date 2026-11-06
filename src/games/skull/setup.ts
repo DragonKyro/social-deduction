@@ -1,8 +1,14 @@
-import { makeRng, rngInt } from '@/engine/rng';
+import { makeRng, rngInt, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { PlayerState, SkullPrivateState } from './state';
 
 const STARTING_SEAT_SEED_MASK = 0x00_53_4b_75;
+
+function freshFlags(state: Pick<SkullPrivateState, 'seats'>): Record<SeatIndex, boolean> {
+  const out: Record<SeatIndex, boolean> = {};
+  for (const s of state.seats) out[s.index] = false;
+  return out;
+}
 
 export function buildInitial(
   names: string[],
@@ -13,7 +19,7 @@ export function buildInitial(
     throw new Error(`Skull needs 3-6 players (got ${names.length})`);
   }
   const seats = names.map((name, index) => ({ index, name }));
-  const rng = makeRng(seed ^ STARTING_SEAT_SEED_MASK);
+  const rng = makeRng(subSeed(seed, STARTING_SEAT_SEED_MASK));
   const startingSeat = rngInt(rng, names.length);
 
   const players: Record<SeatIndex, PlayerState> = {};
@@ -23,16 +29,10 @@ export function buildInitial(
       name: s.name,
       remaining: { roses: 3, skulls: 1 },
       stack: [],
+      revealed: [],
       eliminated: false,
       wins: 0,
     };
-  }
-
-  const passed: Record<SeatIndex, boolean> = {};
-  const roundOverAcked: Record<SeatIndex, boolean> = {};
-  for (const s of seats) {
-    passed[s.index] = false;
-    roundOverAcked[s.index] = false;
   }
 
   return {
@@ -45,52 +45,54 @@ export function buildInitial(
     challengeTarget,
     currentBid: 0,
     currentBidder: null,
-    passed,
+    passed: freshFlags({ seats }),
+    bidLog: [],
     challenger: null,
     flipsRemaining: 0,
     ownStackCleared: false,
     flips: [],
-    roundOverAcked,
+    roundOverAcked: freshFlags({ seats }),
     history: [],
     matchWinners: [],
+    pendingSummary: null,
     seed,
     rngCursor: 0,
   };
 }
 
-// Reset the table for the next round: keep wins, but clear stacks and
-// re-stock disks back into each seat's remaining pool. Eliminated seats
-// stay eliminated.
-export function nextRound(
-  state: SkullPrivateState,
-  leader: SeatIndex,
-): SkullPrivateState {
+// Every disk on the table (face-down or flipped) goes back to its owner's
+// hand. Called as soon as a challenge resolves, so the table never shows a
+// stack size that could hint at which disk was lost.
+export function gatherDisks(state: SkullPrivateState): SkullPrivateState {
   const players: Record<SeatIndex, PlayerState> = {};
   for (const s of state.seats) {
     const p = state.players[s.index]!;
-    // Total disks (rose+skull) the player still owns this match.
-    const total = p.remaining.roses + p.remaining.skulls + p.stack.length;
-    // After a round, all played disks return to the player's pool.
-    // Determine the breakdown from the played stack + remaining pre-round.
-    // Since we tracked stack contents, just refold them back.
-    const roses =
-      p.remaining.roses + p.stack.filter((d) => d === 'rose').length;
-    const skulls =
-      p.remaining.skulls + p.stack.filter((d) => d === 'skull').length;
+    const all = [...p.stack, ...p.revealed];
     players[s.index] = {
       ...p,
-      remaining: { roses, skulls },
+      remaining: {
+        roses: p.remaining.roses + all.filter((d) => d === 'rose').length,
+        skulls: p.remaining.skulls + all.filter((d) => d === 'skull').length,
+      },
       stack: [],
-      eliminated: total === 0 || p.eliminated,
+      revealed: [],
     };
   }
-  const passed: Record<SeatIndex, boolean> = {};
-  const roundOverAcked: Record<SeatIndex, boolean> = {};
+  return { ...state, players };
+}
+
+// Reset the table for the next round, led by `leader` (or the next live
+// seat clockwise if `leader` is out).
+export function nextRound(state: SkullPrivateState, leader: SeatIndex): SkullPrivateState {
+  const gathered = gatherDisks(state);
+  const players: Record<SeatIndex, PlayerState> = {};
   for (const s of state.seats) {
-    passed[s.index] = false;
-    roundOverAcked[s.index] = false;
+    const p = gathered.players[s.index]!;
+    players[s.index] = {
+      ...p,
+      eliminated: p.eliminated || p.remaining.roses + p.remaining.skulls === 0,
+    };
   }
-  // If the new leader is eliminated, walk forward until we find a live one.
   let actualLeader = leader;
   const n = state.seats.length;
   for (let step = 0; step < n; step++) {
@@ -101,7 +103,7 @@ export function nextRound(
     }
   }
   return {
-    ...state,
+    ...gathered,
     phase: 'placeOpening',
     players,
     currentSeat: actualLeader,
@@ -109,12 +111,14 @@ export function nextRound(
     roundNumber: state.roundNumber + 1,
     currentBid: 0,
     currentBidder: null,
-    passed,
+    passed: freshFlags(state),
+    bidLog: [],
     challenger: null,
     flipsRemaining: 0,
     ownStackCleared: false,
     flips: [],
-    roundOverAcked,
+    roundOverAcked: freshFlags(state),
+    pendingSummary: null,
     rngCursor: state.rngCursor + 1,
   };
 }

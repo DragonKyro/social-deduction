@@ -4,76 +4,99 @@ import type { SeatIndex } from '@/engine/types';
 // Skull — host state
 //
 // Each player owns 4 disks (3 roses + 1 skull). Disks are stacked face-down
-// in front of each seat; only the owning seat may see the order of their own
-// stack. Bidding declares "I can flip N disks without revealing a skull";
-// the high bidder then flips that many disks starting from their own stack.
-// Hit a skull = lose a disk (challenger removes any one of their disks).
-// Win two consecutive challenges = win the match.
+// in front of each seat; only the owning seat knows what's in their stack.
+// Bidding declares "I can flip N disks without revealing a skull"; the high
+// bidder then flips that many, ALL of their own stack first.
+//
+// Hidden info (redacted by `viewFor` in view.ts):
+//   - stack contents (until flipped face-up),
+//   - the composition of each player's disks (how many roses / skulls they
+//     still own) — others only ever see the COUNT,
+//   - which disk a failed challenger lost (only the loser learns it),
+//   - the seed / rng cursor (would let a peer predict the random loss).
 // ============================================================================
 
 export type Disk = 'rose' | 'skull';
 
 export type SkullPhase =
-  // First-disk phase. Every seat must place their opening disk before
-  // bidding can begin. Acks via `placeDisk` action.
+  // Every live seat places one disk before anything else (sequential here,
+  // simultaneous at a real table — order doesn't matter, stacks are hidden).
   | 'placeOpening'
-  // Free-form placement / bid-opening. The active seat must either place
-  // another disk OR open the bidding.
+  // The active seat must either place another disk OR open the bidding.
+  // A seat with no disks left in hand must bid.
   | 'placing'
   // Bidding war. Active seat must raise or pass. When everyone except one
   // bidder has passed, that bidder becomes the challenger.
   | 'bidding'
-  // Challenge in progress. Challenger must keep flipping disks (starting
-  // with their own stack) until either they hit the bid (success) or hit a
-  // skull (fail). Each flip is a separate action so we can show the table.
+  // Challenger flips disks one at a time: their own stack first (top
+  // down), then the top disk of opponents' stacks of their choice.
   | 'revealing'
-  // Successful or failed challenge resolved. Show outcome + losses; ack to
-  // continue to the next round.
+  // The challenger flipped their OWN skull: they choose which of their
+  // disks to discard (face-down — nobody else learns which).
+  | 'discarding'
+  // The challenger was eliminated by their own skull: they choose who
+  // starts the next round.
+  | 'chooseLeader'
+  // Challenge resolved; everyone still in acks to start the next round.
   | 'roundOver'
-  // Match over — a player hit the challenge target.
+  // Someone won their 2nd challenge (or is the last player standing).
   | 'gameOver';
+
+export interface DiskCounts {
+  roses: number;
+  skulls: number;
+}
 
 export interface PlayerState {
   index: SeatIndex;
   name: string;
-  // Disks remaining in the seat's personal stash (face-down off-table).
-  // Starts at {skulls:1, roses:3}; loses one when this seat fails a
-  // challenge or when an opponent's challenge reveals their skull.
-  remaining: { roses: number; skulls: number };
-  // Stack of disks placed on the table this round, bottom-first. Hidden
-  // from other seats; redacted to stackSize in Public.
+  // Disks in hand (off-table). All disks return to hand when a round ends.
+  remaining: DiskCounts;
+  // Face-down disks on the table this round, bottom-first.
   stack: Disk[];
-  // True once this seat has been eliminated (no disks left).
+  // Disks flipped face-up from this seat's stack this round (in flip
+  // order). Still owned by this seat — they go back to hand at round end.
+  revealed: Disk[];
+  // True once this seat has lost every disk.
   eliminated: boolean;
   // Successful challenges this match.
   wins: number;
 }
 
-// Snapshot of a single flip in a challenge — drives the reveal UI.
+// One flip in a challenge — public.
 export interface FlipRecord {
   // The seat whose stack was flipped from.
   seat: SeatIndex;
-  // Bottom-up index removed from that seat's stack.
   disk: Disk;
 }
 
-// Final summary of a completed round.
+// Public record of the bidding this round.
+export interface BidEntry {
+  seat: SeatIndex;
+  // The new high bid, or 'pass'.
+  bid: number | 'pass';
+}
+
 export interface RoundSummary {
   roundNumber: number;
-  // The challenger.
   challenger: SeatIndex;
   bid: number;
-  // True if the challenger flipped enough roses to satisfy the bid.
   success: boolean;
-  // Each flip in the order they happened (for the recap UI).
   flips: FlipRecord[];
-  // If success: the challenger gained a win counter (newWins).
-  // If fail: the seat that lost a disk (could be the challenger themselves
-  // or the seat whose skull was hit, depending on the order rule).
+  // Fail only: whose skull was flipped (may be the challenger's own).
+  skullOwner: SeatIndex | null;
+  // Fail only: the seat that lost a disk (always the challenger).
   loserSeat: SeatIndex | null;
-  // The disk that the loser lost. roses ranked higher in loss preference
-  // (you don't volunteer your skull) — the engine picks rose first.
+  // PRIVATE: the disk the loser lost. `viewFor` nulls it out for everyone
+  // except the loser — it's discarded face-down.
   diskLost: Disk | null;
+  // How the lost disk was picked: at random by the skull's owner, or
+  // chosen by the challenger (own skull).
+  lossMethod: 'random' | 'chosen' | null;
+  // A seat knocked out of the match this round.
+  eliminatedSeat: SeatIndex | null;
+  // Who starts the next round (null when the match ended).
+  nextLeader: SeatIndex | null;
 }
 
 export interface SkullPrivateState {
@@ -82,41 +105,35 @@ export interface SkullPrivateState {
   players: Record<SeatIndex, PlayerState>;
   // Whose action it is (placing seat / bidder / challenger).
   currentSeat: SeatIndex;
-  // The seat that started this round of placing/bidding. We rotate by 1
-  // each round; if the prior round was a successful challenge, the
-  // challenger goes first instead.
+  // The seat that started this round.
   roundLeader: SeatIndex;
-  // Round counter (1-indexed).
   roundNumber: number;
-  // Match win target (1, 2, or 3 — picked at setup).
+  // Match win target (1, 2, or 3 — picked at setup; official is 2).
   challengeTarget: number;
 
-  // ---- Bidding state (phase='bidding') ----
+  // ---- Bidding ----
   currentBid: number;
   currentBidder: SeatIndex | null;
   // Seats that have passed this bidding round (cannot re-enter).
   passed: Record<SeatIndex, boolean>;
+  bidLog: BidEntry[];
 
-  // ---- Challenge state (phase='revealing') ----
-  // The seat doing the flipping (= the winning bidder).
+  // ---- Challenge ----
   challenger: SeatIndex | null;
-  // Target flips left. Decremented per rose; on hit-skull this drops to 0
-  // and the round resolves as a failed challenge.
+  // Roses still needed.
   flipsRemaining: number;
-  // Has the challenger finished flipping their OWN stack yet? If true,
-  // they must pick another seat to flip from on the next action.
+  // Has the challenger flipped all of their own stack yet?
   ownStackCleared: boolean;
-  // Sequence of flips so far this challenge (drives the reveal UI).
   flips: FlipRecord[];
 
   // ---- Round end ----
-  // Per-seat ack to advance to the next round.
   roundOverAcked: Record<SeatIndex, boolean>;
-  // Append-only round history.
   history: RoundSummary[];
-  // Match winners.
   matchWinners: SeatIndex[];
+  // A resolved round waiting on `chooseLeader` before it's recorded.
+  pendingSummary: RoundSummary | null;
 
+  // Host-only. Never in a view.
   seed: number;
   rngCursor: number;
 }
@@ -128,13 +145,15 @@ export interface SkullPrivateState {
 export interface PublicPlayer {
   index: SeatIndex;
   name: string;
-  // Total disks visible on the table (just the count — order/kind are
-  // hidden for everyone except the owning seat).
+  // Face-down disks on the table (count only).
   stackSize: number;
-  // Roses + skulls remaining in stash. Roses count is hidden (you don't
-  // know how many you've played were roses) but the *skull placed* signal
-  // is what matters — we surface both as totals.
+  // Disks flipped face-up from this seat's stack this round (public).
+  revealed: Disk[];
+  // How many disks this seat still owns in total (count only — never the
+  // rose / skull split).
   disksTotal: number;
+  // Disks still in hand (count only). 0 during placing ⇒ must bid.
+  handCount: number;
   eliminated: boolean;
   wins: number;
 }
@@ -150,20 +169,23 @@ export interface SkullPublicState {
   currentBid: number;
   currentBidder: SeatIndex | null;
   passed: Record<SeatIndex, boolean>;
+  bidLog: BidEntry[];
   challenger: SeatIndex | null;
   flipsRemaining: number;
   ownStackCleared: boolean;
   flips: FlipRecord[];
-  // Most recent round summary for the roundOver panel.
+  // Most recent round summary (diskLost redacted unless you lost it).
   lastRound: RoundSummary | null;
   history: RoundSummary[];
   matchWinners: SeatIndex[];
+  // Seats the current phase is waiting on to ack.
+  waitingOn: SeatIndex[];
 
   // ---- Redacted per-seat slots ----
   yourSeat: SeatIndex | null;
-  // Your own stack, bottom→top. Owning seat only.
+  // Your own face-down stack, bottom→top. Owning seat only.
   yourStack: Disk[];
-  // What disks you still have in your stash (off-table).
-  yourRemaining: { roses: number; skulls: number };
+  // Disks in your hand (off-table).
+  yourRemaining: DiskCounts;
   yourAckPending: boolean;
 }

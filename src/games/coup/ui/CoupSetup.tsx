@@ -1,6 +1,6 @@
+import { launchGame } from '@/ui/shared/launch';
+import { OnlineHostToggle } from '@/ui/shared/OnlineHostToggle';
 import { useMemo, useState } from 'react';
-import { useGameStore } from '@/store/gameStore';
-import { useNetworkStore } from '@/store/networkStore';
 import { coupModule } from '../module';
 import type { CoupOptions } from '../module';
 import {
@@ -14,17 +14,16 @@ import {
 } from '../characters';
 import type { CoupCharacter, CoupRuleset } from '../state';
 import { validateCharacterSetFull, requiredCharacterCount } from '../setup';
-import { CharacterArt, CategoryBadge } from './CharacterArt';
+import { CardBack, CharacterArt, CategoryBadge, CATEGORY_THEME } from './CharacterArt';
 import styles from './CoupSetup.module.css';
 
-// Local-host setup screen for Coup. The host picks a ruleset preset (classic
-// vs G54 vs G54+Anarchy), edits each player name, then toggles which
-// characters are in this match's deck.
+// Local-host setup screen for Coup. The host picks a ruleset preset
+// (Classic / G54 / G54 + Anarchy), names each seat and marks AI seats, then
+// curates which characters are in this match's deck.
 //
-// Canonical G54 rules: exactly one character per category, total = 5 (Classic
-// or G54) or 6 (G54+Anarchy). We enforce the total strictly, but allow the
-// host to drift off one-per-category — a warning chip surfaces so they know
-// the game may feel uneven.
+// Canonical G54 rules: one character per category, total = 5 (Classic or
+// G54) or 6 (G54 + Anarchy). The total is enforced; drifting off
+// one-per-category only shows a warning.
 
 interface Props {
   onBack: () => void;
@@ -33,9 +32,9 @@ interface Props {
 type PackTab = 'classic' | 'g54' | 'anarchy';
 
 const PACK_LABEL: Record<PackTab, string> = {
-  classic: 'Classic (base)',
-  g54: 'G54 (25-character pool)',
-  anarchy: 'Anarchy expansion',
+  classic: 'Classic court',
+  g54: 'G54 pool (25)',
+  anarchy: 'Anarchy',
 };
 
 const PACK_CHARS: Record<PackTab, CoupCharacter[]> = {
@@ -44,29 +43,45 @@ const PACK_CHARS: Record<PackTab, CoupCharacter[]> = {
   anarchy: G54_ANARCHY_6,
 };
 
+type Preset = 'classic' | 'g54' | 'g54+anarchy';
+
+const PRESETS: Array<{ id: Preset; title: string; blurb: string; showcase: CoupCharacter[] }> = [
+  {
+    id: 'classic',
+    title: 'Classic',
+    blurb: 'The original court: Duke, Assassin, Captain, Ambassador, Contessa. Captain and Ambassador both block steals.',
+    showcase: ['duke', 'assassin', 'contessa'],
+  },
+  {
+    id: 'g54',
+    title: 'G54',
+    blurb: 'Rebellion G54: pick five of 25 roles, ideally one per category, for a new court every game.',
+    showcase: ['banker', 'spy', 'judge'],
+  },
+  {
+    id: 'g54+anarchy',
+    title: 'G54 + Anarchy',
+    blurb: 'G54 plus one Anarchy role: arms dealers, financiers, paramilitaries.',
+    showcase: ['armsDealer', 'paramilitary', 'financier'],
+  },
+];
+
 export function CoupSetup({ onBack }: Props) {
   const [playerCount, setPlayerCount] = useState(4);
-  const [names, setNames] = useState<string[]>([
-    'Player 1',
-    'Player 2',
-    'Player 3',
-    'Player 4',
-    'Player 5',
-    'Player 6',
-  ]);
+  const [names, setNames] = useState<string[]>(() => Array.from({ length: 6 }, (_, i) => `Player ${i + 1}`));
+  const [ai, setAi] = useState<boolean[]>(() => [false, true, true, true, true, true]);
   const [ruleset, setRuleset] = useState<CoupRuleset>('classic');
   const [anarchyOn, setAnarchyOn] = useState(false);
   const [pack, setPack] = useState<PackTab>('classic');
   const [selected, setSelected] = useState<CoupCharacter[]>(() => CLASSIC_FIVE.slice());
   const [online, setOnline] = useState(false);
-  const [roomCode, setRoomCode] = useState('');
 
-  const validation = useMemo(
-    () => validateCharacterSetFull(selected, ruleset, anarchyOn),
-    [selected, ruleset, anarchyOn],
-  );
+  const validation = useMemo(() => validateCharacterSetFull(selected, ruleset, anarchyOn), [selected, ruleset, anarchyOn]);
   const required = requiredCharacterCount(ruleset, anarchyOn);
   const hist = useMemo(() => categoryHistogram(selected), [selected]);
+  const preset: Preset = ruleset === 'classic' ? 'classic' : anarchyOn ? 'g54+anarchy' : 'g54';
+  const aiSeats = Array.from({ length: playerCount }, (_, i) => i).filter((i) => ai[i]);
+  const humans = playerCount - aiSeats.length;
 
   const toggle = (c: CoupCharacter) => {
     if (!CHARACTERS[c].implemented) return;
@@ -77,13 +92,13 @@ export function CoupSetup({ onBack }: Props) {
     });
   };
 
-  const applyPreset = (preset: 'classic' | 'g54' | 'g54+anarchy') => {
-    if (preset === 'classic') {
+  const applyPreset = (p: Preset) => {
+    if (p === 'classic') {
       setRuleset('classic');
       setAnarchyOn(false);
       setSelected(CLASSIC_FIVE.slice());
       setPack('classic');
-    } else if (preset === 'g54') {
+    } else if (p === 'g54') {
       setRuleset('g54');
       setAnarchyOn(false);
       setSelected(G54_BALANCED_DEFAULT.slice());
@@ -98,99 +113,89 @@ export function CoupSetup({ onBack }: Props) {
 
   const startGame = () => {
     if (validation.error) return;
-    const playerNames = Array.from({ length: playerCount }, (_, i) =>
-      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
-    );
+    const playerNames = Array.from({ length: playerCount }, (_, i) => (names[i] ?? '').trim() || `Player ${i + 1}`);
     const opts: CoupOptions = {
-      players: playerNames.map((name) => ({ name, isAI: false })),
+      players: playerNames.map((name, i) => ({ name, isAI: aiSeats.includes(i) })),
       ruleset,
       expansions: anarchyOn ? ['anarchy'] : [],
       characters: selected,
     };
-    if (online) {
-      const code = roomCode.trim();
-      if (!code) return;
-      useNetworkStore.getState().hostRoom(code, 'coup', {
-        seatCount: playerCount,
-        names: playerNames,
-        options: opts as unknown as Record<string, unknown>,
-      });
-      return;
-    }
-    const config = {
-      gameId: 'coup' as const,
-      seats: [],
-      seed: Math.floor(Math.random() * 2 ** 31),
-      gameOptions: opts as unknown as Record<string, unknown>,
-    };
-    const initialState = coupModule.createInitialState(config);
-    useGameStore.getState().startLocalGame(coupModule, initialState, 0);
+    launchGame({ module: coupModule, options: opts, playerNames, aiSeats, online });
   };
 
-  const visibleChars = PACK_CHARS[pack];
-  const baseCats: Array<{ key: string; label: string }> = [
-    { key: 'finance', label: 'Finance' },
-    { key: 'communications', label: 'Communications' },
-    { key: 'force', label: 'Force' },
-    { key: 'specialInterest', label: 'Special Interest' },
-    { key: 'movement', label: 'Movement' },
-  ];
+  const baseCats = ['finance', 'communications', 'force', 'specialInterest', 'movement'] as const;
 
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <button onClick={onBack}>← Back</button>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Coup — Setup</h1>
+        <button className={styles.backBtn} onClick={onBack}>
+          ← Back
+        </button>
+        <div className={styles.titleBlock}>
+          <h1 className={styles.title}>Coup</h1>
+          <p className={styles.tagline}>Bluff, bribe and betray your way to the last seat at court.</p>
+        </div>
+        <div className={styles.headerCards} aria-hidden>
+          <CardBack size={54} className={styles.hc1} />
+          <CharacterArt character="duke" size={54} className={styles.hc2} decorative />
+          <CharacterArt character="assassin" size={54} className={styles.hc3} decorative />
+        </div>
       </header>
 
       <section className={styles.panel}>
         <h3 className={styles.h3}>Ruleset</h3>
-        <div className={styles.rulesetRow}>
-          <button
-            className={`${styles.rulesetBtn} ${ruleset === 'classic' && !anarchyOn ? styles.rulesetActive : ''}`}
-            onClick={() => applyPreset('classic')}
-          >
-            Classic (base)
-          </button>
-          <button
-            className={`${styles.rulesetBtn} ${ruleset === 'g54' && !anarchyOn ? styles.rulesetActive : ''}`}
-            onClick={() => applyPreset('g54')}
-          >
-            G54
-          </button>
-          <button
-            className={`${styles.rulesetBtn} ${ruleset === 'g54' && anarchyOn ? styles.rulesetActive : ''}`}
-            onClick={() => applyPreset('g54+anarchy')}
-          >
-            G54 + Anarchy
-          </button>
-          <span style={{ marginLeft: 12, color: '#94a3b8', fontSize: 12 }}>
-            {ruleset === 'classic'
-              ? 'Cross-blocking. Captain + Ambassador both block steal.'
-              : 'Same-role only blocking. Canonical G54 = one character per category.'}
-          </span>
+        <div className={styles.presetRow} role="radiogroup" aria-label="Ruleset">
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              role="radio"
+              aria-checked={preset === p.id}
+              className={`${styles.presetCard} ${preset === p.id ? styles.presetOn : ''}`}
+              onClick={() => applyPreset(p.id)}
+            >
+              <span className={styles.presetFan} aria-hidden>
+                {p.showcase.map((c, i) => (
+                  <span key={c} style={{ ['--k' as string]: i - 1 }}>
+                    <CharacterArt character={c} size={46} decorative />
+                  </span>
+                ))}
+              </span>
+              <span className={styles.presetTitle}>{p.title}</span>
+              <span className={styles.presetBlurb}>{p.blurb}</span>
+            </button>
+          ))}
         </div>
       </section>
 
       <section className={styles.panel}>
-        <h3 className={styles.h3}>Players</h3>
-        <div className={styles.countControls}>
-          {[2, 3, 4, 5, 6].map((n) => (
-            <button
-              key={n}
-              className={n === playerCount ? styles.countActive : ''}
-              onClick={() => setPlayerCount(n)}
-            >
-              {n}
-            </button>
-          ))}
+        <div className={styles.panelHead}>
+          <h3 className={styles.h3}>Seats at court</h3>
+          <div className={styles.countControls} role="radiogroup" aria-label="Number of players">
+            {[2, 3, 4, 5, 6].map((n) => (
+              <button
+                key={n}
+                type="button"
+                role="radio"
+                aria-checked={n === playerCount}
+                className={n === playerCount ? styles.countActive : ''}
+                onClick={() => setPlayerCount(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className={styles.nameGrid}>
+        <div className={styles.seatGrid}>
           {Array.from({ length: playerCount }, (_, i) => (
-            <label key={i} className={styles.nameRow}>
-              <span className={styles.seatNumber}>{i + 1}</span>
+            <div key={i} className={`${styles.seatRow} ${ai[i] ? styles.seatAI : ''}`}>
+              <span className={styles.seatNumber} aria-hidden>
+                {['I', 'II', 'III', 'IV', 'V', 'VI'][i]}
+              </span>
               <input
-                value={names[i] ?? `Player ${i + 1}`}
+                aria-label={`Seat ${i + 1} name`}
+                value={names[i] ?? ''}
+                placeholder={`Player ${i + 1}`}
                 onChange={(e) =>
                   setNames((cur) => {
                     const next = cur.slice();
@@ -200,147 +205,107 @@ export function CoupSetup({ onBack }: Props) {
                 }
                 maxLength={20}
               />
-            </label>
+              <div className={styles.seatToggle} role="radiogroup" aria-label={`Seat ${i + 1} controller`}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!ai[i]}
+                  className={!ai[i] ? styles.toggleOn : ''}
+                  onClick={() => setAi((cur) => cur.map((v, k) => (k === i ? false : v)))}
+                >
+                  Human
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!!ai[i]}
+                  className={ai[i] ? styles.toggleOn : ''}
+                  onClick={() => setAi((cur) => cur.map((v, k) => (k === i ? true : v)))}
+                >
+                  AI
+                </button>
+              </div>
+            </div>
           ))}
         </div>
+        <p className={styles.subtitle}>
+          {humans === 0
+            ? 'All seats are AI: you will watch the court from the gallery.'
+            : humans === 1
+              ? 'One human against the AI court.'
+              : online
+                ? `${humans} human seats; friends claim them from the lobby.`
+                : `${humans} humans pass the device; secrets are covered at every handoff.`}
+        </p>
       </section>
 
       <section className={styles.panel}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <h3 className={styles.h3} style={{ margin: 0 }}>Characters in this match</h3>
-          <div style={{ fontSize: 14, color: validation.error ? '#f87171' : '#cbd5e1' }}>
-            <strong>{selected.length}</strong> / {required}
+        <div className={styles.panelHead}>
+          <h3 className={styles.h3}>The court deck</h3>
+          <div className={`${styles.counter} ${validation.error ? styles.counterBad : ''}`} aria-live="polite">
+            <strong>{selected.length}</strong> / {required} roles
           </div>
         </div>
         <p className={styles.subtitle}>
-          Canonical G54 plays with one character from each category (5 total; 6 with Anarchy). You
-          can drift off-balance — we&apos;ll just warn you.
+          Three copies of each role go into the deck. Canonical G54 takes one role from each category ({required} total
+          {anarchyOn ? ' with Anarchy' : ''}). You can drift off-balance; we&apos;ll warn you.
         </p>
-        <div className={styles.packTabs}>
+        <div className={styles.packTabs} role="tablist" aria-label="Role pool">
           {(['classic', 'g54', 'anarchy'] as PackTab[]).map((t) => (
-            <button
-              key={t}
-              className={`${styles.packTab} ${pack === t ? styles.packTabActive : ''}`}
-              onClick={() => setPack(t)}
-            >
+            <button key={t} type="button" role="tab" aria-selected={pack === t} className={`${styles.packTab} ${pack === t ? styles.packTabActive : ''}`} onClick={() => setPack(t)}>
               {PACK_LABEL[t]}
             </button>
           ))}
         </div>
         <div className={styles.charGrid}>
-          {visibleChars.map((c) => (
-            <CharCard
-              key={c}
-              character={c}
-              checked={selected.includes(c)}
-              onToggle={() => toggle(c)}
-            />
+          {PACK_CHARS[pack].map((c, i) => (
+            <CharCard key={c} character={c} index={i} checked={selected.includes(c)} full={selected.length >= required} onToggle={() => toggle(c)} />
           ))}
         </div>
 
         {ruleset === 'g54' && (
-          <div className={styles.poolPreview} style={{ marginTop: 12 }}>
-            <strong>Category balance</strong>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-              {baseCats.map((cat) => {
-                const n = hist[cat.key as keyof typeof hist] ?? 0;
-                const ok = n === 1;
-                return (
-                  <span
-                    key={cat.key}
-                    style={{
-                      padding: '2px 8px',
-                      border: `1px solid ${ok ? '#22c55e' : '#fbbf24'}`,
-                      color: ok ? '#bbf7d0' : '#fde68a',
-                      borderRadius: 4,
-                      fontSize: 11,
-                    }}
-                  >
-                    {cat.label}: {n}
-                  </span>
-                );
-              })}
-              {anarchyOn && (
-                <span
-                  style={{
-                    padding: '2px 8px',
-                    border: `1px solid ${hist.anarchy === 1 ? '#22c55e' : '#fbbf24'}`,
-                    color: hist.anarchy === 1 ? '#bbf7d0' : '#fde68a',
-                    borderRadius: 4,
-                    fontSize: 11,
-                  }}
-                >
-                  Anarchy: {hist.anarchy}
+          <div className={styles.balance}>
+            {baseCats.map((cat) => {
+              const n = hist[cat];
+              return (
+                <span key={cat} className={`${styles.balanceChip} ${n === 1 ? styles.balanceOk : styles.balanceWarn}`} style={{ ['--gem' as string]: CATEGORY_THEME[cat].gem }}>
+                  {CATEGORY_THEME[cat].label}: {n}
                 </span>
-              )}
-            </div>
+              );
+            })}
+            {anarchyOn && (
+              <span className={`${styles.balanceChip} ${hist.anarchy === 1 ? styles.balanceOk : styles.balanceWarn}`} style={{ ['--gem' as string]: CATEGORY_THEME.anarchy.gem }}>
+                Anarchy: {hist.anarchy}
+              </span>
+            )}
           </div>
         )}
 
         <div className={styles.poolPreview}>
           {validation.error && <div className={styles.poolError}>⚠ {validation.error}</div>}
-          {!validation.error && validation.warning && (
-            <div
-              style={{
-                background: '#3f2c0a',
-                border: '1px solid #b45309',
-                color: '#fde68a',
-                padding: '6px 10px',
-                borderRadius: 4,
-                marginBottom: 8,
-              }}
-            >
-              ⚠ {validation.warning}
-            </div>
-          )}
-          <strong>Selected ({selected.length}):</strong>
+          {!validation.error && validation.warning && <div className={styles.poolWarn}>⚠ {validation.warning}</div>}
           <div className={styles.poolList}>
-            {selected.length === 0 && <span style={{ color: '#94a3b8' }}>None</span>}
+            {selected.length === 0 && <span className={styles.subtitle}>No roles chosen yet.</span>}
             {selected.map((c) => (
-              <span key={c} className={styles.poolChip}>
-                <CategoryBadge character={c} /> {CHARACTERS[c].name}
-              </span>
+              <button key={c} type="button" className={styles.poolChip} onClick={() => toggle(c)} aria-label={`Remove ${CHARACTERS[c].name}`}>
+                <CharacterArt character={c} size={30} decorative />
+                <span>{CHARACTERS[c].name}</span>
+                <span aria-hidden>×</span>
+              </button>
             ))}
           </div>
-          <p style={{ marginTop: 8, color: '#94a3b8', fontSize: 12 }}>
-            Deck size: {selected.length * 3} cards · {playerCount} players × 2 starting influences ={' '}
-            {playerCount * 2} dealt, {Math.max(0, selected.length * 3 - playerCount * 2)} remain in the deck.
+          <p className={styles.deckMath}>
+            Deck: {selected.length * 3} cards · {playerCount * 2} dealt to {playerCount} players ·{' '}
+            {Math.max(0, selected.length * 3 - playerCount * 2)} left in the court deck.
           </p>
         </div>
       </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Multiplayer</h3>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <input
-            type="checkbox"
-            checked={online}
-            onChange={(e) => setOnline(e.target.checked)}
-          />
-          <span>Host an online room (other players join with the room code)</span>
-        </label>
-        {online && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
-            <input
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value)}
-              placeholder="any string (share with friends)"
-              maxLength={32}
-              style={{ padding: 6, minWidth: 240 }}
-            />
-          </div>
-        )}
-      </section>
+      <OnlineHostToggle online={online} onChange={setOnline} />
 
       <footer className={styles.footer}>
-        <button
-          className={styles.startButton}
-          disabled={!!validation.error || (online && !roomCode.trim())}
-          onClick={startGame}
-          title={validation.error ?? validation.warning ?? ''}
-        >
-          {online ? 'Open lobby →' : 'Start game →'}
+        <button className={styles.startButton} disabled={!!validation.error} onClick={startGame} title={validation.error ?? validation.warning ?? ''}>
+          {online ? 'Open the lobby' : 'Convene the court'}
         </button>
       </footer>
     </div>
@@ -349,39 +314,44 @@ export function CoupSetup({ onBack }: Props) {
 
 function CharCard({
   character,
+  index,
   checked,
+  full,
   onToggle,
 }: {
   character: CoupCharacter;
+  index: number;
   checked: boolean;
+  full: boolean;
   onToggle: () => void;
 }) {
   const spec = CHARACTERS[character];
   const locked = !spec.implemented;
-  const cls = [
-    styles.charCard,
-    checked && styles.charCardOn,
-    locked && styles.charCardLocked,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const blocked = !checked && full;
   return (
     <button
       type="button"
-      className={cls}
+      className={`${styles.charCard} ${checked ? styles.charCardOn : ''} ${blocked ? styles.charCardFull : ''}`}
+      style={{ ['--i' as string]: index }}
       onClick={onToggle}
       disabled={locked}
-      title={locked ? 'Coming soon — character is shown for reference only' : 'Toggle this character'}
+      aria-pressed={checked}
+      title={blocked ? 'Deck is full: remove a role first' : checked ? 'Remove from the deck' : 'Add to the deck'}
     >
-      <CharacterArt character={character} size={48} faded={locked} />
-      <div style={{ minWidth: 0 }}>
-        <div className={styles.charName}>
-          <CategoryBadge character={character} />
-          <span>{spec.name}</span>
-        </div>
-        <div className={styles.charDesc}>{spec.description}</div>
-      </div>
-      <div style={{ fontSize: 18 }}>{checked ? '✓' : ''}</div>
+      <span className={styles.charArt}>
+        <CharacterArt character={character} size={64} faded={locked} decorative />
+        {checked && (
+          <span className={styles.check} aria-hidden>
+            ✓
+          </span>
+        )}
+      </span>
+      <span className={styles.charText}>
+        <span className={styles.charName}>
+          {spec.name} <CategoryBadge character={character} />
+        </span>
+        <span className={styles.charDesc}>{spec.description}</span>
+      </span>
     </button>
   );
 }

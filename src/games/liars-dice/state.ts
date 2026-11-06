@@ -4,12 +4,13 @@ import type { SeatIndex } from '@/engine/types';
 // Liar's Dice — host state
 //
 // Each player rolls dice in a cup; only they see the result. On a turn,
-// raise the bid (more dice OR higher face) or call "liar". If the call is
-// wrong (the bid existed), the caller loses a die; if right, the bidder
-// loses a die. Last player standing wins.
+// raise the bid or call "liar". If the call is wrong (the bid existed), the
+// caller loses a die; if right, the bidder loses a die. Last player standing
+// wins.
 //
 // Optional rules:
-//  - wildOnes: 1s count as the bid face (except a bid OF 1s, which excludes them).
+//  - wildOnes: 1s count as the bid face (except a bid OF 1s, which counts
+//    only 1s). Bidding 1s uses the Perudo conversion — see rules.ts.
 //  - spotOn: on your turn you may also call "spot on" — claim the bid is
 //    EXACTLY correct. If right, the bidder loses a die; if wrong, you do.
 // ============================================================================
@@ -34,8 +35,7 @@ export interface PlayerState {
   name: string;
   // Current rolled dice (face-up to owner only).
   dice: DieFace[];
-  // Total dice remaining this match (resets to dice.length each round
-  // until they reach 0 = eliminated).
+  // Total dice remaining this match (the next roll uses this many).
   diceCount: number;
   // True once the seat is permanently out.
   eliminated: boolean;
@@ -53,6 +53,8 @@ export type CallKind = 'liar' | 'spotOn';
 export interface RevealRecord {
   // Bid that was challenged.
   bid: Bid;
+  // Who placed it.
+  bidder: SeatIndex;
   // Who called.
   caller: SeatIndex;
   // Which kind of call.
@@ -63,7 +65,8 @@ export interface RevealRecord {
   callerWon: boolean;
   // The seat that lost a die.
   loserSeat: SeatIndex;
-  // Per-seat dice at reveal time (for the recap).
+  // Per-seat dice at reveal time (for the recap). Only ever built from the
+  // dice of the round being resolved; the next roll is never written here.
   allDice: Record<SeatIndex, DieFace[]>;
 }
 
@@ -73,6 +76,11 @@ export interface RoundSummary {
   reveal: RevealRecord;
   // Who was eliminated this round (if anyone).
   eliminatedThisRound: SeatIndex[];
+}
+
+export interface BidLogEntry {
+  seat: SeatIndex;
+  bid: Bid;
 }
 
 export interface LiarsDicePrivateState {
@@ -95,6 +103,8 @@ export interface LiarsDicePrivateState {
   currentBid: Bid | null;
   // Seat that placed the current bid.
   currentBidder: SeatIndex | null;
+  // Every bid placed this round, in order (public: everyone heard them).
+  roundBids: BidLogEntry[];
 
   // ---- Reveal state ----
   lastReveal: RevealRecord | null;
@@ -106,6 +116,8 @@ export interface LiarsDicePrivateState {
   history: RoundSummary[];
   matchWinners: SeatIndex[];
 
+  // Host-only. Never copied into a public view: every roll is derived from
+  // it, so a peer holding it could recompute everyone's dice.
   seed: number;
   rngCursor: number;
 }
@@ -132,13 +144,18 @@ export interface LiarsDicePublicState {
   roundNumber: number;
   wildOnes: boolean;
   spotOn: boolean;
+  startingDice: number;
   currentBid: Bid | null;
   currentBidder: SeatIndex | null;
+  roundBids: BidLogEntry[];
   // Total dice still in play (used for max-count cap on bids).
   totalDice: number;
+  // Only non-null in `revealing` / `roundOver` / `gameOver`.
   lastReveal: RevealRecord | null;
   history: RoundSummary[];
   matchWinners: SeatIndex[];
+  // Seats whose acknowledgement the current ack phase is waiting on.
+  awaitingAck: SeatIndex[];
 
   // ---- Per-seat ----
   yourSeat: SeatIndex | null;

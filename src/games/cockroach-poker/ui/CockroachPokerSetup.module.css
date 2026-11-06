@@ -1,61 +1,144 @@
 .root {
-  padding: 24px;
-  max-width: 760px;
-  margin: 0 auto;
+  position: relative;
+  min-height: 100vh;
+  padding: 24px clamp(14px, 4vw, 40px) 48px;
   display: grid;
-  gap: 20px;
+  gap: 18px;
+  align-content: start;
+  justify-items: center;
+  color: #efe6d2;
+  background:
+    radial-gradient(circle, rgba(0, 0, 0, 0.28) 1px, transparent 1.6px) 0 0 / 7px 7px,
+    radial-gradient(ellipse 60% 30% at 50% 10%, rgba(150, 220, 90, 0.12), transparent 70%),
+    radial-gradient(ellipse 130% 95% at 50% 40%, #3a2347 0%, #24152e 50%, #120a18 100%);
+}
+
+.root > * {
+  width: min(760px, 100%);
 }
 
 .header {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.back {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: #2a1a33;
+  border-color: #6b4f7a;
+}
+
+.hero {
   display: flex;
-  gap: 16px;
-  align-items: center;
+  height: 108px;
+  align-items: flex-end;
+  padding-bottom: 6px;
+}
+
+.heroCard {
+  margin: 0 -12px;
+  line-height: 0;
+  rotate: calc(var(--k) * 7deg);
+  translate: 0 calc(var(--k) * var(--k) * 1.6px);
+  transform-origin: 50% 160%;
+  filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.6));
+  animation: global(sd-deal-in) var(--dur-slow) var(--ease-out) both;
+  transition: translate var(--dur-fast) var(--ease-out);
+}
+
+.heroCard:hover {
+  translate: 0 -12px;
+  z-index: 1;
+}
+
+.heroCard:nth-child(2) {
+  animation-delay: 60ms;
+}
+.heroCard:nth-child(3) {
+  animation-delay: 120ms;
+}
+.heroCard:nth-child(4) {
+  animation-delay: 180ms;
+}
+.heroCard:nth-child(5) {
+  animation-delay: 240ms;
+}
+.heroCard:nth-child(6) {
+  animation-delay: 300ms;
+}
+.heroCard:nth-child(7) {
+  animation-delay: 360ms;
+}
+.heroCard:nth-child(8) {
+  animation-delay: 420ms;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-rogue);
+  font-weight: 400;
+  font-size: clamp(40px, 7vw, 60px);
+  color: #f2e7c9;
+  -webkit-text-stroke: 1px #1d1310;
+  text-shadow:
+    4px 4px 0 #1d1310,
+    0 0 24px rgba(150, 220, 90, 0.35);
+}
+
+.tagline {
+  margin: 0;
+  font-style: italic;
+  color: #cfc2d8;
 }
 
 .panel {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 16px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(30, 18, 36, 0.95), rgba(16, 9, 20, 0.96));
+  border: 3px solid #1d1310;
+  box-shadow:
+    6px 6px 0 #1d1310,
+    inset 0 0 0 1px rgba(201, 180, 138, 0.3);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
 }
 
 .h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #cbd5e1;
-}
-
-.subtitle {
-  margin: 0 0 12px;
-  color: #94a3b8;
-  font-size: 13px;
+  margin: 0 0 10px;
+  font-family: var(--font-rogue);
+  font-weight: 400;
+  font-size: 26px;
+  color: #d9f0a8;
+  text-shadow: 2px 2px 0 #1d1310;
 }
 
 .countControls {
   display: flex;
-  gap: 6px;
-  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
-  flex-wrap: wrap;
 }
 
-.countControls button {
-  width: 44px;
-  height: 36px;
-  border-radius: 8px;
-  background: #1f2937;
-  color: #e2e8f0;
-  border: 1px solid #334155;
-  font-size: 14px;
-  cursor: pointer;
+.countChip {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  font-family: var(--font-rogue);
+  font-size: 22px;
+  color: #1d1310;
+  background: #efe3c4;
+  border: 3px solid #1d1310;
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 #1d1310;
 }
 
-.countControls button.countActive {
-  background: #4d7c0f;
-  border-color: #bef264;
-  color: #ecfccb;
+.countActive {
+  background: #a6e05a;
+  transform: translate(-1px, -2px);
+  box-shadow: 4px 5px 0 #1d1310;
 }
 
 .nameRow {
@@ -68,37 +151,118 @@
 .seatNumber {
   width: 22px;
   text-align: right;
-  color: #64748b;
-  font-size: 13px;
+  font-family: var(--font-rogue);
+  font-size: 19px;
+  color: #b8a9c2;
 }
 
 .nameInput {
   flex: 1;
-  padding: 6px 8px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  color: #e2e8f0;
-  border-radius: 6px;
+  min-width: 0;
+  padding: 7px 10px;
+  color: #1d1310;
+  background: #fffaf0;
+  border: 2px solid #1d1310;
+  border-radius: 8px;
+}
+
+.aiSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 92px;
+  padding: 3px 8px 3px 3px;
+  color: #efe6d2;
+  background: #2a1a33;
+  border: 2px solid #1d1310;
+  border-radius: 999px;
+  box-shadow: 2px 2px 0 #1d1310;
+}
+
+.aiKnob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #efe3c4;
+  border: 2px solid #1d1310;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.aiOn {
+  background: #5b2d6b;
+}
+
+.aiOn .aiKnob {
+  background: #a6e05a;
+  transform: scale(1.1);
+}
+
+.aiLabel {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #b8a9c2;
+}
+
+.howto {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  line-height: 1.5;
 }
 
 .footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
 }
 
 .startButton {
-  background: #65a30d;
-  color: #f7fee7;
-  font-weight: 700;
-  padding: 12px 22px;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  cursor: pointer;
+  font-family: var(--font-rogue);
+  font-size: 24px;
+  padding: 8px 26px;
+  color: #1d1310;
+  background: #a6e05a;
+  border: 3px solid #1d1310;
+  border-radius: 12px;
+  box-shadow: 5px 5px 0 #1d1310;
 }
 
-.startButton:disabled {
-  background: #334155;
-  color: #94a3b8;
-  cursor: not-allowed;
+.startButton:hover:not(:disabled) {
+  background: #b9ee70;
+  border-color: #1d1310;
+}
+
+/* Keep the chips' own look on hover (the global button:hover repaints). */
+.countChip:hover:not(:disabled) {
+  background: #fff6dc;
+  border-color: #1d1310;
+}
+
+.countActive:hover:not(:disabled) {
+  background: #b9ee70;
+}
+
+.aiSwitch:hover:not(:disabled) {
+  background: #3a2447;
+  border-color: #1d1310;
+}
+
+.aiOn:hover:not(:disabled) {
+  background: #6e3a80;
+}
+
+/* Knob slides to the right when the seat is AI. */
+.aiOn {
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  padding: 4px 4px 4px 10px;
 }
