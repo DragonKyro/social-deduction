@@ -12,7 +12,8 @@
     "typecheck": "tsc",
     "deploy:rules": "npx -y firebase-tools@latest deploy --only database",
     "rules:merge": "node scripts/merge-db-rules.mjs",
-    "rules:smoke": "node scripts/smoke-rules.mjs"
+    "rules:smoke": "node scripts/smoke-rules.mjs",
+    "fix-lock": "node scripts/fix-lockfile.mjs"
   },
   "dependencies": {
     "@fontsource/cinzel": "^5.3.0",

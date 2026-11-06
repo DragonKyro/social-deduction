@@ -90,6 +90,8 @@ See each game's README:
 - `npm run test` — Vitest watch
 - `npm run test:run` — Vitest single run
 - `npm run typecheck` — `tsc` (no emit)
+- `npm run fix-lock` — rewrite `package-lock.json` URLs to registry.npmjs.org. **Run after any install that changes the lockfile.** Kyle's machine sets `NPM_CONFIG_REGISTRY` to a corporate Artifactory mirror (env beats `.npmrc`), so installs record mirror URLs that GitHub Actions can't reach; CI fails fast on them.
+- `npm run deploy:rules` / `npm run rules:smoke` — merge-deploy the RTDB rules (shared database), then verify them live.
 
 ## Deployment
 

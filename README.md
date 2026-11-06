@@ -14,7 +14,10 @@ npm run dev          # http://localhost:5173/social-deduction/
 npm run test:run     # vitest single-run
 npm run typecheck    # tsc, no emit
 npm run build        # production build to dist/
+npm run fix-lock     # after any install: point package-lock.json back at registry.npmjs.org
 ```
+
+**Behind a corporate npm mirror?** If your machine sets `NPM_CONFIG_REGISTRY` (e.g. an Artifactory mirror), that overrides this repo's `.npmrc`. `npm install` then writes mirror URLs into `package-lock.json`, which GitHub Actions can't reach. Run `npm run fix-lock` after any install that changes the lockfile. CI refuses a lockfile with non-public URLs.
 
 ## How multiplayer works
 
@@ -51,7 +54,7 @@ src/
     game/           # GameRouter (lazy per-game views) + online overlay (chat, banners)
     shared/         # Theme, fonts, motion library, FlipCard, SVG helpers, launcher
 database.rules.json # Rules for the /social-deduction key only
-scripts/            # merge-db-rules (safe deploy), smoke-rules (live rules check)
+scripts/            # merge-db-rules (safe deploy), smoke-rules (live rules check), fix-lockfile
 ```
 
 ## Status
@@ -111,11 +114,20 @@ scripts/            # merge-db-rules (safe deploy), smoke-rules (live rules chec
   - themed tables and setup screens
   - per-seat AI toggles on every setup screen
   - reduced-motion support
-- [x] CI fails on type errors and runs the test suite (579 tests).
+- [x] **Database rules deployed** (Nov 6 2026), and the live smoke test passes: a player can't read another player's view, the host's saved state or the inbox, can't write as someone else, and can't take over a room.
+- [x] **CI** fails on type errors, runs the test suite (579 tests), and refuses a lockfile that points at a private npm mirror. Every package resolves from the public npm registry.
 
 ### Left to do
 
-- [ ] **Deploy the database rules.** Run `npm run deploy:rules` once (it merges into the shared rules), then `npm run rules:smoke`. Online play gets "permission denied" until this is done.
+**Needs a decision or a playtest**
+
+- [ ] **Online playtest across real devices.** Online play is covered by in-memory transport tests and the live rules check, but hasn't been played end-to-end on several phones and laptops yet.
+- [ ] **Confirm two rule choices.**
+  - Secret Hitler's "rebalanced 6p" option now starts with one Fascist policy enacted (the secrethitler.io variant).
+  - In Coup, a successfully challenged action refunds its cost; a blocked one keeps it spent.
+
+**Features**
+
 - [ ] **Phase 8: phase-gated chat.** ONUW night silence, and dead-player spectate for Secret Hitler and Avalon. Chat works now but isn't gated by phase.
 - [ ] **Phase 9: replay.** The host records the action log; replay runs `applyAction` from `createInitialState` and redacts per seat.
 - [ ] **Phase 4b: Avalon optional modules** (Lady of the Lake, Excalibur, Two Lancelots). Scaffolded only, and unreachable from the UI.
@@ -124,7 +136,12 @@ scripts/            # merge-db-rules (safe deploy), smoke-rules (live rules chec
   - Done: match seeds are 53 bits from `crypto`. The generator went from 32-bit mulberry32 to 128-bit sfc32. Hidden-draw streams use `subSeed`, so they no longer collapse to 32 bits.
   - Left: it's still a seeded, non-cryptographic PRNG, so a 2^53 search over the seed is theoretically possible. The full fix is host-only crypto entropy for hidden draws, passed through `GameConfig`.
 - [ ] **Liar's Dice option:** Perudo-style "calza" (the caller gains a die). Spot-on currently uses the README's house rule.
+- [ ] **Show AI seats to online guests.** Guests can't currently tell which seats are AI during a match.
+
+**Clean-up**
+
 - [ ] **Shared hot-seat hand-off hook.** Several games now carry their own copy (`ui/useHotSeat.ts`); promote one to `src/ui/shared/`.
+- [ ] **Move the word-association lexicon.** Codenames and Cross Clues share it from `games/codenames/lexicon.ts`; it belongs in `src/words/`.
 - [ ] **Bundle.** Game views, setup screens and Firebase are already lazy chunks. The engines and word packs, pulled in through the registry, still make the main chunk about 520 KB.
 
 ## Non-goals
@@ -136,7 +153,7 @@ scripts/            # merge-db-rules (safe deploy), smoke-rules (live rules chec
 
 ## Deployment
 
-GitHub Pages auto-deploys on push to `main` via `.github/workflows/deploy.yml`, which typechecks, tests and builds. The Vite `base` is `/social-deduction/` to match the repo name. Database rules deploy separately (see above).
+GitHub Pages auto-deploys on push to `main` via `.github/workflows/deploy.yml`. It checks the lockfile uses the public registry, then typechecks, tests and builds. The Vite `base` is `/social-deduction/` to match the repo name. Database rules deploy separately (see above).
 
 ## Inspiration
 
