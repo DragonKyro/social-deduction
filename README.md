@@ -2,6 +2,8 @@
 
 A multi-game social-deduction app, hosted on GitHub Pages. Play on one device (pass-and-play, or against AI seats) or online with friends. AI seats are supported everywhere.
 
+**▶ Play:** https://DragonKyro.github.io/social-deduction/
+
 **Games:** One Night Ultimate Werewolf · Secret Hitler · Avalon · Coup · Codenames · Cross Clues · Love Letter · Skull · Liar's Dice · Liar's Poker · Cockroach Poker
 
 ## Quickstart
