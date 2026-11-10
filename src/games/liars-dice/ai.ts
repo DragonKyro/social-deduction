@@ -1,198 +1,156 @@
-import { makeRng, rngInt } from '@/engine/rng';
+import { makeRng, rngFloat } from '@/engine/rng';
+import type { RngState } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { LiarsDiceAction } from './actions';
-import type {
-  Bid,
-  DieFace,
-  LiarsDicePrivateState,
-} from './state';
+import { countMatching, legalBids } from './rules';
+import type { Bid, LiarsDicePrivateState, LiarsDicePublicState } from './state';
+import { viewFor } from './view';
 
+// ============================================================================
 // Liar's Dice AI.
 //
-// Idea: from the AI's own dice we know the "guaranteed" count of each face.
-// Other players' dice are unknown — model each as uniform 1..6, with the
-// adjustment that a 1 also counts when wildOnes is enabled (unless the bid
-// face IS 1). The probability that the actual count meets-or-exceeds the
-// bid drives raise/call decisions.
+// Fairness: the AI decides from `viewFor(state, seat)` only — the same
+// redacted view a human in that seat gets. Its own dice are known; every
+// other die is modelled as an independent uniform roll (binomial prior),
+// never read. The private seed is used purely as an entropy source for the
+// bluff mixer (hashed with seat / round / bid number), never to reconstruct
+// rolls.
+//
+// Decision: score each option by the chance it costs us a die —
+//   call liar  → P(bid is true)
+//   spot on    → 1 − P(count is exact)
+//   raise b    → P(b is false) × P(someone calls it)
+// with a little jitter, plus a bluff mixer that sometimes bids a face we
+// don't hold so our bids don't map 1:1 onto our cup.
+// ============================================================================
 
-function aliveSeats(state: LiarsDicePrivateState): SeatIndex[] {
-  return state.seats
-    .map((s) => s.index)
-    .filter((i) => !state.players[i]!.eliminated);
-}
-
-function unseenDiceCount(
-  state: LiarsDicePrivateState,
-  ownSeat: SeatIndex,
-): number {
-  return aliveSeats(state)
-    .filter((i) => i !== ownSeat)
-    .reduce((sum, i) => sum + state.players[i]!.diceCount, 0);
-}
-
-// Probability that a single unseen die contributes to face `face`.
-function pPerDie(state: LiarsDicePrivateState, face: DieFace): number {
-  if (state.wildOnes && face !== 1) return 2 / 6;
-  return 1 / 6;
-}
-
-// Binomial PMF: P(k of n with p).
-function pmf(n: number, k: number, p: number): number {
-  if (k < 0 || k > n) return 0;
-  // log-binomial to avoid overflow
-  let logC = 0;
-  for (let i = 1; i <= k; i++) {
-    logC += Math.log(n - k + i) - Math.log(i);
-  }
-  return Math.exp(logC + k * Math.log(p) + (n - k) * Math.log(1 - p));
-}
-
-// Probability that the bid is true: actual >= bid.count (or === for spot-on).
-function pBidTrue(
-  state: LiarsDicePrivateState,
-  ownSeat: SeatIndex,
-  bid: Bid,
-): { atLeast: number; exact: number } {
-  // My contribution.
-  const mine = state.players[ownSeat]!.dice.reduce((s, d) => {
-    if (d === bid.face) return s + 1;
-    if (state.wildOnes && bid.face !== 1 && d === 1) return s + 1;
-    return s;
-  }, 0);
-  const n = unseenDiceCount(state, ownSeat);
-  const p = pPerDie(state, bid.face);
-  const need = Math.max(0, bid.count - mine);
-  // P(at least `need` successes out of n with prob p)
-  let atLeast = 0;
-  let exact = 0;
-  for (let k = 0; k <= n; k++) {
-    const pk = pmf(n, k, p);
-    if (k >= need) atLeast += pk;
-    if (k === need) exact = pk;
-  }
-  return { atLeast, exact };
-}
-
-// Pick the cheapest legal raise (increment count by 1 OR increment face if
-// possible). Prefer the choice with the highest "true" probability.
-function nextRaise(
-  state: LiarsDicePrivateState,
-  ownSeat: SeatIndex,
-): Bid | null {
-  const prev = state.currentBid;
-  const totalDice = aliveSeats(state).reduce(
-    (s, i) => s + state.players[i]!.diceCount,
-    0,
-  );
-
-  const candidates: Bid[] = [];
-  if (prev === null) {
-    // Open bid — pick a reasonable starting bid: 1× our most common face
-    // (or 2× if we have multiples).
-    const counts: Record<DieFace, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
-    for (const d of state.players[ownSeat]!.dice) counts[d] += 1;
-    let bestFace: DieFace = 2;
-    let bestCount = 0;
-    for (let f = 2; f <= 6; f++) {
-      const fa = f as DieFace;
-      if (counts[fa] > bestCount) {
-        bestCount = counts[fa];
-        bestFace = fa;
-      }
-    }
-    candidates.push({ count: Math.max(1, bestCount + 1), face: bestFace });
-  } else {
-    // Same count, higher face (if possible).
-    if (prev.face < 6) {
-      candidates.push({ count: prev.count, face: (prev.face + 1) as DieFace });
-    }
-    // Higher count (+1), same or different face.
-    if (prev.count + 1 <= totalDice) {
-      candidates.push({ count: prev.count + 1, face: prev.face });
-      for (let f = 2; f <= 6; f++) {
-        const fa = f as DieFace;
-        if (fa !== prev.face) {
-          candidates.push({ count: prev.count + 1, face: fa });
-        }
-      }
-    }
-  }
-
-  // Score all candidates.
-  const scored = candidates.map((c) => ({
-    bid: c,
-    p: pBidTrue(state, ownSeat, c).atLeast,
-  }));
-  const safe = scored.filter((x) => x.p >= 0.5);
-
-  // Bluff mixer: with some probability, place a slightly LESS safe bid (a
-  // semi-bluff). This breaks the rule "the bot only bids when ≥50% safe",
-  // which is exploitable. Bluff rate scales with how many dice remain (more
-  // dice → less risky to bluff; opponents have less posterior info).
-  const ownDice = state.players[ownSeat]!.diceCount;
-  const bluffP = Math.min(0.3, 0.06 + 0.04 * (totalDice - ownDice));
-  const j = rngInt(makeRng((state.seed ^ (ownSeat * 71) ^ (state.roundNumber * 13)) >>> 0), 100) / 100;
-  const wantBluff = j < bluffP;
-
-  if (wantBluff) {
-    // Pick a semi-safe (0.3-0.5) candidate if one exists.
-    const semi = scored.filter((x) => x.p >= 0.3 && x.p < 0.5);
-    if (semi.length > 0) {
-      semi.sort((a, b) => b.p - a.p);
-      return semi[0]!.bid;
-    }
-  }
-
-  if (safe.length === 0) {
-    return candidates[0] ?? null;
-  }
-  safe.sort((a, b) => b.p - a.p);
-  return safe[0]!.bid;
-}
+const P_CALLED = 0.62;
 
 export function aiChooseAction(
   state: LiarsDicePrivateState,
   seat: SeatIndex,
 ): LiarsDiceAction | null {
-  if (state.players[seat]!.eliminated) return null;
+  if (!state.players[seat]) return null;
+  const view = viewFor(state, seat);
+  const rng = makeRng(mix(state.seed, seat, view.roundNumber, view.roundBids.length, view.phase.length));
+  return decideFromView(view, rng);
+}
 
-  switch (state.phase) {
+/** Pure decision from a redacted view. Exported for fairness tests. */
+export function decideFromView(view: LiarsDicePublicState, rng: RngState): LiarsDiceAction | null {
+  const seat = view.yourSeat;
+  if (seat === null) return null;
+  const me = view.players[seat];
+  if (!me || me.eliminated) return null;
+
+  switch (view.phase) {
     case 'rollPending':
-      if (state.players[seat]!.rollAcked) return null;
-      return { type: 'ackRoll', bySeat: seat };
-
+      return view.yourAckPending ? { type: 'ackRoll', bySeat: seat } : null;
     case 'revealing':
-      if (state.revealAcked[seat]) return null;
-      return { type: 'ackReveal', bySeat: seat };
-
+      return view.yourAckPending ? { type: 'ackReveal', bySeat: seat } : null;
     case 'roundOver':
-      if (state.roundOverAcked[seat]) return null;
-      return { type: 'ackRoundOver', bySeat: seat };
-
-    case 'bidding': {
-      if (seat !== state.currentSeat) return null;
-      const prev = state.currentBid;
-      if (prev !== null) {
-        // Should we call?
-        const { atLeast, exact } = pBidTrue(state, seat, prev);
-        // jitter for non-determinism by seat+round
-        const rng = makeRng(state.seed ^ (state.roundNumber * 7) ^ (seat * 11));
-        const j = rngInt(rng, 10) / 100;
-        if (atLeast < 0.25 + j) {
-          return { type: 'call', bySeat: seat, kind: 'liar' };
-        }
-        if (state.spotOn && exact > 0.35) {
-          return { type: 'call', bySeat: seat, kind: 'spotOn' };
-        }
-      }
-      const raise = nextRaise(state, seat);
-      if (raise) return { type: 'placeBid', bySeat: seat, bid: raise };
-      // If there's nothing legal, must call (only happens at game-over edge).
-      if (prev !== null) return { type: 'call', bySeat: seat, kind: 'liar' };
-      return null;
-    }
-
+      return view.yourAckPending ? { type: 'ackRoundOver', bySeat: seat } : null;
     case 'gameOver':
       return null;
+    case 'bidding':
+      if (view.currentSeat !== seat) return null;
+      return chooseBidOrCall(view, seat, rng);
   }
+}
+
+function chooseBidOrCall(view: LiarsDicePublicState, seat: SeatIndex, rng: RngState): LiarsDiceAction {
+  const prev = view.currentBid;
+  const legal = legalBids(prev, view.totalDice, view.wildOnes);
+  const scored = legal.map((bid) => ({ bid, p: odds(view, bid).atLeast }));
+
+  if (prev === null) {
+    return { type: 'placeBid', bySeat: seat, bid: openingBid(scored, rng) };
+  }
+
+  const prevOdds = odds(view, prev);
+  type Option = { risk: number; action: LiarsDiceAction };
+  const options: Option[] = [];
+  const jitter = () => (rngFloat(rng) - 0.5) * 0.08;
+
+  options.push({ risk: prevOdds.atLeast + jitter(), action: { type: 'call', bySeat: seat, kind: 'liar' } });
+  if (view.spotOn) {
+    options.push({
+      risk: 1 - prevOdds.exact + jitter(),
+      action: { type: 'call', bySeat: seat, kind: 'spotOn' },
+    });
+  }
+
+  // Raises: prefer the safest, then the cheapest.
+  const raises = scored
+    .slice()
+    .sort((a, b) => b.p - a.p || a.bid.count - b.bid.count)
+    .slice(0, 6);
+  for (const r of raises) {
+    options.push({
+      risk: (1 - r.p) * P_CALLED + jitter(),
+      action: { type: 'placeBid', bySeat: seat, bid: r.bid },
+    });
+  }
+
+  // Bluff mixer: occasionally make a semi-bluff raise instead.
+  const ownDice = view.yourDice.length;
+  const bluffP = Math.min(0.25, 0.08 + 0.02 * (view.totalDice - ownDice));
+  if (prevOdds.atLeast > 0.35 && rngFloat(rng) < bluffP) {
+    const semi = scored.filter((x) => x.p >= 0.3 && x.p < 0.55);
+    if (semi.length > 0) {
+      const pick = semi[Math.floor(rngFloat(rng) * semi.length)]!;
+      return { type: 'placeBid', bySeat: seat, bid: pick.bid };
+    }
+  }
+
+  options.sort((a, b) => a.risk - b.risk);
+  return options[0]!.action;
+}
+
+function openingBid(scored: Array<{ bid: Bid; p: number }>, rng: RngState): Bid {
+  // Push the opening as high as stays comfortably likely, with a random
+  // margin so the opener's count isn't a readable function of the cup.
+  const threshold = 0.6 + rngFloat(rng) * 0.15;
+  const safe = scored.filter((x) => x.p >= threshold);
+  if (safe.length > 0) {
+    // Occasionally open on a face we're merely okay on (masks our best face).
+    if (rngFloat(rng) < 0.2) return safe[Math.floor(rngFloat(rng) * safe.length)]!.bid;
+    safe.sort((a, b) => b.bid.count - a.bid.count || b.p - a.p);
+    return safe[0]!.bid;
+  }
+  const best = scored.slice().sort((a, b) => b.p - a.p || a.bid.count - b.bid.count);
+  return best[0]!.bid;
+}
+
+/** P(actual ≥ bid.count) and P(actual = bid.count) from this seat's knowledge. */
+export function odds(view: LiarsDicePublicState, bid: Bid): { atLeast: number; exact: number } {
+  const mine = countMatching(view.yourDice, bid.face, view.wildOnes);
+  const unseen = Math.max(0, view.totalDice - view.yourDice.length);
+  const p = view.wildOnes && bid.face !== 1 ? 2 / 6 : 1 / 6;
+  const need = bid.count - mine;
+  let atLeast = 0;
+  let exact = 0;
+  for (let k = 0; k <= unseen; k++) {
+    const pk = pmf(unseen, k, p);
+    if (k >= need) atLeast += pk;
+    if (k === need) exact = pk;
+  }
+  return { atLeast: Math.min(1, atLeast), exact };
+}
+
+function pmf(n: number, k: number, p: number): number {
+  if (k < 0 || k > n) return 0;
+  let logC = 0;
+  for (let i = 1; i <= k; i++) logC += Math.log(n - k + i) - Math.log(i);
+  return Math.exp(logC + k * Math.log(p) + (n - k) * Math.log(1 - p));
+}
+
+function mix(...parts: number[]): number {
+  let h = 0x811c9dc5;
+  for (const part of parts) {
+    h ^= part >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+    h ^= h >>> 15;
+  }
+  return h >>> 0;
 }

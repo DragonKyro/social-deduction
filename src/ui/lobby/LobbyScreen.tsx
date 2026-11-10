@@ -1,134 +1,209 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { GAMES } from '@/engine/registry';
 import type { Seat } from '@/engine/types';
+import { inviteLink } from '@/net';
+import type { LobbyState } from '@/net';
 import { useNetworkStore } from '@/store/networkStore';
+import { GameTileArt } from '@/ui/home/GameTileArt';
+import { ChatPanel } from '@/ui/shared/ChatPanel';
+import styles from './LobbyScreen.module.css';
 
-// Online lobby. Two modes share this screen:
-//   - host: shows the room code, the editable seat list (host can mark seats
-//     open / AI, set their own name), per-game options summary, and the
-//     "Start game" button.
-//   - guest: shows the host's broadcast seat list, lets the local user claim
-//     an open seat, and waits for the host to start.
-// Chat is shared.
+// Online lobby. The host sees the room code + invite link, edits seats
+// (open / AI / count) and starts the match; guests claim an open seat and
+// wait. Both share chat. If a match is running, guests who stepped out (or
+// spectators) can return to it from here.
 
 export function LobbyScreen() {
   const role = useNetworkStore((s) => s.role);
   const lobby = useNetworkStore((s) => s.lobby);
   const connection = useNetworkStore((s) => s.connection);
   const roomCode = useNetworkStore((s) => s.roomCode);
-  const myUuid = useNetworkStore((s) => s.uuid);
-  const onlinePeers = useNetworkStore((s) => s.onlinePeers);
-  const displayName = useNetworkStore((s) => s.displayName);
-  const setLocalName = useNetworkStore((s) => s.setLocalName);
   const leaveRoom = useNetworkStore((s) => s.leaveRoom);
+  const error = useNetworkStore((s) => s.error);
+  const clearError = useNetworkStore((s) => s.clearError);
 
-  if (connection === 'connecting') {
+  if (connection === 'connecting' || !lobby) {
     return (
-      <main style={panelStyle}>
-        <h2>Joining room…</h2>
-        <p style={{ color: '#94a3b8' }}>
-          Connecting to room <code>{roomCode}</code>. Waiting for the host's lobby.
-        </p>
-        <button onClick={leaveRoom}>Cancel</button>
-      </main>
-    );
-  }
-
-  if (!lobby) {
-    return (
-      <main style={panelStyle}>
-        <h2>Lobby</h2>
-        <p style={{ color: '#94a3b8' }}>No lobby state. Did the host disconnect?</p>
-        <button onClick={leaveRoom}>Leave</button>
+      <main className={styles.root}>
+        <div className={`${styles.panel} ${styles.connecting}`}>
+          <div className={styles.spinner} aria-hidden />
+          <h2>{role === 'host' ? 'Opening your room…' : 'Joining room…'}</h2>
+          <p className={styles.dim}>
+            {roomCode ? (
+              <>
+                Room <span className={styles.inlineCode}>{roomCode}</span>
+              </>
+            ) : (
+              'Contacting the game server.'
+            )}
+          </p>
+          <button onClick={leaveRoom}>Cancel</button>
+        </div>
       </main>
     );
   }
 
   const mod = GAMES[lobby.gameId];
-  const seatedUuid = lobby.seats.find((s) => s.uuid === myUuid);
+
+  const leave = () => {
+    if (
+      role === 'host' &&
+      typeof window.confirm === 'function' &&
+      !window.confirm('Close this room for everyone?')
+    ) {
+      return;
+    }
+    leaveRoom();
+  };
 
   return (
-    <main style={panelStyle}>
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 16,
-          gap: 12,
-        }}
-      >
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>
-            {mod.displayName} — Lobby ({role})
-          </h1>
-          <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 4 }}>
-            Room code: <code style={{ color: '#cbd5e1' }}>{roomCode}</code> · Share
-            this with friends to let them join.
-          </div>
+    <main className={styles.root}>
+      <header className={styles.hero}>
+        <div className={styles.heroArt} aria-hidden>
+          <GameTileArt id={lobby.gameId} />
         </div>
-        <button onClick={leaveRoom}>Leave</button>
+        <div className={styles.heroBody}>
+          <div className={styles.kicker}>{role === 'host' ? 'Your room' : role === 'spectator' ? 'Watching' : 'Lobby'}</div>
+          <h1 className={styles.title}>{mod.displayName}</h1>
+          {roomCode && <RoomCode code={roomCode} />}
+        </div>
+        <button className={styles.leave} onClick={leave}>
+          {role === 'host' ? 'Close room' : 'Leave'}
+        </button>
       </header>
 
-      <section style={sectionStyle}>
-        <h3 style={h3Style}>Your name</h3>
-        <input
-          value={displayName}
-          onChange={(e) => setLocalName(e.target.value)}
-          style={{ padding: 6, minWidth: 220 }}
-          maxLength={20}
-        />
-      </section>
-
-      {role === 'host' ? (
-        <HostSeatList lobby={lobby} myUuid={myUuid} onlinePeers={onlinePeers} />
-      ) : (
-        <GuestSeatList lobby={lobby} myUuid={myUuid} onlinePeers={onlinePeers} />
+      {error && (
+        <div className={styles.error} role="alert">
+          <span>{error}</span>
+          <button onClick={clearError} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
       )}
 
-      <section style={sectionStyle}>
-        <h3 style={h3Style}>Chat</h3>
-        <ChatPane />
-      </section>
+      <StatusBanners lobby={lobby} />
 
-      {role === 'host' && <HostControls />}
-      {role === 'guest' && !seatedUuid && (
-        <p style={{ color: '#94a3b8', marginTop: 12 }}>Pick an open seat to play.</p>
-      )}
-      {role === 'guest' && seatedUuid && (
-        <p style={{ color: '#94a3b8', marginTop: 12 }}>
-          Seated. Waiting for the host to start…
-        </p>
-      )}
+      <div className={styles.columns}>
+        <div className={styles.mainCol}>
+          <NameCard />
+          {role === 'host' ? <HostSeatList lobby={lobby} /> : <GuestSeatList lobby={lobby} />}
+          {role === 'host' && <HostControls lobby={lobby} />}
+        </div>
+        <aside className={styles.sideCol}>
+          <section className={styles.panel}>
+            <h3 className={styles.h3}>Table talk</h3>
+            <ChatPanel height={260} />
+          </section>
+          <section className={`${styles.panel} ${styles.note}`}>
+            <h3 className={styles.h3}>Secrets stay secret</h3>
+            <p className={styles.dim}>
+              The host’s device deals the game. Each player is sent only their own view, and the server
+              won’t let anyone read another player’s. Use voice chat (e.g. Discord) for table talk if you
+              like.
+            </p>
+          </section>
+        </aside>
+      </div>
     </main>
   );
 }
 
+function RoomCode({ code }: { code: string }) {
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const copy = async (what: 'code' | 'link') => {
+    try {
+      await navigator.clipboard.writeText(what === 'code' ? code : inviteLink(code));
+      setCopied(what);
+      setTimeout(() => setCopied(null), 1600);
+    } catch {
+      // Clipboard blocked: the code is on screen anyway.
+    }
+  };
+  return (
+    <div className={styles.codeRow}>
+      <div className={styles.code} aria-label={`Room code ${code.split('').join(' ')}`}>
+        {code.split('').map((ch, i) => (
+          <span key={i} style={{ '--i': i } as React.CSSProperties}>
+            {ch}
+          </span>
+        ))}
+      </div>
+      <div className={styles.codeActions}>
+        <button onClick={() => copy('code')}>{copied === 'code' ? 'Copied!' : 'Copy code'}</button>
+        <button onClick={() => copy('link')}>{copied === 'link' ? 'Copied!' : 'Copy invite link'}</button>
+      </div>
+    </div>
+  );
+}
+
+function StatusBanners({ lobby }: { lobby: LobbyState }) {
+  const role = useNetworkStore((s) => s.role);
+  const hostUuid = useNetworkStore((s) => s.hostUuid);
+  const onlinePeers = useNetworkStore((s) => s.onlinePeers);
+  const linkUp = useNetworkStore((s) => s.linkUp);
+  const matchHidden = useNetworkStore((s) => s.matchHidden);
+  const resumeMatch = useNetworkStore((s) => s.resumeMatch);
+  const hostOnline = !!hostUuid && (onlinePeers[hostUuid] ?? 0) > 0;
+  return (
+    <>
+      {!linkUp && (
+        <div className={`${styles.banner} ${styles.bannerWarn}`}>Connection lost — reconnecting…</div>
+      )}
+      {role !== 'host' && !hostOnline && linkUp && (
+        <div className={`${styles.banner} ${styles.bannerWarn}`}>
+          The host is offline. Everything resumes when they’re back.
+        </div>
+      )}
+      {role !== 'host' && lobby.inGame && (
+        <div className={`${styles.banner} ${styles.bannerGold}`}>
+          <span>A match is in progress.</span>
+          {matchHidden && <button onClick={resumeMatch}>Return to the match →</button>}
+        </div>
+      )}
+    </>
+  );
+}
+
+function NameCard() {
+  const displayName = useNetworkStore((s) => s.displayName);
+  const setLocalName = useNetworkStore((s) => s.setLocalName);
+  return (
+    <section className={styles.panel}>
+      <label className={styles.nameRow}>
+        <span className={styles.h3}>Your name</span>
+        <input
+          value={displayName}
+          onChange={(e) => setLocalName(e.target.value)}
+          maxLength={20}
+          className={styles.nameInput}
+        />
+      </label>
+    </section>
+  );
+}
+
 // ----------------------------------------------------------------------------
-// Host seat list
+// Seats
 // ----------------------------------------------------------------------------
 
-function HostSeatList({
-  lobby,
-  myUuid,
-  onlinePeers,
-}: {
-  lobby: ReturnType<typeof useNetworkStore.getState>['lobby'];
-  myUuid: string | null;
-  onlinePeers: Record<string, number>;
-}) {
+function HostSeatList({ lobby }: { lobby: LobbyState }) {
   const setLobbySeats = useNetworkStore((s) => s.setLobbySeats);
-  if (!lobby) return null;
+  const myUuid = useNetworkStore((s) => s.uuid);
+  const onlinePeers = useNetworkStore((s) => s.onlinePeers);
   const mod = GAMES[lobby.gameId];
+  const locked = lobby.inGame;
 
   const setSeatCount = (n: number) => {
     const cur = lobby.seats.slice();
     if (n > cur.length) {
-      for (let i = cur.length; i < n; i++) {
-        cur.push({ index: i, uuid: null, name: `Seat ${i + 1}`, isAI: false });
-      }
+      for (let i = cur.length; i < n; i++) cur.push({ index: i, uuid: null, name: `Seat ${i + 1}`, isAI: false });
     } else {
-      cur.length = n;
+      // Never drop the host's own seat.
+      while (cur.length > n) {
+        const last = cur[cur.length - 1]!;
+        if (last.uuid === myUuid) break;
+        cur.pop();
+      }
     }
     setLobbySeats(cur);
   };
@@ -136,72 +211,51 @@ function HostSeatList({
   const toggleAI = (idx: number) => {
     const cur = lobby.seats.slice();
     const seat = cur[idx]!;
-    if (seat.uuid === myUuid) return; // can't AI-flag the host's own seat
-    if (seat.uuid && !seat.isAI) return; // can't AI-flag an occupied human seat
-    cur[idx] = {
-      ...seat,
-      isAI: !seat.isAI,
-      // Mark an AI seat with a stable synthetic uuid so the host loop can
-      // route it. Clearing the AI flag returns it to "open".
-      uuid: seat.isAI ? null : `ai:${idx}`,
-      name: seat.isAI ? `Seat ${idx + 1}` : `AI ${idx + 1}`,
-    };
+    if (seat.uuid === myUuid) return;
+    if (seat.uuid && !seat.isAI) return; // occupied by a human
+    cur[idx] = seat.isAI
+      ? { ...seat, isAI: false, uuid: null, name: `Seat ${idx + 1}` }
+      : { ...seat, isAI: true, uuid: `ai:${idx}`, name: `AI ${idx + 1}` };
     setLobbySeats(cur);
   };
 
-  const renameSeat = (idx: number, name: string) => {
+  const kick = (idx: number) => {
     const cur = lobby.seats.slice();
-    cur[idx] = { ...cur[idx]!, name };
+    cur[idx] = { ...cur[idx]!, uuid: null, isAI: false, name: `Seat ${idx + 1}` };
     setLobbySeats(cur);
   };
 
   return (
-    <section style={sectionStyle}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, marginBottom: 8 }}>
-        <h3 style={{ ...h3Style, margin: 0 }}>Seats</h3>
-        <div style={{ color: '#94a3b8', fontSize: 12 }}>
-          {lobby.seats.length} / {mod.maxPlayers} (min {mod.minPlayers})
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+    <section className={styles.panel}>
+      <div className={styles.seatHeader}>
+        <h3 className={styles.h3}>Seats</h3>
+        <span className={styles.dim}>
+          {lobby.seats.length} of {mod.minPlayers}–{mod.maxPlayers}
+        </span>
+        <div className={styles.stepper}>
           <button
             onClick={() => setSeatCount(Math.max(mod.minPlayers, lobby.seats.length - 1))}
-            disabled={lobby.seats.length <= mod.minPlayers}
+            disabled={locked || lobby.seats.length <= mod.minPlayers}
+            aria-label="Remove a seat"
           >
             −
           </button>
           <button
             onClick={() => setSeatCount(Math.min(mod.maxPlayers, lobby.seats.length + 1))}
-            disabled={lobby.seats.length >= mod.maxPlayers}
+            disabled={locked || lobby.seats.length >= mod.maxPlayers}
+            aria-label="Add a seat"
           >
             +
           </button>
         </div>
       </div>
-      <div style={{ display: 'grid', gap: 6 }}>
+      <div className={`${styles.seats} sd-stagger`}>
         {lobby.seats.map((seat, idx) => (
-          <SeatRow
-            key={idx}
-            seat={seat}
-            isMine={seat.uuid === myUuid}
-            online={seat.uuid ? (onlinePeers[seat.uuid] ?? 0) > 0 || seat.isAI : false}
-          >
-            {seat.uuid === myUuid && (
-              <input
-                value={seat.name}
-                onChange={(e) => renameSeat(idx, e.target.value)}
-                maxLength={20}
-                style={{ padding: 4, marginLeft: 8 }}
-              />
-            )}
-            {!seat.uuid && (
-              <button onClick={() => toggleAI(idx)} style={{ marginLeft: 'auto' }}>
-                Mark AI
-              </button>
-            )}
-            {seat.isAI && (
-              <button onClick={() => toggleAI(idx)} style={{ marginLeft: 'auto' }}>
-                Mark Open
-              </button>
+          <SeatRow key={idx} seat={seat} index={idx} isMine={seat.uuid === myUuid} onlinePeers={onlinePeers}>
+            {!locked && !seat.uuid && <button onClick={() => toggleAI(idx)}>Make AI</button>}
+            {!locked && seat.isAI && <button onClick={() => toggleAI(idx)}>Open seat</button>}
+            {!locked && seat.uuid && !seat.isAI && seat.uuid !== myUuid && (
+              <button onClick={() => kick(idx)}>Unseat</button>
             )}
           </SeatRow>
         ))}
@@ -210,242 +264,92 @@ function HostSeatList({
   );
 }
 
-function HostControls() {
-  const lobby = useNetworkStore((s) => s.lobby);
-  const startGame = useNetworkStore((s) => s.startGame);
-  if (!lobby) return null;
-  const mod = GAMES[lobby.gameId];
-  const filled = lobby.seats.filter((s) => s.uuid !== null).length;
-  const ready = filled === lobby.seats.length && filled >= mod.minPlayers;
-
-  return (
-    <footer style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-      <button
-        onClick={startGame}
-        disabled={!ready}
-        style={{
-          background: ready ? '#10b981' : '#374151',
-          color: 'white',
-          padding: '10px 18px',
-          fontWeight: 700,
-          fontSize: 15,
-        }}
-      >
-        Start game →
-      </button>
-      <span style={{ color: '#94a3b8', fontSize: 13 }}>
-        {filled} / {lobby.seats.length} seats filled
-        {filled < mod.minPlayers && ` · need ≥${mod.minPlayers}`}
-      </span>
-    </footer>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Guest seat list
-// ----------------------------------------------------------------------------
-
-function GuestSeatList({
-  lobby,
-  myUuid,
-  onlinePeers,
-}: {
-  lobby: ReturnType<typeof useNetworkStore.getState>['lobby'];
-  myUuid: string | null;
-  onlinePeers: Record<string, number>;
-}) {
+function GuestSeatList({ lobby }: { lobby: LobbyState }) {
   const requestSeat = useNetworkStore((s) => s.requestSeat);
-  if (!lobby) return null;
-  const myCurrentSeat = lobby.seats.find((s) => s.uuid === myUuid);
+  const myUuid = useNetworkStore((s) => s.uuid);
+  const onlinePeers = useNetworkStore((s) => s.onlinePeers);
+  const mine = lobby.seats.find((s) => s.uuid === myUuid);
+  const locked = lobby.inGame;
 
   return (
-    <section style={sectionStyle}>
-      <h3 style={h3Style}>Seats</h3>
-      <div style={{ display: 'grid', gap: 6 }}>
-        {lobby.seats.map((seat, idx) => {
-          const canClaim = !seat.uuid && !seat.isAI;
-          return (
-            <SeatRow
-              key={idx}
-              seat={seat}
-              isMine={seat.uuid === myUuid}
-              online={seat.uuid ? (onlinePeers[seat.uuid] ?? 0) > 0 || seat.isAI : false}
-            >
-              {canClaim && (
-                <button onClick={() => requestSeat(idx)} style={{ marginLeft: 'auto' }}>
-                  Claim
-                </button>
-              )}
-              {seat.uuid === myUuid && (
-                <button onClick={() => requestSeat('leave')} style={{ marginLeft: 'auto' }}>
-                  Leave seat
-                </button>
-              )}
-            </SeatRow>
-          );
-        })}
+    <section className={styles.panel}>
+      <div className={styles.seatHeader}>
+        <h3 className={styles.h3}>Seats</h3>
+        <span className={styles.dim}>
+          {mine ? `You’re in seat ${mine.index + 1}.` : locked ? 'Seats are locked during a match.' : 'Pick an open seat to play.'}
+        </span>
       </div>
-      {myCurrentSeat && (
-        <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 8 }}>
-          You hold seat {myCurrentSeat.index + 1}.
-        </p>
-      )}
+      <div className={`${styles.seats} sd-stagger`}>
+        {lobby.seats.map((seat, idx) => (
+          <SeatRow key={idx} seat={seat} index={idx} isMine={seat.uuid === myUuid} onlinePeers={onlinePeers}>
+            {!locked && !seat.uuid && !seat.isAI && <button onClick={() => requestSeat(idx)}>Sit here</button>}
+            {!locked && seat.uuid === myUuid && <button onClick={() => requestSeat('leave')}>Stand up</button>}
+          </SeatRow>
+        ))}
+      </div>
+      {!locked && mine && <p className={styles.dim}>Waiting for the host to start…</p>}
     </section>
   );
 }
 
-// ----------------------------------------------------------------------------
-// Seat row
-// ----------------------------------------------------------------------------
-
 function SeatRow({
   seat,
+  index,
   isMine,
-  online,
+  onlinePeers,
   children,
 }: {
   seat: Seat;
+  index: number;
   isMine: boolean;
-  online: boolean;
+  onlinePeers: Record<string, number>;
   children?: React.ReactNode;
 }) {
-  let label: string;
-  let color: string;
-  if (seat.isAI) {
-    label = 'AI';
-    color = '#a78bfa';
-  } else if (!seat.uuid) {
-    label = 'Open';
-    color = '#64748b';
-  } else if (isMine) {
-    label = 'You';
-    color = '#10b981';
-  } else {
-    label = online ? 'Online' : 'Offline';
-    color = online ? '#60a5fa' : '#f87171';
+  const online = seat.isAI || (!!seat.uuid && (onlinePeers[seat.uuid] ?? 0) > 0);
+  let status: { label: string; cls: string };
+  if (seat.isAI) status = { label: 'AI', cls: styles.tagAi! };
+  else if (!seat.uuid) status = { label: 'Open', cls: styles.tagOpen! };
+  else if (isMine) status = { label: 'You', cls: styles.tagYou! };
+  else status = online ? { label: 'Online', cls: styles.tagOnline! } : { label: 'Offline', cls: styles.tagOffline! };
+  return (
+    <div
+      className={`${styles.seat} ${isMine ? styles.seatMine : ''} ${!seat.uuid && !seat.isAI ? styles.seatOpen : ''}`}
+      style={{ '--i': index } as React.CSSProperties}
+    >
+      <span className={styles.seatNo}>{index + 1}</span>
+      <span className={`${styles.dot} ${online ? styles.dotOn : ''}`} aria-hidden />
+      <span className={styles.seatName}>{seat.uuid || seat.isAI ? seat.name : <em>empty chair</em>}</span>
+      <span className={`${styles.tag} ${status.cls}`}>{status.label}</span>
+      <span className={styles.seatActions}>{children}</span>
+    </div>
+  );
+}
+
+function HostControls({ lobby }: { lobby: LobbyState }) {
+  const startGame = useNetworkStore((s) => s.startGame);
+  const endMatch = useNetworkStore((s) => s.endMatch);
+  const mod = GAMES[lobby.gameId];
+  const filled = lobby.seats.filter((s) => s.uuid !== null).length;
+  const ready = filled === lobby.seats.length && filled >= mod.minPlayers;
+  if (lobby.inGame) {
+    return (
+      <footer className={styles.footer}>
+        <button className={styles.secondary} onClick={endMatch}>
+          End the running match
+        </button>
+      </footer>
+    );
   }
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 10px',
-        background: isMine ? '#1e293b' : '#0f172a',
-        border: `1px solid ${isMine ? '#10b981' : '#1f2937'}`,
-        borderRadius: 4,
-      }}
-    >
-      <span
-        style={{
-          minWidth: 28,
-          textAlign: 'center',
-          background: '#1f2937',
-          padding: '2px 6px',
-          borderRadius: 3,
-          fontSize: 12,
-        }}
-      >
-        {seat.index + 1}
+    <footer className={styles.footer}>
+      <button className={styles.start} onClick={startGame} disabled={!ready}>
+        {lobby.match > 0 ? 'Deal a new game →' : 'Start the game →'}
+      </button>
+      <span className={styles.dim}>
+        {ready
+          ? 'Everyone’s seated.'
+          : `${filled} of ${lobby.seats.length} seats filled — fill or make AI the rest.`}
       </span>
-      <span style={{ minWidth: 110, fontWeight: 600 }}>
-        {seat.uuid || seat.isAI ? seat.name : <em style={{ color: '#64748b' }}>(open)</em>}
-      </span>
-      <span style={{ color, fontSize: 12, padding: '2px 6px', border: `1px solid ${color}`, borderRadius: 3 }}>
-        {label}
-      </span>
-      {children}
-    </div>
+    </footer>
   );
 }
-
-// ----------------------------------------------------------------------------
-// Chat
-// ----------------------------------------------------------------------------
-
-function ChatPane() {
-  const chat = useNetworkStore((s) => s.chat);
-  const sendChat = useNetworkStore((s) => s.sendChat);
-  const myUuid = useNetworkStore((s) => s.uuid);
-  const [draft, setDraft] = useState('');
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
-    sendChat(text);
-    setDraft('');
-  };
-
-  const lines = useMemo(() => chat.slice(-50), [chat]);
-
-  return (
-    <div
-      style={{
-        background: '#0f172a',
-        border: '1px solid #1f2937',
-        borderRadius: 4,
-        padding: 8,
-      }}
-    >
-      <div
-        style={{
-          height: 140,
-          overflowY: 'auto',
-          fontSize: 13,
-          fontFamily: 'monospace',
-          marginBottom: 8,
-        }}
-      >
-        {lines.length === 0 && (
-          <div style={{ color: '#64748b' }}>No messages yet. Say hi!</div>
-        )}
-        {lines.map((m) => (
-          <div key={m.id} style={{ marginBottom: 2 }}>
-            <span
-              style={{
-                color: m.senderUuid === myUuid ? '#10b981' : '#60a5fa',
-                fontWeight: 700,
-              }}
-            >
-              {m.senderName}:
-            </span>{' '}
-            <span style={{ color: '#cbd5e1' }}>{m.text}</span>
-          </div>
-        ))}
-      </div>
-      <form onSubmit={submit} style={{ display: 'flex', gap: 6 }}>
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Type a message…"
-          maxLength={200}
-          style={{ flex: 1, padding: 6 }}
-        />
-        <button type="submit" disabled={!draft.trim()}>
-          Send
-        </button>
-      </form>
-    </div>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Styles
-// ----------------------------------------------------------------------------
-
-const panelStyle: React.CSSProperties = {
-  padding: 24,
-  maxWidth: 720,
-  margin: '0 auto',
-};
-
-const sectionStyle: React.CSSProperties = {
-  background: '#0b1220',
-  border: '1px solid #1f2937',
-  borderRadius: 6,
-  padding: 16,
-  marginBottom: 16,
-};
-
-const h3Style: React.CSSProperties = { margin: '0 0 12px 0', fontSize: 14, color: '#cbd5e1' };

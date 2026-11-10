@@ -1,11 +1,18 @@
-import type { OnuwRoleId } from './state';
+import type { OnuwRoleId, OnuwTeamId } from './state';
 
 // Static metadata for every ONUW role. Each role declares which "pack" it
 // belongs to (base / daybreak / bonus), the team it scores for, its night
 // wake order, and a short description used by the setup screen + the
 // in-game cheatsheet during discussion / voting.
 
-export type OnuwTeam = 'village' | 'werewolves' | 'tanner';
+export type OnuwTeam = OnuwTeamId;
+
+// How a Doppelganger that copies this role acts (official rule):
+//  - 'join'  wakes WITH the original role (werewolves see a Doppel-werewolf,
+//            masons see a Doppel-mason, ...).
+//  - 'now'   performs the copied action immediately, during its own wake-up.
+//  - 'after' wakes again right after the original role (Doppel-Insomniac).
+export type OnuwDoppelMode = 'join' | 'now' | 'after';
 
 export type OnuwPack = 'base' | 'daybreak' | 'bonus';
 
@@ -24,6 +31,11 @@ export interface OnuwRoleSpec {
   // night cursor and waits for the seat to submit an action). False = the
   // night step is automatic / observational only (Insomniac, Beholder…).
   hasInteractiveAction: boolean;
+  // Doppelganger behaviour when this role is copied (undefined = no night
+  // action to copy).
+  doppel?: OnuwDoppelMode;
+  // The night action must be taken (a plain "pass" is rejected).
+  mandatory?: boolean;
 }
 
 // Canonical Bezier rulebook wake-order. Lower = earlier in the night.
@@ -45,8 +57,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'daybreak',
     wakeOrder: 5,
     description:
-      'Look at another player\'s card and become that role. Wake again at that role\'s normal step (if it has a night action).',
+      'Look at another player\'s card and become that role. Seer, Robber, Troublemaker, Drunk and similar actions happen immediately; a copied Werewolf, Minion or Mason wakes with them; a copied Insomniac, Revealer or Curator wakes again after the original.',
     hasInteractiveAction: true,
+    mandatory: true,
   },
   werewolf: {
     id: 'werewolf',
@@ -57,6 +70,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Wake and see the other werewolves. If you are the only werewolf, you may look at one card in the center.',
     hasInteractiveAction: true,
+    doppel: 'join',
   },
   alphaWolf: {
     id: 'alphaWolf',
@@ -65,8 +79,10 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'daybreak',
     wakeOrder: 12,
     description:
-      'Wakes with the werewolves; then chooses a non-werewolf player and swaps that card with a werewolf card from the center. That player is now a werewolf (but does not know it).',
+      'Wakes with the werewolves; then must exchange the center werewolf card with another non-werewolf player\'s card. That player is now a werewolf (but does not know it).',
     hasInteractiveAction: true,
+    doppel: 'join',
+    mandatory: true,
   },
   mysticWolf: {
     id: 'mysticWolf',
@@ -77,6 +93,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Wakes with the werewolves; then may look at one other player\'s card.',
     hasInteractiveAction: true,
+    doppel: 'join',
   },
   dreamWolf: {
     id: 'dreamWolf',
@@ -95,8 +112,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'base',
     wakeOrder: 20,
     description:
-      'See the werewolves. The werewolves do not see you. You win with the werewolves — and if no werewolf is killed, you may even survive being voted yourself.',
+      'See the werewolves; they do not see you. You win with the werewolves — even if you are killed, as long as no werewolf dies. If no player is a werewolf, you win if someone other than you dies.',
     hasInteractiveAction: true,
+    doppel: 'join',
   },
   mason: {
     id: 'mason',
@@ -106,6 +124,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     wakeOrder: 30,
     description: 'Wake and see your fellow Mason (if any).',
     hasInteractiveAction: true,
+    doppel: 'join',
   },
   seer: {
     id: 'seer',
@@ -116,6 +135,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Look at one other player\'s card OR two of the three center cards.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   apprenticeSeer: {
     id: 'apprenticeSeer',
@@ -125,6 +145,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     wakeOrder: 42,
     description: 'Look at one card from the center.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   paranormalInvestigator: {
     id: 'paranormalInvestigator',
@@ -135,6 +156,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Look at up to two players\' cards, one at a time. Stop as soon as you see a werewolf or tanner — and you become that team.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   robber: {
     id: 'robber',
@@ -145,6 +167,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'You may swap your card with another player\'s, then secretly look at your new role. You are now that role.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   witch: {
     id: 'witch',
@@ -155,6 +178,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Look at one card from the center, then swap it with another player\'s card. (You may swap with yourself.) That player is now that role.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   troublemaker: {
     id: 'troublemaker',
@@ -165,6 +189,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Swap the cards of two other players (without looking at them).',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   villageIdiot: {
     id: 'villageIdiot',
@@ -175,6 +200,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Shift all players\' cards (other than your own) one slot left or right.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   drunk: {
     id: 'drunk',
@@ -185,6 +211,8 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Swap your card with a card from the center, without looking at it. You no longer know your own role.',
     hasInteractiveAction: true,
+    doppel: 'now',
+    mandatory: true,
   },
   insomniac: {
     id: 'insomniac',
@@ -194,6 +222,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     wakeOrder: 80,
     description: 'Wake at the end of the night and look at your own card.',
     hasInteractiveAction: false,
+    doppel: 'after',
   },
   revealer: {
     id: 'revealer',
@@ -202,8 +231,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'daybreak',
     wakeOrder: 85,
     description:
-      'Flip over another player\'s card so it is visible to everyone. If it is a werewolf or tanner, flip it back; otherwise leave it visible.',
+      'You may flip over another player\'s card. If it is a werewolf or tanner card, flip it back face-down; otherwise it stays face-up for everyone to see.',
     hasInteractiveAction: true,
+    doppel: 'after',
   },
   curator: {
     id: 'curator',
@@ -212,8 +242,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'daybreak',
     wakeOrder: 90,
     description:
-      'Give one random artifact to a player. (We just narrate this — artifacts are flavor.)',
+      'You may place an artifact on another player\'s card. (Narrated only in this build — artifacts are flavor.)',
     hasInteractiveAction: true,
+    doppel: 'after',
   },
 
   // ============================================================
@@ -259,8 +290,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 95,
     description:
-      'At the end of the night, see how many players woke up and performed an action.',
+      'At the end of the night, learn how many other players woke up during the night.',
     hasInteractiveAction: false,
+    doppel: 'after',
   },
   cursed: {
     id: 'cursed',
@@ -269,7 +301,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 1000,
     description:
-      'Village team — but if the werewolves "look at" you in the night (PI, Mystic Wolf, etc.) or you are voted out, you count as a werewolf for win conditions.',
+      'Village team, but marked: if you are killed you count as a werewolf — the village wins, and you lose with the werewolves.',
     hasInteractiveAction: false,
   },
   prince: {
@@ -279,7 +311,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 1000,
     description:
-      'If you would be voted out, you are not killed. (Votes against you go to the next-highest target.)',
+      'Votes against you do not count, so you cannot be voted out (the next-highest player dies instead).',
     hasInteractiveAction: false,
   },
   apprenticeTanner: {
@@ -300,6 +332,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     wakeOrder: 45,
     description: 'Wake after the Seer and learn which player is the Seer.',
     hasInteractiveAction: false,
+    doppel: 'join',
   },
   thing: {
     id: 'thing',
@@ -308,8 +341,10 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 35,
     description:
-      'Secretly tap one of your neighbors on the shoulder. (Flavor only — both neighbors are notified you tapped someone.)',
+      'Tap one of your neighbors on the shoulder. That player learns that The Thing sits beside them.',
     hasInteractiveAction: true,
+    doppel: 'now',
+    mandatory: true,
   },
   squire: {
     id: 'squire',
@@ -320,6 +355,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Wake and see which positions (player slots or center cards) hold a werewolf card. You do not learn who holds them when swapped.',
     hasInteractiveAction: false,
+    doppel: 'join',
   },
   bodySnatcher: {
     id: 'bodySnatcher',
@@ -330,6 +366,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Swap your card with another player\'s card. You secretly become that role and take that role\'s team.',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   empath: {
     id: 'empath',
@@ -340,6 +377,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Count the number of werewolves among your two adjacent neighbors.',
     hasInteractiveAction: false,
+    doppel: 'join',
   },
   nostradamus: {
     id: 'nostradamus',
@@ -370,6 +408,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     description:
       'Take one card from another player\'s position and slide it into the position next to it (the next seat or center slot).',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   defenderEr: {
     id: 'defenderEr',
@@ -378,8 +417,9 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 28,
     description:
-      'Protect one player. They cannot be targeted by night actions afterwards. (Simplified narration in this build.)',
+      'Protect one player. (Narrated only in this build — it has no effect on the night.)',
     hasInteractiveAction: true,
+    doppel: 'now',
   },
   theSponge: {
     id: 'theSponge',
@@ -388,7 +428,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 1000,
     description:
-      'At the end of the night, your team becomes the team of one of your neighbors.',
+      'At the end of the night, your team becomes the team of one of your neighbors. (Honor-system flavor in this build — scored as village.)',
     hasInteractiveAction: false,
   },
   ricochetRhino: {
@@ -398,7 +438,7 @@ export const ROLES: Record<OnuwRoleId, OnuwRoleSpec> = {
     pack: 'bonus',
     wakeOrder: 1000,
     description:
-      'Werewolf team. If you would receive a vote, that vote ricochets to the next seat clockwise.',
+      'Werewolf team (but not a werewolf). Every vote against you ricochets to the next seat clockwise.',
     hasInteractiveAction: false,
   },
   innocentBystander: {
@@ -471,6 +511,32 @@ export const ROLE_MAX_COUNT: Record<OnuwRoleId, number> = (() => {
   return out as Record<OnuwRoleId, number>;
 })();
 
+// Printed werewolf cards. (Minion, Squire and Ricochet Rhino are on the
+// werewolf TEAM but are not werewolves: killing one doesn't win the vote.)
+export const WEREWOLF_CARDS: ReadonlySet<OnuwRoleId> = new Set<OnuwRoleId>([
+  'werewolf',
+  'alphaWolf',
+  'mysticWolf',
+  'dreamWolf',
+]);
+
+// Werewolves that open their eyes at the werewolf wake-up (Dream Wolf sleeps).
+export const AWAKE_WOLF_CARDS: ReadonlySet<OnuwRoleId> = new Set<OnuwRoleId>([
+  'werewolf',
+  'alphaWolf',
+  'mysticWolf',
+]);
+
+export function isWerewolfCard(role: OnuwRoleId): boolean {
+  return WEREWOLF_CARDS.has(role);
+}
+
+// True for roles that wake at night (Dream Wolf has a wake order for the
+// cheatsheet but stays asleep).
+export function wakesAtNight(role: OnuwRoleId): boolean {
+  return ROLES[role].wakeOrder < 1000 && role !== 'dreamWolf';
+}
+
 export function rolesSortedByWakeOrder(pool: readonly OnuwRoleId[]): OnuwRoleId[] {
   return pool
     .slice()
@@ -481,3 +547,15 @@ export function rolesSortedByWakeOrder(pool: readonly OnuwRoleId[]): OnuwRoleId[
       return a.localeCompare(b);
     });
 }
+
+// Recommended starting pools per player count (players + 3 cards).
+export const RECOMMENDED_POOLS: Record<number, OnuwRoleId[]> = {
+  3: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'villager'],
+  4: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'villager', 'villager'],
+  5: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'tanner', 'villager'],
+  6: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'tanner', 'drunk', 'villager'],
+  7: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'tanner', 'drunk', 'insomniac', 'villager'],
+  8: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'mason', 'mason', 'tanner', 'drunk', 'insomniac'],
+  9: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'mason', 'mason', 'tanner', 'drunk', 'insomniac', 'hunter'],
+  10: ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'minion', 'mason', 'mason', 'tanner', 'drunk', 'insomniac', 'hunter', 'villager'],
+};

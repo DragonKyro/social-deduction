@@ -1,5 +1,7 @@
 export { codenamesModule } from './module';
-export type { CodenamesOptions, CodenamesSeatConfig } from './module';
+export { defaultTeams, teamsProblem } from './module';
+export type { CodenamesOptions, CodenamesSeatConfig, CodenamesTeamSlot, CodenamesRole } from './module';
+export { clueProblem, maxGuesses } from './rules';
 export type { CodenamesAction } from './actions';
 export type {
   CodenamesPrivateState,

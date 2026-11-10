@@ -1,283 +1,388 @@
-import { makeRng, rngInt } from '@/engine/rng';
+import { makeRng, rngFloat } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { AvalonAction } from './actions';
-import type {
-  AvalonPrivateState,
-  AvalonRoleId,
-  AvalonSeatState,
-} from './state';
+import type { AvalonPrivateState, AvalonPublicState } from './state';
+import { viewFor } from './view';
 
 // ============================================================================
 // Avalon AI
 //
-// Plays both teams. We have access to the host's full private state, but we
-// must only use what the seat's own viewFor would surface (own role + own
-// role-knowledge list).
+// FAIRNESS: the host hands us the full private state, but every decision is
+// made from `viewFor(state, seat)` — exactly what a human in that seat sees:
+// own role/alignment, own row of the knowledge table, own vote and quest card,
+// plus the public board (roles in play, quest results as fail COUNTS, the
+// public vote log). The only other thing read from the private state is the
+// match seed, used purely as a source of randomness (mixed with seat + game
+// progress), never to recompute the deal.
 //
-// Strategy:
-//   - Good (Loyal Servant): pick teams of seats with lowest "evil suspicion".
-//     Vote down a team containing a suspected evil. Always play success on
-//     quests.
-//   - Merlin: same as Loyal but uses known-evil set as the suspicion floor.
-//     Tries NOT to be too obvious (mixes high/low suspects into picks).
-//   - Percival: trusts both Merlin candidates as priors.
-//   - Evil minions / Mordred / Morgana: vote up teams that put them on, fail
-//     quests they're on (a single fail loses a quest — coordinate via team
-//     composition, but no comms here, so just always fail unless we judge
-//     a sandbag is needed). Vote up early teams to advance and learn.
-//   - Oberon: doesn't know teammates. Plays evil heuristically — fails on
-//     missions, suspects high-status seats.
-//   - Assassin: shoots the highest-suspicion candidate for Merlin from the
-//     evil's perspective.
+// Model: "possible worlds". A seat enumerates every set of evil seats that is
+// consistent with what it knows (≤ C(10,4) = 210 sets), hard-filtered by quest
+// fail counts (a quest with k fails had ≥ k evils) and soft-weighted by
+// behaviour (evils who hid on a quest, evils approving clean teams / rejecting
+// dirty ones, evil leaders sending clean teams). From that:
+//   P(seat is evil), and P(team is clean).
+//
+//   - Good leader: self + least likely evils. Good voter: approve a team that's
+//     nearly as clean as the one they'd pick; always approve the 5th proposal.
+//   - Merlin: knows the truth but votes "like a servant" a fair share of the
+//     time so the Assassin can't just read his votes; follows the truth more
+//     when the game is on the line. Leads with clean, publicly-trusted teams.
+//   - Percival: exactly one of his Merlin/Morgana pair is evil (if Morgana is
+//     in play) — a constraint, not "both are evil".
+//   - Evil (not Oberon): approve teams with a known evil aboard, sometimes
+//     approve clean ones to blend in. Fail quests; on 1-fail quests only the
+//     lowest-seat known evil fails (they see each other: coordination without
+//     a channel) to avoid incriminating double fails. Occasionally sandbag
+//     quest 1. Leads with self + the seats the table trusts most.
+//   - Oberon: knows no one; fails whenever on a quest.
+//   - Assassin: scores candidates on how "Merlin-like" their public behaviour
+//     was against the evils the Assassin knows.
+//
+// Seatless "Continue" acks (ackTeamVoteReveal / ackQuestResolution) are NOT
+// the AI's to make: they're host controls, so humans get to watch the reveal.
+// Returns null whenever this seat has nothing to do.
 //
 // Pure file: no DOM / no net / no store imports.
 // ============================================================================
 
-function rngForSeat(state: AvalonPrivateState, seat: SeatIndex, salt: number): number {
-  const rng = makeRng(
-    (state.seed ^ (seat * 0x37c5) ^ (state.questHistory.length * 41) ^ (salt * 101)) >>> 0,
-  );
-  return rngInt(rng, 10000) / 10000;
+const EVIL_LABEL = 'Evil';
+
+const EVIL_ROLES = new Set(['assassin', 'morgana', 'mordred', 'oberon', 'minionOfMordred']);
+
+interface Ctx {
+  view: AvalonPublicState;
+  me: SeatIndex;
+  n: number;
+  evilCount: number;
+  /** Seats this seat KNOWS are evil (its knowledge table; never Percival's pair). */
+  knownEvil: Set<SeatIndex>;
+  /** Deterministic per-decision random in [0, 1). */
+  rand: (salt: number) => number;
 }
 
-function knownEvilsTo(state: AvalonPrivateState, seat: SeatIndex): Set<SeatIndex> {
-  const me = state.seats[seat];
-  if (!me) return new Set();
-  const out = new Set<SeatIndex>();
-  // Direct from role-knowledge labels.
-  const knowledge = state.roleKnowledge[seat] ?? [];
-  for (const k of knowledge) {
-    // Anything we KNOW is evil. Labels include 'minion of mordred', 'morgana',
-    // 'assassin', 'minionOrMorgana', etc. — anything labeled good is goodish.
-    if (/evil|minion|morgana|mordred|assassin|oberon/i.test(k.label)) {
-      out.add(k.seat);
+function makeCtx(state: AvalonPrivateState, view: AvalonPublicState, me: SeatIndex): Ctx {
+  const knownEvil = new Set<SeatIndex>();
+  for (const k of view.yourRoleKnowledge) {
+    if (k.label === EVIL_LABEL) knownEvil.add(k.seat);
+  }
+  const progress =
+    view.questHistory.length * 977 + view.proposalHistory.length * 131 + view.failedProposalsThisQuest * 17;
+  return {
+    view,
+    me,
+    n: view.seats.length,
+    evilCount: view.rolesInPlay.filter((r) => EVIL_ROLES.has(r)).length,
+    knownEvil,
+    rand: (salt: number) =>
+      rngFloat(
+        makeRng(
+          (state.seed ^
+            Math.imul(me + 1, 0x9e3779b1) ^
+            Math.imul(progress + 1, 0x85ebca6b) ^
+            Math.imul(salt + 1, 0x27d4eb2f)) >>>
+            0,
+        ),
+      ),
+  };
+}
+
+const isEvilMe = (ctx: Ctx) => ctx.view.yourAlignment === 'evil';
+const inPlay = (ctx: Ctx, role: string) => ctx.view.rolesInPlay.some((r) => r === role);
+
+/** Evil seats this seat can name for sure (itself included when evil). */
+function evilTeam(ctx: Ctx): Set<SeatIndex> {
+  const out = new Set(ctx.knownEvil);
+  if (isEvilMe(ctx)) out.add(ctx.me);
+  return out;
+}
+
+// ----------------------------------------------------------------------------
+// Possible-worlds belief
+// ----------------------------------------------------------------------------
+
+interface Belief {
+  pEvil: number[];
+  pClean: (team: SeatIndex[]) => number;
+}
+
+type Perspective = 'self' | 'public' | 'servant';
+
+function popcount(x: number): number {
+  let c = 0;
+  while (x) {
+    x &= x - 1;
+    c++;
+  }
+  return c;
+}
+
+/**
+ * Belief over evil sets.
+ *  - 'self':    everything this seat knows (good seats only).
+ *  - 'servant': as a Loyal Servant in this chair would see it (just "I'm good").
+ *  - 'public':  what the table at large can infer (no private knowledge) —
+ *               what evils use to look trustworthy.
+ */
+function belief(ctx: Ctx, perspective: Perspective): Belief {
+  const { view, me, n, evilCount } = ctx;
+  const bit = (s: SeatIndex) => 1 << s;
+  let mustEvil = 0;
+  let mustGood = 0;
+  let pairMask = 0; // Percival: exactly `pairEvil` of these are evil
+  let pairEvil = -1;
+  if (perspective !== 'public') mustGood |= bit(me);
+  if (perspective === 'self') {
+    for (const e of ctx.knownEvil) mustEvil |= bit(e);
+    if (view.yourRole === 'merlin' && !inPlay(ctx, 'mordred')) {
+      // Merlin sees every evil when Mordred is absent.
+      mustGood |= ((1 << n) - 1) & ~mustEvil;
+    }
+    if (view.yourRole === 'percival') {
+      for (const k of view.yourRoleKnowledge) pairMask |= bit(k.seat);
+      pairEvil = inPlay(ctx, 'morgana') ? 1 : 0;
     }
   }
-  // Evil seats know other evils (except Oberon).
-  if (me.alignment === 'evil' && me.role !== 'oberon') {
-    for (const s of state.seats) {
-      if (s.index !== seat && s.alignment === 'evil' && s.role !== 'oberon') {
-        out.add(s.index);
+
+  const masks: number[] = [];
+  const weights: number[] = [];
+  let total = 0;
+  const all = (1 << n) - 1;
+  for (let m = 0; m <= all; m++) {
+    if (popcount(m) !== evilCount) continue;
+    if ((m & mustEvil) !== mustEvil || (m & mustGood) !== 0) continue;
+    if (pairEvil >= 0 && popcount(m & pairMask) !== pairEvil) continue;
+    let w = 1;
+    let ok = true;
+    for (const q of view.questHistory) {
+      let onTeam = 0;
+      for (const t of q.team) if (m & bit(t)) onTeam++;
+      if (onTeam < q.failCount) {
+        ok = false;
+        break;
       }
+      // Evils who played success instead of failing: possible, less likely.
+      w *= Math.pow(0.45, onTeam - q.failCount);
     }
-  }
-  return out;
-}
-
-function knownGoodTo(state: AvalonPrivateState, seat: SeatIndex): Set<SeatIndex> {
-  const out = new Set<SeatIndex>();
-  const me = state.seats[seat];
-  if (!me) return out;
-  if (me.role === 'percival') {
-    // Percival knows Merlin or Morgana — both look like 'merlin-or-morgana'.
-    // We can't distinguish; treat them as low priors of "evil" and slight prior
-    // of "good".
-    for (const k of state.roleKnowledge[seat] ?? []) {
-      // Don't mark them good — uncertainty. Skipping is the right move.
-      void k;
+    if (!ok) continue;
+    for (const p of view.proposalHistory) {
+      let dirty = false;
+      for (const t of p.team) if (m & bit(t)) dirty = true;
+      p.votes.forEach((v, s) => {
+        if (!(m & bit(s))) return;
+        if (v && !dirty) w *= 0.8; // evil approving a clean team
+        if (!v && dirty) w *= 0.75; // evil rejecting a team with evil on it
+      });
+      if (m & bit(p.leader) && !dirty) w *= 0.8; // evil leader sending a clean team
     }
+    masks.push(m);
+    weights.push(w);
+    total += w;
   }
-  return out;
+
+  const pEvil = new Array<number>(n).fill(evilCount / n);
+  if (total > 0) {
+    pEvil.fill(0);
+    masks.forEach((m, i) => {
+      for (let s = 0; s < n; s++) if (m & bit(s)) pEvil[s]! += weights[i]! / total;
+    });
+  }
+  return {
+    pEvil,
+    pClean: (team) => {
+      if (total <= 0) return 0.5;
+      let tm = 0;
+      for (const t of team) tm |= bit(t);
+      let clean = 0;
+      masks.forEach((m, i) => {
+        if ((m & tm) === 0) clean += weights[i]!;
+      });
+      return clean / total;
+    },
+  };
 }
 
-// Suspicion is a function of:
-//  - quest history: seats that have been on failed quests get + per fail
-//  - known evils to us: maxed out
-//  - randomness so two AIs don't pick the exact same team.
-function suspicion(
-  state: AvalonPrivateState,
-  viewer: SeatIndex,
-): Map<SeatIndex, number> {
-  const out = new Map<SeatIndex, number>();
-  for (const s of state.seats) out.set(s.index, 0);
-  for (const q of state.questHistory) {
-    if (q.result === 'fail') {
-      for (const ts of q.team) {
-        // A fail on a team of size N with K fails: each member contributes
-        // K/N to suspicion in expectation.
-        out.set(ts, (out.get(ts) ?? 0) + q.failCount / q.team.length);
-      }
+function rankAsc(ctx: Ctx, score: number[], salt: number): SeatIndex[] {
+  const jitter = score.map((_, s) => (ctx.rand(salt + s) - 0.5) * 0.04);
+  return ctx.view.seats
+    .map((s) => s.index)
+    .sort((a, b) => score[a]! + jitter[a]! - (score[b]! + jitter[b]!) || a - b);
+}
+
+function teamSize(ctx: Ctx): number {
+  return ctx.view.questTrack[ctx.view.currentQuestNumber - 1]!.teamSize;
+}
+
+function goodPickTeam(ctx: Ctx, b: Belief): SeatIndex[] {
+  const order = rankAsc(ctx, b.pEvil, 100).filter((s) => s !== ctx.me);
+  return [ctx.me, ...order].slice(0, teamSize(ctx)).sort((a, c) => a - c);
+}
+
+// ----------------------------------------------------------------------------
+// Decisions
+// ----------------------------------------------------------------------------
+
+function pickTeam(ctx: Ctx): SeatIndex[] {
+  const { view, me } = ctx;
+  const size = teamSize(ctx);
+  const spec = view.questTrack[view.currentQuestNumber - 1]!;
+
+  if (isEvilMe(ctx)) {
+    // Look clean to the table: self + the seats the PUBLIC trusts most,
+    // skipping fellow evils unless the quest needs two fails.
+    const evil = evilTeam(ctx);
+    const order = rankAsc(ctx, belief(ctx, 'public').pEvil, 200);
+    const team: SeatIndex[] = [me];
+    if (spec.failsRequired >= 2) {
+      const partner = order.find((s) => evil.has(s) && s !== me);
+      if (partner !== undefined) team.push(partner);
     }
-  }
-  for (const evil of knownEvilsTo(state, viewer)) {
-    out.set(evil, (out.get(evil) ?? 0) + 10);
-  }
-  for (const good of knownGoodTo(state, viewer)) {
-    out.set(good, (out.get(good) ?? 0) - 5);
-  }
-  // Add small per-seat jitter so two AIs don't always pick identical teams.
-  for (const s of state.seats) {
-    const j = (rngForSeat(state, viewer ^ s.index, 11) - 0.5) * 0.6;
-    out.set(s.index, (out.get(s.index) ?? 0) + j);
-  }
-  // Viewer doesn't get a "self" score that matters for picking — set to 0.
-  out.set(viewer, -1); // slightly prefer self as good
-  return out;
-}
-
-function isEvilSeat(seat: AvalonSeatState): boolean {
-  return seat.alignment === 'evil';
-}
-
-function teamApprove(state: AvalonPrivateState, seat: SeatIndex): boolean {
-  const me = state.seats[seat]!;
-  const team = state.proposedTeam;
-  const sus = suspicion(state, seat);
-  const r = rngForSeat(state, seat, 3);
-
-  // 5th proposal — always approve to avoid the auto-evil-win.
-  if (state.failedProposalsThisQuest >= 4) return true;
-
-  if (isEvilSeat(me)) {
-    // Evil: ja if at least one evil is on the team. (We KNOW our teammates
-    // unless we're Oberon.)
-    const evils = knownEvilsTo(state, seat);
-    evils.add(seat); // we count
-    const evilOnTeam = team.some((t) => evils.has(t));
-    if (evilOnTeam) return true;
-    // No evil on team = we want to fail this. But voting nein 100% gives us
-    // away. Mix: 60% nein, 40% ja.
-    return r < 0.4;
-  }
-  // Good: nein if a known-evil is on team; otherwise mostly ja.
-  const evils = knownEvilsTo(state, seat);
-  for (const t of team) {
-    if (evils.has(t)) return false;
-  }
-  // Count high-suspicion members.
-  const highSus = team.filter((t) => (sus.get(t) ?? 0) >= 1.0).length;
-  if (highSus >= 2) return r < 0.25;
-  if (highSus >= 1) return r < 0.55;
-  return r < 0.9;
-}
-
-// Pick a team. Good picks lowest-suspicion N seats including self. Evil picks
-// at least one evil if possible (the team leader has to put themselves on if
-// they're evil).
-function pickTeam(state: AvalonPrivateState, seat: SeatIndex): SeatIndex[] {
-  const me = state.seats[seat]!;
-  const spec = state.questTrack[state.currentQuestNumber - 1]!;
-  const teamSize = spec.teamSize;
-  const sus = suspicion(state, seat);
-  const candidates = state.seats.map((s) => s.index);
-  const sortedAsc = [...candidates].sort((a, b) => (sus.get(a) ?? 0) - (sus.get(b) ?? 0));
-  if (isEvilSeat(me)) {
-    // Put self on (you fail) + N-1 least-suspicious others.
-    const team: SeatIndex[] = [seat];
-    for (const s of sortedAsc) {
-      if (team.length >= teamSize) break;
-      if (team.includes(s)) continue;
-      team.push(s);
+    for (const s of order) {
+      if (team.length >= size) break;
+      if (!team.includes(s) && !evil.has(s)) team.push(s);
     }
-    return team.slice(0, teamSize);
+    for (const s of order) {
+      if (team.length >= size) break;
+      if (!team.includes(s)) team.push(s);
+    }
+    return team.sort((a, b) => a - b);
   }
-  // Good: pick the N least suspicious.
-  return sortedAsc.slice(0, teamSize);
+
+  if (view.yourRole === 'merlin') {
+    // Clean team, ordered by what the table already trusts (so the pick looks
+    // explainable from public evidence).
+    const pub = belief(ctx, 'servant').pEvil;
+    const order = rankAsc(ctx, pub, 300).filter((s) => s !== me && !ctx.knownEvil.has(s));
+    return [me, ...order].slice(0, size).sort((a, b) => a - b);
+  }
+  return goodPickTeam(ctx, belief(ctx, 'self'));
 }
 
-// Quest play: success unless we're evil. Evil considers a sandbag if there's
-// already enough fails to fail anyway and concealing identity helps.
-function questPlay(state: AvalonPrivateState, seat: SeatIndex): boolean {
-  const me = state.seats[seat]!;
-  if (me.alignment === 'good') return true;
-  // Evil: always play fail. We could sandbag occasionally but with no comms
-  // it's safer to ALWAYS fail (single fail loses quest in most cases).
+function servantVote(ctx: Ctx, b: Belief, salt: number): boolean {
+  const team = ctx.view.proposedTeam;
+  const pc = b.pClean(team);
+  const best = b.pClean(goodPickTeam(ctx, b));
+  if (pc >= 0.85) return true;
+  const slack = 0.72 + (ctx.rand(salt) - 0.5) * 0.2;
+  return pc >= best * slack;
+}
+
+function decideVote(ctx: Ctx): boolean {
+  const { view } = ctx;
+  const team = view.proposedTeam;
+  const lastChance = view.failedProposalsThisQuest >= 4;
+  const evilQuestWins = view.questHistory.filter((q) => q.result === 'fail').length;
+  const goodQuestWins = view.questHistory.filter((q) => q.result === 'success').length;
+
+  if (isEvilMe(ctx)) {
+    const evil = evilTeam(ctx);
+    const evilAboard = team.some((t) => evil.has(t));
+    const r = ctx.rand(3);
+    if (evilAboard) return lastChance || r < 0.9;
+    // A clean team is bad news, but rejecting everything clean is a tell.
+    if (goodQuestWins >= 2) return false; // can't afford it
+    return r < (lastChance ? 0.5 : 0.35);
+  }
+
+  if (lastChance) return true;
+  if (view.yourRole === 'merlin') {
+    const truthClean = !team.some((t) => ctx.knownEvil.has(t));
+    const disguise = servantVote(ctx, belief(ctx, 'servant'), 4);
+    if (disguise === truthClean) return truthClean;
+    // Disagreement: the truth wins more often when the game is on the line.
+    const critical = evilQuestWins >= 2 || view.failedProposalsThisQuest >= 3;
+    return ctx.rand(5) < (critical ? 0.9 : 0.6) ? truthClean : disguise;
+  }
+  return servantVote(ctx, belief(ctx, 'self'), 4);
+}
+
+function decideQuestCard(ctx: Ctx): boolean {
+  const { view, me } = ctx;
+  if (!isEvilMe(ctx)) return true; // good MUST play success
+  const spec = view.questTrack[view.currentQuestNumber - 1]!;
+  if (view.yourRole === 'oberon') return false; // can't coordinate; always fail
+  const evil = evilTeam(ctx);
+  const evilOnTeam = view.proposedTeam.filter((t) => evil.has(t));
+  const evilQuestWins = view.questHistory.filter((q) => q.result === 'fail').length;
+  const goodQuestWins = view.questHistory.filter((q) => q.result === 'success').length;
+  if (spec.failsRequired >= 2) {
+    // Everyone fails when the bar is reachable; a lone evil mostly stays
+    // hidden (a single fail wouldn't sink the quest anyway).
+    if (evilOnTeam.length >= spec.failsRequired) return false;
+    return ctx.rand(9) >= 0.3;
+  }
+  // 1-fail quest: only the lowest-seat known evil fails (no double fails).
+  if (Math.min(...evilOnTeam) !== me) return true;
+  // Must-fail situations: this quest wins it, or loses it.
+  if (evilQuestWins >= 2 || goodQuestWins >= 2) return false;
+  // Sandbag quest 1 now and then to build trust.
+  if (view.currentQuestNumber === 1 && ctx.rand(5) < 0.25) return true;
   return false;
 }
 
-// Assassin's Merlin guess: pick the seat we think is Merlin. We use the
-// quest history + proposal patterns. Merlin will avoid putting known-evils
-// on teams, so a seat that consistently picks evil-free teams is suspect.
-function assassinPick(state: AvalonPrivateState, seat: SeatIndex): SeatIndex {
-  const knownEvils = knownEvilsTo(state, seat);
-  knownEvils.add(seat);
-  // Candidates: seats whose team-vote patterns look like they know who the
-  // evils are. Compute "anti-evil score" — number of times this seat was on
-  // a successful quest + voted ja on those teams.
-  const scores: Map<SeatIndex, number> = new Map();
-  for (const s of state.seats) {
-    if (knownEvils.has(s.index)) continue;
-    let score = 0;
-    for (const q of state.questHistory) {
-      if (q.result === 'success' && q.team.includes(s.index)) score += 1;
-      if (q.result === 'fail' && q.team.includes(s.index)) score -= 2;
-    }
-    scores.set(s.index, score);
-  }
+function pickMerlin(ctx: Ctx): SeatIndex {
+  const { view, me } = ctx;
+  const evil = evilTeam(ctx);
+  const dirty = (team: SeatIndex[]) => team.some((t) => evil.has(t));
   let best: SeatIndex | null = null;
   let bestScore = -Infinity;
-  for (const [s, sc] of scores) {
-    if (sc > bestScore) {
-      best = s;
-      bestScore = sc;
+  for (const s of view.seats) {
+    if (s.index === me || evil.has(s.index)) continue;
+    let score = (ctx.rand(400 + s.index) - 0.5) * 0.6;
+    for (const p of view.proposalHistory) {
+      const d = dirty(p.team);
+      const v = p.votes[s.index];
+      const onTeam = p.team.includes(s.index);
+      // Rejecting a dirty team you're NOT on is the classic Merlin tell.
+      if (d) score += v ? -0.6 : onTeam ? 0.4 : 1;
+      else score += v ? 0.2 : -0.4;
+      if (p.leader === s.index) score += d ? -1.2 : 0.4;
+    }
+    if (score > bestScore) {
+      best = s.index;
+      bestScore = score;
     }
   }
-  if (best !== null) return best;
-  // Fallback: lowest-index non-evil.
-  for (const s of state.seats) {
-    if (!knownEvils.has(s.index)) return s.index;
-  }
-  return state.seats[0]!.index;
+  // Fallback (shouldn't happen: good always outnumbers evil).
+  return best ?? view.seats.find((s) => s.index !== me)!.index;
 }
 
 // =============================================================================
 // Top-level
 // =============================================================================
 
-export function aiChooseAction(
-  state: AvalonPrivateState,
-  seat: SeatIndex,
-): AvalonAction | null {
-  switch (state.phase) {
-    case 'setup': {
-      if (state.setupAcked[seat]) return null;
-      return { type: 'ackRoleReveal', bySeat: seat };
-    }
+export function aiChooseAction(state: AvalonPrivateState, seat: SeatIndex): AvalonAction | null {
+  if (!Number.isInteger(seat) || seat < 0 || seat >= state.seats.length) return null;
+  const view = viewFor(state, seat);
+  const mine = view.seats[seat]!;
+  const ctx = () => makeCtx(state, view, seat);
 
-    case 'teamProposal': {
-      if (seat !== state.currentLeaderSeat) return null;
-      const team = pickTeam(state, seat);
-      return { type: 'proposeTeam', bySeat: seat, team };
-    }
+  switch (view.phase) {
+    case 'setup':
+      return mine.hasAckedSetup ? null : { type: 'ackRoleReveal', bySeat: seat };
 
-    case 'teamVote': {
-      if (state.seats[seat]!.voteApprove !== null) return null;
-      return { type: 'castTeamVote', bySeat: seat, approve: teamApprove(state, seat) };
-    }
+    case 'teamProposal':
+      if (view.currentLeaderSeat !== seat) return null;
+      return { type: 'proposeTeam', bySeat: seat, team: pickTeam(ctx()) };
 
-    case 'teamVoteReveal': {
-      // First alive seat acks (action doesn't carry bySeat in this case).
-      if (seat !== 0) return null;
-      return { type: 'ackTeamVoteReveal' };
-    }
+    case 'teamVote':
+      if (view.yourVote !== null || mine.hasVoted) return null;
+      return { type: 'castTeamVote', bySeat: seat, approve: decideVote(ctx()) };
 
-    case 'questExecution': {
-      if (!state.proposedTeam.includes(seat)) return null;
-      if (state.seats[seat]!.questCard !== null) return null;
-      return { type: 'playQuestCard', bySeat: seat, success: questPlay(state, seat) };
-    }
+    case 'questExecution':
+      if (!view.proposedTeam.includes(seat) || view.yourQuestCard !== null) return null;
+      return { type: 'playQuestCard', bySeat: seat, success: decideQuestCard(ctx()) };
 
-    case 'questResolution': {
-      if (seat !== 0) return null;
-      return { type: 'ackQuestResolution' };
-    }
+    case 'assassinPick':
+      if (view.yourRole !== 'assassin') return null;
+      return { type: 'assassinateMerlin', bySeat: seat, target: pickMerlin(ctx()) };
 
-    case 'assassinPick': {
-      const assassin = state.seats.find((s) => s.role === 'assassin');
-      if (!assassin || assassin.index !== seat) return null;
-      return { type: 'assassinateMerlin', bySeat: seat, target: assassinPick(state, seat) };
-    }
-
+    // Host-only "Continue" controls, the end, and the scaffolded modules.
+    case 'teamVoteReveal':
+    case 'questResolution':
     case 'gameOver':
-      return null;
-
-    // Optional modules — scaffolded; module doesn't drive them yet.
     case 'ladyOfTheLake':
     case 'excaliburAssign':
     case 'excaliburUse':
       return null;
   }
-  void seat;
-  void ({} as AvalonRoleId);
-  return null;
 }

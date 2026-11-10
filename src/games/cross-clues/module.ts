@@ -7,24 +7,24 @@ import {
   WORD_PACKS,
   type WordPackId,
 } from '@/words';
+import { isValidCoord, normalizeClue } from './rules';
 import type {
   CellState,
   Coord,
-  CrossCluesPlayerRole,
   CrossCluesPrivateState,
-  CrossCluesPublicCell,
   CrossCluesPublicState,
-  CrossCluesScoreRating,
   RoundRecord,
 } from './state';
+import { crossCluesViewFor } from './view';
 
 // ============================================================================
 // Cross Clues — module
 //
 // Coop word game. Hidden info is narrow: only the active clue-giver's coord
-// is private; everything else (grid words, score, history) is shared.
-// `viewFor` is the single redaction chokepoint — `yourCoord` is the only
-// field that ever differs between seats.
+// (and the deck order) is private; everything else (grid words, score,
+// history) is shared. `viewFor` (view.ts) is the single redaction
+// chokepoint — `yourCoord` / `yourRole` are the only fields that differ
+// between seats.
 // ============================================================================
 
 export interface CrossCluesSeatConfig {
@@ -48,33 +48,9 @@ function getOptions(config: GameConfig): CrossCluesOptions {
 
 // --- Validation ------------------------------------------------------------
 
-const MAX_CLUE_LENGTH = 32;
-
-// Trim and validate a clue. Rules: non-empty, no internal whitespace,
-// allow hyphens and apostrophes, ≤ MAX_CLUE_LENGTH chars. Returns the
-// canonical trimmed form or throws.
-function normalizeClue(raw: string): string {
-  const trimmed = (raw ?? '').trim();
-  if (trimmed.length === 0) throw new Error('Clue must not be empty');
-  if (trimmed.length > MAX_CLUE_LENGTH) {
-    throw new Error(`Clue must be ≤ ${MAX_CLUE_LENGTH} chars`);
-  }
-  if (/\s/.test(trimmed)) {
-    throw new Error('Clue must be a single word (no spaces)');
-  }
-  return trimmed;
-}
-
-function assertCoordInBounds(c: Coord): void {
-  if (
-    !Number.isInteger(c.row) ||
-    !Number.isInteger(c.col) ||
-    c.row < 0 ||
-    c.row > 4 ||
-    c.col < 0 ||
-    c.col > 4
-  ) {
-    throw new Error(`Coord out of range: ${JSON.stringify(c)}`);
+function assertSeat(state: CrossCluesPrivateState, seat: unknown): asserts seat is SeatIndex {
+  if (typeof seat !== 'number' || !Number.isInteger(seat) || seat < 0 || seat >= state.seats.length) {
+    throw new Error(`Unknown seat ${String(seat)}`);
   }
 }
 
@@ -91,13 +67,6 @@ function resetRevealAcks(state: CrossCluesPrivateState): Record<SeatIndex, boole
   const out: Record<SeatIndex, boolean> = {};
   for (const s of state.seats) out[s.index] = false;
   return out;
-}
-
-function scoreRatingFor(score: number): CrossCluesScoreRating {
-  if (score >= 25) return 'perfect';
-  if (score >= 21) return 'legendary';
-  if (score >= 16) return 'great';
-  return 'rookie';
 }
 
 // Resolve a guess: place a token, append history, advance score on hit.
@@ -171,27 +140,6 @@ function advanceToNextRound(state: CrossCluesPrivateState): CrossCluesPrivateSta
   };
 }
 
-// --- Public view -----------------------------------------------------------
-
-function publicCell(cell: CellState): CrossCluesPublicCell {
-  return {
-    resolved: cell.resolved,
-    token: cell.token,
-    clueWord: cell.resolved ? cell.clueWord : null,
-    resolvedOnRound: cell.resolvedOnRound,
-  };
-}
-
-function roleFor(
-  state: CrossCluesPrivateState,
-  seat: SeatIndex | null,
-): CrossCluesPlayerRole {
-  if (seat === null) return 'observer';
-  if (seat === state.currentClueGiver) return 'clueGiver';
-  if (seat === state.currentGuesser) return 'guesser';
-  return 'observer';
-}
-
 // ============================================================================
 // Module
 // ============================================================================
@@ -230,7 +178,6 @@ export const crossCluesModule: GameModule<
     );
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   applyAction(
     state: CrossCluesPrivateState,
     action: CrossCluesAction,
@@ -240,9 +187,7 @@ export const crossCluesModule: GameModule<
         if (state.phase !== 'setup') {
           throw new Error('ackSetup only valid in setup phase');
         }
-        if (action.bySeat < 0 || action.bySeat >= state.seats.length) {
-          throw new Error(`Unknown seat ${action.bySeat}`);
-        }
+        assertSeat(state, action.bySeat);
         const setupAcked = { ...state.setupAcked, [action.bySeat]: true };
         const allAcked = everyoneAcked(setupAcked, state.seats.length);
         if (!allAcked) return { ...state, setupAcked };
@@ -259,7 +204,7 @@ export const crossCluesModule: GameModule<
             `Only the clue-giver (seat ${state.currentClueGiver}) may submit a clue`,
           );
         }
-        const clue = normalizeClue(action.clue);
+        const clue = normalizeClue(action.clue, [...state.rowWords, ...state.colWords]);
         return { ...state, phase: 'guessing', currentClue: clue };
       }
 
@@ -272,7 +217,9 @@ export const crossCluesModule: GameModule<
             `Only the guesser (seat ${state.currentGuesser}) may submit a guess`,
           );
         }
-        assertCoordInBounds(action.coord);
+        if (!isValidCoord(action.coord)) {
+          throw new Error(`Coord out of range: ${JSON.stringify(action.coord)}`);
+        }
         const cell = state.grid[action.coord.row]![action.coord.col]!;
         if (cell.resolved) {
           throw new Error('That cell has already been resolved');
@@ -284,57 +231,20 @@ export const crossCluesModule: GameModule<
         if (state.phase !== 'revealRound') {
           throw new Error('ackReveal only valid in revealRound phase');
         }
-        if (action.bySeat < 0 || action.bySeat >= state.seats.length) {
-          throw new Error(`Unknown seat ${action.bySeat}`);
-        }
+        assertSeat(state, action.bySeat);
         const revealAcked = { ...state.revealAcked, [action.bySeat]: true };
         if (!everyoneAcked(revealAcked, state.seats.length)) {
           return { ...state, revealAcked };
         }
         return advanceToNextRound({ ...state, revealAcked });
       }
+
+      default:
+        throw new Error(`Unknown action ${(action as { type?: unknown }).type as string}`);
     }
   },
 
-  viewFor(
-    state: CrossCluesPrivateState,
-    seat: SeatIndex | null,
-  ): CrossCluesPublicState {
-    const isClueGiver =
-      seat !== null &&
-      state.phase === 'clueGiving' &&
-      seat === state.currentClueGiver;
-    const lastRound =
-      state.phase === 'revealRound' && state.history.length > 0
-        ? state.history[state.history.length - 1]!
-        : null;
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({
-        index: s.index,
-        name: s.name,
-        hasAckedSetup: !!state.setupAcked[s.index],
-        hasAckedReveal: !!state.revealAcked[s.index],
-      })),
-      rowWords: state.rowWords,
-      colWords: state.colWords,
-      grid: state.grid.map((row) => row.map(publicCell)),
-      roundNumber: state.roundNumber,
-      remainingCount: state.remainingDeck.length,
-      currentClueGiver: state.currentClueGiver,
-      currentGuesser: state.currentGuesser,
-      currentClue: state.phase === 'guessing' || state.phase === 'revealRound'
-        ? state.currentClue
-        : null,
-      lastRound,
-      score: state.score,
-      scoreRating: state.phase === 'gameOver' ? scoreRatingFor(state.score) : null,
-      packs: state.packs,
-      yourSeat: seat,
-      yourCoord: isClueGiver ? state.currentCoord : null,
-      yourRole: roleFor(state, seat),
-    };
-  },
+  viewFor: crossCluesViewFor,
 
   isFinished(state: CrossCluesPrivateState): boolean {
     return state.phase === 'gameOver';

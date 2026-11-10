@@ -1,8 +1,11 @@
+import { launchGame } from '@/ui/shared/launch';
+import { OnlineHostToggle } from '@/ui/shared/OnlineHostToggle';
 import { useState } from 'react';
-import { useGameStore } from '@/store/gameStore';
-import { useNetworkStore } from '@/store/networkStore';
+import type { CSSProperties } from 'react';
 import { cockroachPokerModule } from '../module';
 import type { CockroachPokerOptions } from '../module';
+import { CREATURES } from '../state';
+import { CREATURE_LABEL, CreatureCard, CreatureDefs } from './CreatureArt';
 import styles from './CockroachPokerSetup.module.css';
 
 interface Props {
@@ -10,134 +13,126 @@ interface Props {
 }
 
 const COUNT_OPTIONS = [3, 4, 5, 6];
+const MAX = 6;
 
 export function CockroachPokerSetup({ onBack }: Props) {
   const [playerCount, setPlayerCount] = useState(4);
-  const [names, setNames] = useState<string[]>([
-    'Player 1',
-    'Player 2',
-    'Player 3',
-    'Player 4',
-    'Player 5',
-    'Player 6',
-  ]);
+  const [names, setNames] = useState<string[]>(Array.from({ length: MAX }, (_, i) => `Player ${i + 1}`));
+  const [aiFlags, setAiFlags] = useState<boolean[]>(Array.from({ length: MAX }, (_, i) => i !== 0));
   const [online, setOnline] = useState(false);
-  const [roomCode, setRoomCode] = useState('');
 
-  const updateName = (i: number, value: string) => {
-    setNames((cur) => {
-      const next = cur.slice();
-      next[i] = value;
-      return next;
+  const flags = aiFlags.slice(0, playerCount);
+  const humanCount = flags.filter((f) => !f).length;
+  const canStart = !online || humanCount > 0;
+  const perPlayer = Math.floor(64 / playerCount);
+  const leftover = 64 - perPlayer * playerCount;
+
+  const updateName = (i: number, value: string) => setNames((cur) => cur.map((n, j) => (j === i ? value : n)));
+  const toggleAI = (i: number) => setAiFlags((cur) => cur.map((f, j) => (j === i ? !f : f)));
+
+  const startGame = () => {
+    const playerNames = Array.from({ length: playerCount }, (_, i) => (names[i] ?? '').trim() || `Player ${i + 1}`);
+    const opts: CockroachPokerOptions = {
+      players: playerNames.map((name, i) => ({ name, isAI: flags[i] ?? false })),
+    };
+    launchGame({
+      module: cockroachPokerModule,
+      options: opts,
+      playerNames,
+      aiSeats: flags.flatMap((f, i) => (f ? [i] : [])),
+      online,
     });
   };
 
-  const startGame = () => {
-    const playerNames = Array.from({ length: playerCount }, (_, i) =>
-      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
-    );
-    const opts: CockroachPokerOptions = {
-      players: playerNames.map((name) => ({ name, isAI: false })),
-    };
-    if (online) {
-      const code = roomCode.trim();
-      if (!code) return;
-      useNetworkStore.getState().hostRoom(code, 'cockroach-poker', {
-        seatCount: playerCount,
-        names: playerNames,
-        options: opts as unknown as Record<string, unknown>,
-      });
-      return;
-    }
-    const config = {
-      gameId: 'cockroach-poker' as const,
-      seats: [],
-      seed: Math.floor(Math.random() * 2 ** 31),
-      gameOptions: opts as unknown as Record<string, unknown>,
-    };
-    const initialState = cockroachPokerModule.createInitialState(config);
-    useGameStore.getState().startLocalGame(cockroachPokerModule, initialState, 0);
-  };
-
   return (
-    <div className={styles.root}>
-      <header className={styles.header}>
-        <button onClick={onBack}>← Back</button>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Cockroach Poker — Setup</h1>
-      </header>
+    <CreatureDefs>
+      <div className={styles.root}>
+        <header className={styles.header}>
+          <button onClick={onBack} className={styles.back}>
+            ← Back
+          </button>
+          <div className={styles.hero} aria-hidden>
+            {CREATURES.map((c, i) => (
+              <span key={c} className={styles.heroCard} style={{ '--k': i - 3.5 } as CSSProperties}>
+                <CreatureCard creature={c} width={54} />
+              </span>
+            ))}
+          </div>
+          <h1 className={styles.title}>Cockroach Poker</h1>
+          <p className={styles.tagline}>“This is a stink bug.” It is not a stink bug.</p>
+        </header>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Players</h3>
-        <p className={styles.subtitle}>
-          3–6 players. 64-card deck (8 creatures × 8).
-        </p>
-        <div className={styles.countControls}>
-          {COUNT_OPTIONS.map((n) => (
-            <button
-              key={n}
-              className={n === playerCount ? styles.countActive : ''}
-              onClick={() => setPlayerCount(n)}
-            >
-              {n}
-            </button>
+        <section className={styles.panel}>
+          <h3 className={styles.h3}>Victims</h3>
+          <div className={styles.countControls} role="radiogroup" aria-label="Number of players">
+            {COUNT_OPTIONS.map((n) => (
+              <button
+                key={n}
+                role="radio"
+                aria-checked={n === playerCount}
+                className={`${styles.countChip} ${n === playerCount ? styles.countActive : ''}`}
+                onClick={() => setPlayerCount(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          {Array.from({ length: playerCount }, (_, i) => (
+            <div className={styles.nameRow} key={i}>
+              <span className={styles.seatNumber}>{i + 1}</span>
+              <input
+                className={styles.nameInput}
+                value={names[i] ?? ''}
+                onChange={(e) => updateName(i, e.target.value)}
+                maxLength={20}
+                aria-label={`Seat ${i + 1} name`}
+              />
+              <button
+                role="switch"
+                aria-checked={flags[i] ?? false}
+                aria-label={`Seat ${i + 1} is AI`}
+                className={`${styles.aiSwitch} ${flags[i] ? styles.aiOn : ''}`}
+                onClick={() => toggleAI(i)}
+              >
+                <span className={styles.aiKnob} />
+                <span className={styles.aiLabel}>{flags[i] ? 'AI' : 'Human'}</span>
+              </button>
+            </div>
           ))}
-        </div>
-        {Array.from({ length: playerCount }, (_, i) => (
-          <div className={styles.nameRow} key={i}>
-            <span className={styles.seatNumber}>{i + 1}</span>
-            <input
-              className={styles.nameInput}
-              value={names[i] ?? ''}
-              onChange={(e) => updateName(i, e.target.value)}
-              maxLength={20}
-            />
-          </div>
-        ))}
-      </section>
+          <p className={styles.note}>
+            {perPlayer} cards each{leftover > 0 ? ` (${leftover} set aside unseen)` : ''}.
+            {humanCount > 1 && !online ? ' Pass-and-play: hands stay hidden between turns.' : ''}
+          </p>
+        </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>How to play</h3>
-        <ul style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6, paddingLeft: 18, margin: 0 }}>
-          <li>Pick a card from your hand, claim a creature ("This is a rat"), pass it face-down to someone.</li>
-          <li>Receiver decides: "I believe you" (claim is correct) or "I think you're lying" (claim is wrong). The wrong guesser takes the card face-up.</li>
-          <li>Or: <b>peek the card and pass it on</b> with a new claim. Can't pass to anyone who's already seen it.</li>
-          <li>Get 4 of any one creature face-up → you lose.</li>
-        </ul>
-      </section>
+        <section className={styles.panel}>
+          <h3 className={styles.h3}>How to play</h3>
+          <ul className={styles.howto}>
+            <li>
+              On your turn, slide a card face-down to anyone and name a creature — true or not:{' '}
+              <i>“This is a {CREATURE_LABEL.toad.toLowerCase()}.”</i>
+            </li>
+            <li>
+              The receiver calls <b>true</b> or <b>false</b>. Right: the passer takes the card face-up. Wrong: the receiver
+              keeps it face-up.
+            </li>
+            <li>
+              Or they <b>peek</b> and pass it on with a new claim to someone who hasn&apos;t seen it. The last person who
+              hasn&apos;t seen it has to call.
+            </li>
+            <li>Whoever takes the card goes next. Four of one creature face-up — or no cards left on your turn — and you lose.</li>
+          </ul>
+        </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Multiplayer</h3>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <input
-            type="checkbox"
-            checked={online}
-            onChange={(e) => setOnline(e.target.checked)}
-          />
-          <span>Host an online room</span>
-        </label>
-        {online && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
-            <input
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value)}
-              placeholder="any string (share with friends)"
-              maxLength={32}
-              style={{ padding: 6, minWidth: 240 }}
-            />
-          </div>
-        )}
-      </section>
+        <OnlineHostToggle online={online} onChange={setOnline} />
 
-      <footer className={styles.footer}>
-        <button
-          className={styles.startButton}
-          disabled={online && !roomCode.trim()}
-          onClick={startGame}
-        >
-          {online ? 'Open lobby →' : 'Start game →'}
-        </button>
-      </footer>
-    </div>
+        <footer className={styles.footer}>
+          {!canStart && <span className={styles.note}>Online games need at least one human seat.</span>}
+          <button className={styles.startButton} onClick={startGame} disabled={!canStart}>
+            {online ? 'Open the parlour →' : 'Release the bugs →'}
+          </button>
+        </footer>
+      </div>
+    </CreatureDefs>
   );
 }

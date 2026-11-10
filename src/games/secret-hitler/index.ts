@@ -12,6 +12,7 @@ export type {
   ShPhase,
   ShExecutivePower,
   ShLogEntry,
+  ShVote,
 } from './state';
 export {
   dealRoles,
@@ -20,4 +21,6 @@ export {
   buildInitialDeck,
   buildPartyKnowledge,
 } from './setup';
+export { viewFor } from './view';
+export { eligibleChancellors, isEligibleChancellor, termLimitedSeats } from './rules';
 export { aiChooseAction } from './ai';

@@ -127,7 +127,7 @@ export function dealCoup(
       ],
       coins: 2,
       eliminated: false,
-      tokens: { peacekeeping: false, treaty: null, weapons: 0, reviveBlessed: false },
+      tokens: { peacekeeping: false, treaty: null, weapons: 0, reviveBlessed: false, reviveUsed: false },
     });
   }
   const deck = shuffled.slice(cursor);
@@ -159,6 +159,9 @@ export function buildInitialState(
     exchangeOffer: null,
     log: ['Game started.'],
     privatePeeks,
+    events: [],
+    eventSeq: 0,
+    actionCount: 0,
     seed,
     rngCursor: seed,
     winnerSeat: null,

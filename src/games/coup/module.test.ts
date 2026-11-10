@@ -33,7 +33,7 @@ describe('coup — classic base', () => {
 
   it('income gives +1 coin and advances the turn', () => {
     let s = freshClassicState(3);
-    s = coupModule.applyAction(s, { type: 'declareGeneral', generalId: 'income' }, '');
+    s = coupModule.applyAction(s, { type: 'declareGeneral', bySeat: 0, generalId: 'income' }, '');
     expect(s.seats[0]!.coins).toBe(3);
     expect(s.currentSeat).toBe(1);
     expect(s.phase).toBe('turnStart');
@@ -44,7 +44,7 @@ describe('coup — classic base', () => {
     s.seats[0]!.coins = 7;
     s = coupModule.applyAction(
       s,
-      { type: 'declareGeneral', generalId: 'coup', target: 1 },
+      { type: 'declareGeneral', bySeat: 0, generalId: 'coup', target: 1 },
       '',
     );
     expect(s.seats[0]!.coins).toBe(0);
@@ -62,6 +62,7 @@ describe('coup — classic base', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'duke',
         characterActionId: 'tax',
       },
@@ -76,7 +77,7 @@ describe('coup — classic base', () => {
 
   it('foreign aid is challenge-skipped but blockable; passes go to resolve', () => {
     let s = freshClassicState(3);
-    s = coupModule.applyAction(s, { type: 'declareGeneral', generalId: 'foreignAid' }, '');
+    s = coupModule.applyAction(s, { type: 'declareGeneral', bySeat: 0, generalId: 'foreignAid' }, '');
     expect(s.phase).toBe('awaitingBlock');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 1 }, '');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
@@ -88,7 +89,7 @@ describe('coup — classic base', () => {
     let s = freshClassicState(3);
     s.seats[0]!.coins = 10;
     expect(() =>
-      coupModule.applyAction(s, { type: 'declareGeneral', generalId: 'income' }, ''),
+      coupModule.applyAction(s, { type: 'declareGeneral', bySeat: 0, generalId: 'income' }, ''),
     ).toThrow(/must coup/i);
   });
 
@@ -150,6 +151,7 @@ describe('coup — G54 ruleset', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'taxCollector',
         characterActionId: 'taxLevy',
       },
@@ -227,6 +229,7 @@ describe('coup — speculator (custom steal)', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'speculator',
         characterActionId: 'customSteal',
         target: 1,
@@ -237,10 +240,9 @@ describe('coup — speculator (custom steal)', () => {
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 1 }, '');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 3 }, '');
-    // Block window — Speculator blocks steal in our table. Pass.
+    // Block window: only the steal's target may block. Pass.
+    expect(s.phase).toBe('awaitingBlock');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 1 }, '');
-    s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
-    s = coupModule.applyAction(s, { type: 'pass', bySeat: 3 }, '');
     expect(s.seats[0]!.coins).toBe(3 + 3); // stole 3 (own coins)
     expect(s.seats[1]!.coins).toBe(10 - 3);
   });
@@ -254,6 +256,7 @@ describe('coup — speculator (custom steal)', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'speculator',
         characterActionId: 'customSteal',
         target: 1,
@@ -264,8 +267,6 @@ describe('coup — speculator (custom steal)', () => {
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 3 }, '');
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 1 }, '');
-    s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
-    s = coupModule.applyAction(s, { type: 'pass', bySeat: 3 }, '');
     expect(s.seats[0]!.coins).toBe(8 + 5);
     expect(s.seats[1]!.coins).toBe(10 - 5);
   });
@@ -279,6 +280,7 @@ describe('coup — capitalist pile-on', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'capitalist',
         characterActionId: 'pileOnIncome',
       },
@@ -307,6 +309,7 @@ describe('coup — protestor chip-in', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'protestor',
         characterActionId: 'chipInEliminate',
         target: 1,
@@ -333,6 +336,7 @@ describe('coup — foreign consular treaty', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'foreignConsular',
         characterActionId: 'foreignConsularTreaty',
         treatyPair: [1, 2],
@@ -351,7 +355,7 @@ describe('coup — foreign consular treaty', () => {
     expect(() =>
       coupModule.applyAction(
         s,
-        { type: 'declareGeneral', generalId: 'coup', target: 2 },
+        { type: 'declareGeneral', bySeat: 1, generalId: 'coup', target: 2 },
         '',
       ),
     ).toThrow(/Treaty/i);
@@ -366,6 +370,7 @@ describe('coup — peacekeeper shield', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'peacekeeper',
         characterActionId: 'peacekeeperShield',
       },
@@ -380,7 +385,7 @@ describe('coup — peacekeeper shield', () => {
     expect(() =>
       coupModule.applyAction(
         s,
-        { type: 'declareGeneral', generalId: 'coup', target: 0 },
+        { type: 'declareGeneral', bySeat: 1, generalId: 'coup', target: 0 },
         '',
       ),
     ).toThrow(/Peacekeeping/i);
@@ -396,6 +401,7 @@ describe('coup — arms dealer sell influence', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'armsDealer',
         characterActionId: 'armsDealerSell',
       },
@@ -419,7 +425,7 @@ describe('coup — judge blocks coup (G54)', () => {
     s.seats[0]!.coins = 7;
     s = coupModule.applyAction(
       s,
-      { type: 'declareGeneral', generalId: 'coup', target: 1 },
+      { type: 'declareGeneral', bySeat: 0, generalId: 'coup', target: 1 },
       '',
     );
     expect(s.seats[0]!.coins).toBe(0);
@@ -453,13 +459,13 @@ describe('coup — bishop revive token', () => {
     s.seats[0]!.coins = 7;
     s = coupModule.applyAction(
       s,
-      { type: 'declareGeneral', generalId: 'coup', target: 1 },
+      { type: 'declareGeneral', bySeat: 0, generalId: 'coup', target: 1 },
       '',
     );
     // Coup is blockable in G54 (Judge), so we land in awaitingBlock.
     expect(s.phase).toBe('awaitingBlock');
+    // Only the coup's target may block; their pass resolves the coup.
     s = coupModule.applyAction(s, { type: 'pass', bySeat: 1 }, '');
-    s = coupModule.applyAction(s, { type: 'pass', bySeat: 2 }, '');
     // Coup resolves — target has only 1 unrevealed influence, blessed kicks in.
     expect(s.seats[1]!.tokens.reviveBlessed).toBe(false);
     expect(s.seats[1]!.influences[1]!.revealed).toBe(false);
@@ -476,6 +482,7 @@ describe('coup — world bank (wealth redistribute)', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'worldBank',
         characterActionId: 'wealthRedistribute',
       },
@@ -501,6 +508,7 @@ describe('coup — force-swap (lobbyist)', () => {
       s,
       {
         type: 'declareCharacter',
+        bySeat: 0,
         claimedCharacter: 'lobbyist',
         characterActionId: 'forceSwap',
         target: 1,

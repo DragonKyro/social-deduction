@@ -48,8 +48,22 @@ export interface AvalonQuestRecord {
   teamSize: number;
   failsRequired: number; // typically 1, sometimes 2 in 7+ player game's quest 4
   team: SeatIndex[];
+  // Only the COUNT of fail cards is ever recorded — never which seat played
+  // which card. That's the whole game.
   failCount: number;
   result: 'success' | 'fail';
+}
+
+// One completed team vote. Every vote is public once the whole table has
+// voted (rulebook: tokens are flipped together), so the log is public too.
+export interface AvalonProposalRecord {
+  questNumber: number; // 1..5
+  attempt: number; // 1..5 within the quest
+  leader: SeatIndex;
+  team: SeatIndex[];
+  // votes[seat] = true (approve) / false (reject).
+  votes: boolean[];
+  approved: boolean;
 }
 
 // ----------------------------------------------------------------------------
@@ -82,6 +96,8 @@ export interface AvalonPrivateState {
   // Per-quest config — derived from player count at setup time; never mutates.
   questTrack: Array<{ teamSize: number; failsRequired: number }>;
   questHistory: AvalonQuestRecord[];
+  // Every resolved team vote, in order. Public.
+  proposalHistory: AvalonProposalRecord[];
   currentLeaderSeat: SeatIndex;
   // Current team-proposal under vote.
   proposedTeam: SeatIndex[];
@@ -90,6 +106,8 @@ export interface AvalonPrivateState {
   // Role-knowledge dropped into per-seat views via redaction. Computed once
   // at setup.
   roleKnowledge: Record<SeatIndex, Array<{ seat: SeatIndex; label: string }>>;
+  // HOST-ONLY. The deal is a pure function of the seed, so this must never be
+  // copied into a public view (a peer could re-run `dealRoles`).
   seed: number;
   winnerTeam: AvalonAlignment | null;
   // Set when phase = 'assassinPick' is resolved.
@@ -109,6 +127,12 @@ export interface AvalonPublicSeatState {
   // Approval votes ARE public after the team vote resolves (rulebook).
   // Suppressed while votes are still being cast.
   voteApprove: boolean | null;
+  // Whether this seat has placed its (face-down) vote token yet. Public, like
+  // watching someone put a token on the table; the value stays hidden.
+  hasVoted: boolean;
+  // During questExecution: whether this team member has handed in a card.
+  // Never says WHICH card.
+  hasPlayedQuestCard: boolean;
   isCurrentLeader: boolean;
   isOnProposedTeam: boolean;
   // True only during the role-reveal phase; tells everyone who has and
@@ -124,7 +148,11 @@ export interface AvalonPublicState {
   seats: AvalonPublicSeatState[];
   currentQuestNumber: number;
   questTrack: Array<{ teamSize: number; failsRequired: number }>;
+  // Which characters are in this game (announced at the table in the real
+  // game). Canonical role order, one entry per card, NEVER seat order.
+  rolesInPlay: AvalonRoleId[];
   questHistory: AvalonQuestRecord[]; // success/fail only, never which seats failed
+  proposalHistory: AvalonProposalRecord[]; // completed (public) team votes
   failedProposalsThisQuest: number;
   proposedTeam: SeatIndex[];
   currentLeaderSeat: SeatIndex;
@@ -136,7 +164,8 @@ export interface AvalonPublicState {
   // picked (for the public reveal screen).
   assassinationTarget: SeatIndex | null;
 
-  // Optional-module public surface.
+  // Optional-module public surface. The modules are scaffolded only: these are
+  // always null in base scope (the engine never enables them).
   ladyOfTheLake: {
     enabled: boolean;
     holder: SeatIndex;
@@ -154,6 +183,8 @@ export interface AvalonPublicState {
   yourRole: AvalonRoleId | null;
   yourAlignment: AvalonAlignment | null;
   yourRoleKnowledge: Array<{ seat: SeatIndex; label: string }>;
+  // Your own vote while the table is still voting (everyone else's is hidden).
+  yourVote: boolean | null;
   // If you're on the current quest team, this is "success" or "fail" or null
   // (not yet played); other seats only see the proposed team membership.
   yourQuestCard: boolean | null;

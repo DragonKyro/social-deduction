@@ -1,0 +1,92 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "social-deduction": {
+      "roomDays": {
+        ".read": "auth != null",
+        ".indexOn": ".value",
+        "$day": {
+          ".write": "auth != null && (newData.exists() || (data.val() <= now - 604800000 && !root.child('social-deduction/roomIndex/' + $day).exists()))",
+          ".validate": "$day.matches(/^[0-9]{5,6}$/) && newData.isNumber() && newData.val() >= now - 600000 && newData.val() <= now + 87000000"
+        }
+      },
+      "roomIndex": {
+        "$day": {
+          ".read": "auth != null && root.child('social-deduction/roomDays/' + $day).val() <= now - 604800000",
+          "$code": {
+            ".write": "auth != null && (newData.exists() ? !data.exists() : root.child('social-deduction/roomDays/' + $day).val() <= now - 604800000)",
+            ".validate": "$code.matches(/^[A-Z0-9]{4,6}$/) && newData.val() === true"
+          }
+        }
+      },
+      "rooms": {
+        "$code": {
+          // No ".read" at the room level on purpose: rules cascade, so it would
+          // open views/ (every player's secrets) to everyone in the room.
+          ".write": "auth != null && (newData.exists() ? !data.exists() && newData.child('meta/hostUid').val() === auth.uid : data.child('meta/hostUid').val() === auth.uid || (data.child('meta/createdAt').val() < now - 604800000 && !data.child('presence').exists()))",
+          ".validate": "$code.matches(/^[A-Z0-9]{4,6}$/) && newData.hasChildren(['meta', 'lobby'])",
+          "meta": {
+            ".read": "auth != null",
+            ".validate": "newData.hasChildren(['hostUid', 'createdAt', 'build', 'v'])",
+            "hostUid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+            "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+            "build": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "v": { ".validate": "newData.val() === 1" },
+            "$other": { ".validate": false }
+          },
+          "lobby": {
+            ".read": "auth != null",
+            ".write": "auth != null && data.exists() && root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid",
+            ".validate": "newData.isString() && newData.val().length < 20000"
+          },
+          "views": {
+            ".write": "auth != null && root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid",
+            "$uid": {
+              ".read": "auth != null && auth.uid === $uid",
+              ".validate": "newData.isString() && newData.val().length < 200000"
+            }
+          },
+          "host": {
+            ".read": "auth != null && root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid",
+            ".write": "auth != null && root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid",
+            ".validate": "newData.isString() && newData.val().length < 500000"
+          },
+          "inbox": {
+            ".read": "auth != null && root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid",
+            "$id": {
+              ".write": "auth != null && (newData.exists() ? !data.exists() && newData.child('uid').val() === auth.uid : root.child('social-deduction/rooms/' + $code + '/meta/hostUid').val() === auth.uid)",
+              ".validate": "newData.hasChildren(['uid', 'p'])",
+              "uid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+              "p": { ".validate": "newData.isString() && newData.val().length < 8000" },
+              "$other": { ".validate": false }
+            }
+          },
+          "chat": {
+            ".read": "auth != null",
+            "$id": {
+              ".write": "auth != null && !data.exists() && newData.child('uid').val() === auth.uid",
+              ".validate": "newData.hasChildren(['uid', 'name', 'text', 'at'])",
+              "uid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+              "name": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500" },
+              "at": { ".validate": "newData.isNumber() && newData.val() <= now" },
+              "$other": { ".validate": false }
+            }
+          },
+          "presence": {
+            ".read": "auth != null",
+            "$conn": {
+              ".write": "auth != null && (newData.exists() ? newData.child('uid').val() === auth.uid && (!data.exists() || data.child('uid').val() === auth.uid) : !data.exists() || data.child('uid').val() === auth.uid)",
+              ".validate": "newData.hasChildren(['uid', 'name'])",
+              "uid": { ".validate": "newData.isString()" },
+              "name": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "$other": { ".validate": false }
+            }
+          },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

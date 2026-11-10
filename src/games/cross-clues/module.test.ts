@@ -267,7 +267,7 @@ describe('Cross Clues — round scoring + token placement', () => {
         if (r !== trueCoord.row || c !== trueCoord.col) wrong = { row: r, col: c };
       }
     }
-    s = apply(s, { type: 'submitClue', bySeat: s.currentClueGiver!, clue: 'dog' });
+    s = apply(s, { type: 'submitClue', bySeat: s.currentClueGiver!, clue: 'zzyzx' });
     s = apply(s, { type: 'submitGuess', bySeat: s.currentGuesser!, coord: wrong! });
     expect(s.phase).toBe('revealRound');
     expect(s.score).toBe(0);
@@ -367,13 +367,16 @@ describe('Cross Clues — viewFor redaction', () => {
     expect(v.yourSeat).toBeNull();
   });
 
-  it('no seat sees yourCoord during guessing/revealRound (clue already public)', () => {
+  it('during guessing only the clue-giver still sees their card; nobody during revealRound', () => {
     let s = ackEveryoneSetup(crossCluesModule.createInitialState(configFor(3)));
-    s = apply(s, { type: 'submitClue', bySeat: s.currentClueGiver!, clue: 'sun' });
+    s = apply(s, { type: 'submitClue', bySeat: s.currentClueGiver!, clue: 'zzyzx' });
     expect(s.phase).toBe('guessing');
     for (let seat: SeatIndex = 0; seat < s.seats.length; seat++) {
-      expect(crossCluesModule.viewFor(s, seat).yourCoord).toBeNull();
+      const v = crossCluesModule.viewFor(s, seat).yourCoord;
+      if (seat === s.currentClueGiver) expect(v).toEqual(s.currentCoord);
+      else expect(v).toBeNull();
     }
+    expect(crossCluesModule.viewFor(s, null).yourCoord).toBeNull();
     s = apply(s, {
       type: 'submitGuess',
       bySeat: s.currentGuesser!,

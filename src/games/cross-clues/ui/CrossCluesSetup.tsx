@@ -1,209 +1,192 @@
-import { useMemo, useState } from 'react';
-import { useGameStore } from '@/store/gameStore';
-import { useNetworkStore } from '@/store/networkStore';
+import { launchGame } from '@/ui/shared/launch';
+import { OnlineHostToggle } from '@/ui/shared/OnlineHostToggle';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { crossCluesModule } from '../module';
 import type { CrossCluesOptions } from '../module';
-import {
-  WORD_PACK_LIST,
-  buildPoolFromPacks,
-  DEFAULT_WORD_PACK_ID,
-  type WordPackId,
-} from '@/words';
+import { WORD_PACK_LIST, buildPoolFromPacks, DEFAULT_WORD_PACK_ID, type WordPackId } from '@/words';
 import styles from './CrossCluesSetup.module.css';
 
-// Local-host setup for Cross Clues. Picks player count (2-6), per-seat
-// names, and one or more word packs. Pack list is shared with Codenames.
+// Local-host setup for Cross Clues: player count (2–6), per-seat names and
+// AI flags, and one or more word packs (shared with Codenames).
 
 interface Props {
   onBack: () => void;
 }
 
 const COUNT_OPTIONS = [2, 3, 4, 5, 6];
-
-// Cross Clues only deals 10 words per match; almost any single pack
-// satisfies this. We still enforce ≥ 10 unique words across the pool.
+// Cross Clues deals 10 words per match.
 const MIN_POOL = 10;
+const DEFAULT_NAMES = ['Player 1', 'Player 2', 'Player 3', 'Player 4', 'Player 5', 'Player 6'];
 
 export function CrossCluesSetup({ onBack }: Props) {
   const [playerCount, setPlayerCount] = useState(4);
-  const [names, setNames] = useState<string[]>([
-    'Player 1',
-    'Player 2',
-    'Player 3',
-    'Player 4',
-    'Player 5',
-    'Player 6',
-  ]);
+  const [names, setNames] = useState<string[]>(DEFAULT_NAMES);
+  const [aiFlags, setAiFlags] = useState<boolean[]>([false, false, false, false, false, false]);
   const [selectedPacks, setSelectedPacks] = useState<WordPackId[]>([DEFAULT_WORD_PACK_ID]);
   const [online, setOnline] = useState(false);
-  const [roomCode, setRoomCode] = useState('');
-
-  const updateName = (i: number, value: string) => {
-    setNames((cur) => {
-      const next = cur.slice();
-      next[i] = value;
-      return next;
-    });
-  };
-
-  const togglePack = (id: WordPackId) => {
-    setSelectedPacks((cur) =>
-      cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
-    );
-  };
 
   const pool = useMemo(() => buildPoolFromPacks(selectedPacks), [selectedPacks]);
   const poolTooSmall = pool.length < MIN_POOL;
-  const hasAdultsOnly = selectedPacks.some(
-    (id) => WORD_PACK_LIST.find((p) => p.id === id)?.adultsOnly,
-  );
+  const hasAdultsOnly = selectedPacks.some((id) => WORD_PACK_LIST.find((p) => p.id === id)?.adultsOnly);
+  const flags = Array.from({ length: playerCount }, (_, i) => aiFlags[i] ?? false);
+  const aiCount = flags.filter(Boolean).length;
+
+  const setName = (i: number, value: string) => setNames((cur) => cur.map((n, j) => (j === i ? value : n)));
+  const toggleAI = (i: number) => setAiFlags((cur) => cur.map((f, j) => (j === i ? !f : f)));
+  const togglePack = (id: WordPackId) =>
+    setSelectedPacks((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
 
   const startGame = () => {
-    const playerNames = Array.from({ length: playerCount }, (_, i) =>
-      (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
+    const playerNames = Array.from(
+      { length: playerCount },
+      (_, i) => (names[i] ?? `Player ${i + 1}`).trim() || `Player ${i + 1}`,
     );
     const opts: CrossCluesOptions = {
-      players: playerNames.map((name) => ({ name, isAI: false })),
+      players: playerNames.map((name, i) => ({ name, isAI: flags[i]! })),
       packs: selectedPacks.length > 0 ? selectedPacks : [DEFAULT_WORD_PACK_ID],
     };
-    if (online) {
-      const code = roomCode.trim();
-      if (!code) return;
-      useNetworkStore.getState().hostRoom(code, 'cross-clues', {
-        seatCount: playerCount,
-        names: playerNames,
-        options: opts as unknown as Record<string, unknown>,
-      });
-      return;
-    }
-    const config = {
-      gameId: 'cross-clues' as const,
-      seats: [],
-      seed: Math.floor(Math.random() * 2 ** 31),
-      gameOptions: opts as unknown as Record<string, unknown>,
-    };
-    const initialState = crossCluesModule.createInitialState(config);
-    useGameStore.getState().startLocalGame(crossCluesModule, initialState, 0);
+    launchGame({
+      module: crossCluesModule,
+      options: opts,
+      playerNames,
+      aiSeats: flags.flatMap((f, i) => (f ? [i] : [])),
+      online,
+    });
   };
 
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <button onClick={onBack}>← Back</button>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Cross Clues — Setup</h1>
+        <button type="button" className={styles.backBtn} onClick={onBack}>
+          ← Back
+        </button>
+        <div>
+          <h1 className={styles.title}>Cross Clues</h1>
+          <p className={styles.tagline}>A cooperative word game · one notebook, one team</p>
+        </div>
       </header>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Players</h3>
+      <section className={styles.page} aria-labelledby="cc-players">
+        <span className={styles.tape} aria-hidden />
+        <h3 id="cc-players" className={styles.h3}>
+          Who&apos;s playing?
+        </h3>
         <p className={styles.subtitle}>
-          2–6 players. Best with 3–6. Each round one player privately holds a grid coordinate
-          and gives a one-word clue; the next player submits the team&apos;s guess.
+          2–6 players (best with 3–6). Each round one player privately draws a coordinate and gives a one-word clue;
+          the next player enters the team&apos;s guess. Mark seats as AI to fill the table.
         </p>
-        <div className={styles.countControls}>
+        <div className={styles.countControls} role="radiogroup" aria-label="Number of players">
           {COUNT_OPTIONS.map((n) => (
             <button
               key={n}
-              className={n === playerCount ? styles.countActive : ''}
+              type="button"
+              role="radio"
+              aria-checked={n === playerCount}
+              className={`${styles.countBtn} ${n === playerCount ? styles.countActive : ''}`}
               onClick={() => setPlayerCount(n)}
             >
               {n}
             </button>
           ))}
+          {aiCount > 0 && <span className={styles.aiSummary}>{aiCount} AI</span>}
         </div>
-        {Array.from({ length: playerCount }, (_, i) => (
-          <div className={styles.nameRow} key={i}>
-            <span className={styles.seatNumber}>{i + 1}</span>
-            <input
-              className={styles.nameInput}
-              value={names[i] ?? ''}
-              onChange={(e) => updateName(i, e.target.value)}
-              maxLength={20}
-            />
-          </div>
-        ))}
+        <div className={styles.nameGrid}>
+          {Array.from({ length: playerCount }, (_, i) => (
+            <div className={styles.nameRow} key={i} style={{ rotate: `${((i * 37) % 5) - 2}deg` }}>
+              <span className={styles.seatNumber}>{i + 1}</span>
+              <input
+                className={styles.nameInput}
+                value={names[i] ?? ''}
+                onChange={(e) => setName(i, e.target.value)}
+                maxLength={20}
+                aria-label={`Seat ${i + 1} name`}
+              />
+              <button
+                type="button"
+                className={`${styles.aiToggle} ${flags[i] ? styles.aiOn : ''}`}
+                onClick={() => toggleAI(i)}
+                aria-pressed={flags[i]}
+                aria-label={`Seat ${i + 1}: ${flags[i] ? 'AI' : 'human'}. Toggle AI`}
+              >
+                AI
+              </button>
+            </div>
+          ))}
+        </div>
+        {aiCount === playerCount && (
+          <p className={styles.note}>Every seat is an AI — you&apos;ll watch the game as a spectator.</p>
+        )}
+        {online && aiCount > 0 && (
+          <p className={styles.note}>AI seats run on your device as host; they pause if you leave.</p>
+        )}
       </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Word packs</h3>
-        <p className={styles.subtitle}>
-          Same pack list as Codenames — pick any combination. Words are deduped
-          across selected packs.
-        </p>
+      <section className={styles.page} aria-labelledby="cc-packs">
+        <span className={styles.tape} aria-hidden />
+        <h3 id="cc-packs" className={styles.h3}>
+          Word packs
+        </h3>
+        <p className={styles.subtitle}>Same pack list as Codenames — pick any mix. Words are deduped across packs.</p>
         <div className={styles.packGrid}>
-          {WORD_PACK_LIST.map((pack) => {
+          {WORD_PACK_LIST.map((pack, i) => {
             const on = selectedPacks.includes(pack.id);
             return (
               <button
                 key={pack.id}
                 type="button"
                 className={`${styles.packCard} ${on ? styles.active : ''}`}
+                style={{ '--note': ['#ffe680', '#ffb3c4', '#a9ecc4', '#a8d8ff', '#ffcf8a'][i % 5] } as CSSProperties}
                 onClick={() => togglePack(pack.id)}
+                aria-pressed={on}
               >
                 <span className={styles.packName}>
-                  {pack.emoji} {pack.name}
-                  {pack.adultsOnly && (
-                    <span style={{ color: '#fbbf24', fontSize: 11, marginLeft: 6 }}>18+</span>
-                  )}
+                  <span aria-hidden>{pack.emoji}</span> {pack.name}
+                  {pack.adultsOnly && <span className={styles.packAdult}>18+</span>}
                 </span>
                 <span className={styles.packDescription}>{pack.blurb}</span>
                 <span className={styles.packCount}>
-                  {pack.words.length} words {on && '· ✓ selected'}
+                  {pack.words.length} words{on ? ' · ✓ in' : ''}
                 </span>
               </button>
             );
           })}
         </div>
-        <div style={{ marginTop: 10, color: '#cbd5e1', fontSize: 13 }}>
-          Pool size: <b>{pool.length}</b> unique words
+        <div className={styles.poolLine}>
+          Pool: <b>{pool.length}</b> unique words
         </div>
         {poolTooSmall && (
-          <div className={styles.warning}>
+          <div className={styles.warning} role="alert">
             Need at least {MIN_POOL} words — pick at least one pack.
           </div>
         )}
         {hasAdultsOnly && !poolTooSmall && (
-          <div style={{ marginTop: 6, color: '#fbbf24', fontSize: 12 }}>
-            Includes a Spicy (18+) pack — make sure your table is on board.
-          </div>
+          <p className={styles.note}>Includes a Spicy (18+) pack — make sure your table is on board.</p>
         )}
       </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>How to play</h3>
-        <ul style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.6, paddingLeft: 18, margin: 0 }}>
-          <li>10 secret words land on a 5×5 grid: 5 as row labels (A–E), 5 as column labels (1–5).</li>
-          <li>Each round, the clue-giver privately draws a coordinate (e.g., C3) and writes a <b>one-word clue</b> connecting the row word and column word.</li>
-          <li>The team discusses; the designated guesser submits ONE guess. Correct → green token, wrong → red token on the true cell.</li>
-          <li>Play all 25 coordinates. Score 16+ is great, 21+ legendary, 25 perfect.</li>
+      <section className={styles.page} aria-labelledby="cc-how">
+        <span className={styles.tape} aria-hidden />
+        <h3 id="cc-how" className={styles.h3}>
+          How to play
+        </h3>
+        <ul className={styles.rules}>
+          <li>Ten words label a 5×5 grid: rows A–E and columns 1–5. Every square is a pair of words.</li>
+          <li>
+            The clue-giver secretly draws a coordinate card (e.g. C3) and writes a <b>one-word clue</b> linking its row
+            and column words — no grid words allowed.
+          </li>
+          <li>
+            Everyone discusses; the designated guesser enters <b>one</b> guess. Right: the note sticks. Wrong: the card is
+            discarded and its square is crossed out.
+          </li>
+          <li>Play all 25 cards. 16+ is great, 21+ legendary, 25 perfect.</li>
         </ul>
       </section>
 
-      <section className={styles.panel}>
-        <h3 className={styles.h3}>Multiplayer</h3>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <input type="checkbox" checked={online} onChange={(e) => setOnline(e.target.checked)} />
-          <span>Host an online room (other players join with the room code)</span>
-        </label>
-        {online && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <span style={{ color: '#94a3b8', fontSize: 13 }}>Room code:</span>
-            <input
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value)}
-              placeholder="any string (share with friends)"
-              maxLength={32}
-              style={{ padding: 6, minWidth: 240 }}
-            />
-          </div>
-        )}
-      </section>
+      <OnlineHostToggle online={online} onChange={setOnline} />
 
       <footer className={styles.footer}>
-        <button
-          className={styles.startButton}
-          disabled={poolTooSmall || (online && !roomCode.trim())}
-          onClick={startGame}
-        >
+        <button type="button" className={styles.startButton} disabled={poolTooSmall} onClick={startGame}>
           {online ? 'Open lobby →' : 'Start game →'}
         </button>
       </footer>

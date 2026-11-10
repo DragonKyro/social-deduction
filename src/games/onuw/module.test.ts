@@ -1,31 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { GameConfig } from '@/engine/types';
-import { onuwModule, type OnuwOptions } from './module';
-import type { OnuwAction } from './actions';
+import { onuwModule } from './module';
 import type { OnuwRoleId } from './state';
-
-function makeConfig(rolePool: OnuwRoleId[], playerCount: number, seed = 1): GameConfig {
-  const opts: OnuwOptions = {
-    rolePool,
-    players: Array.from({ length: playerCount }, (_, i) => ({
-      name: `P${i + 1}`,
-      isAI: false,
-    })),
-    artifactPool: [],
-    dayDurationSec: 300,
-    allowNoLynch: true,
-  };
-  return {
-    gameId: 'onuw',
-    seats: [],
-    seed,
-    gameOptions: opts as unknown as Record<string, unknown>,
-  };
-}
-
-function dispatch(state: ReturnType<typeof onuwModule.createInitialState>, action: OnuwAction) {
-  return onuwModule.applyAction(state, action, '');
-}
+import { ackAll, act, awake, makeConfig, playNight, rig, voteAll } from './testkit';
+import { yourNightStep } from './view';
 
 describe('ONUW — setup and pool validation', () => {
   it('rejects role pools without a werewolf', () => {
@@ -41,122 +18,76 @@ describe('ONUW — setup and pool validation', () => {
   });
 
   it('builds a valid initial state for a base pool', () => {
-    const pool: OnuwRoleId[] = [
-      'werewolf',
-      'werewolf',
-      'seer',
-      'robber',
-      'troublemaker',
-      'villager',
-    ];
+    const pool: OnuwRoleId[] = ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'villager'];
     const state = onuwModule.createInitialState(makeConfig(pool, 3));
     expect(state.phase).toBe('setup');
     expect(state.seats).toHaveLength(3);
     expect(state.centerCards).toHaveLength(3);
-    // Schedule should include only roles with night actions.
-    const roles = state.nightSchedule.map((s) => s.role);
-    // Schedule includes only roles dealt to actual seats (not center cards).
-    expect(roles.length).toBeGreaterThan(0);
-    expect(roles).not.toContain('villager');
+    expect(state.nightSchedule.map((s) => s.role)).not.toContain('villager');
+  });
+
+  it('defaultConfig yields a valid pool for every supported player count', () => {
+    for (let n = onuwModule.minPlayers; n <= onuwModule.maxPlayers; n++) {
+      const cfg = onuwModule.defaultConfig(n);
+      expect(() => onuwModule.createInitialState({ ...cfg, seed: 3 })).not.toThrow();
+    }
+  });
+
+  it('the night schedule is built from the whole pool, so center roles still get a (silent) step', () => {
+    // Seer is in the center: its step exists but has no seats.
+    const s = rig(['werewolf', 'robber', 'villager'], ['seer', 'troublemaker', 'villager']);
+    const seerStep = s.nightSchedule.find((st) => st.role === 'seer');
+    expect(seerStep).toBeDefined();
+    expect(seerStep!.seats).toEqual([]);
+    // …and the night still flows straight past it.
+    const after = playNight(ackAll(s));
+    expect(after.phase).toBe('day');
   });
 });
 
 describe('ONUW — night flow', () => {
-  it('transitions setup → night → day after every seat acks', () => {
+  it('transitions setup → night → day after every seat acts', () => {
     const pool: OnuwRoleId[] = ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker', 'villager'];
     let s = onuwModule.createInitialState(makeConfig(pool, 3));
-    for (let i = 0; i < 3; i++) s = dispatch(s, { type: 'ackRoleReveal', bySeat: i });
+    s = ackAll(s);
     expect(s.phase).toBe('night');
-    // Advance every night step by acking (or providing minimal action) per
-    // active step until we exit night.
-    let safety = 0;
-    while (s.phase === 'night' && safety++ < 50) {
-      const step = s.nightSchedule[s.nightStepIndex];
-      if (!step) break;
-      // Force-advance via the simplest valid path per role.
-      for (const seat of step.seats) {
-        if (step.role === 'seer') {
-          // Find a non-self target.
-          const target = (seat + 1) % s.seats.length;
-          s = dispatch(s, { type: 'seerLookSeat', bySeat: seat, targetSeat: target });
-        } else if (step.role === 'robber') {
-          const target = (seat + 1) % s.seats.length;
-          s = dispatch(s, { type: 'robberSwap', bySeat: seat, targetSeat: target });
-        } else if (step.role === 'troublemaker') {
-          const a = (seat + 1) % s.seats.length;
-          const b = (seat + 2) % s.seats.length;
-          if (a !== b) s = dispatch(s, { type: 'troublemakerSwap', bySeat: seat, a, b });
-          else s = dispatch(s, { type: 'nightAck', bySeat: seat });
-        } else if (step.role === 'werewolf') {
-          // Skip lone-wolf peek if applicable.
-          s = dispatch(s, { type: 'loneWolfSkip', bySeat: seat });
-        } else {
-          s = dispatch(s, { type: 'nightAck', bySeat: seat });
-        }
-      }
-    }
+    s = playNight(s);
     expect(s.phase).toBe('day');
+  });
+
+  it('wakes roles in the official order (werewolves → seer → robber → troublemaker → drunk → insomniac)', () => {
+    let s = rig(
+      ['insomniac', 'drunk', 'troublemaker', 'robber', 'seer', 'werewolf'],
+      ['villager', 'villager', 'werewolf'],
+    );
+    s = ackAll(s);
+    const order: number[] = [];
+    while (s.phase === 'night') {
+      const seat = awake(s)[0]!;
+      order.push(seat);
+      const step = yourNightStep(s, seat)!;
+      s = act(s, step.role === 'drunk' ? { type: 'drunkSwap', bySeat: seat, centerIndex: 0 } : { type: 'nightAck', bySeat: seat });
+    }
+    expect(order).toEqual([5, 4, 3, 2, 1, 0]);
   });
 });
 
 describe('ONUW — voting and win conditions', () => {
   it('village wins when a werewolf is killed', () => {
-    const pool: OnuwRoleId[] = ['werewolf', 'werewolf', 'villager', 'villager', 'villager', 'mason'];
-    let s = onuwModule.createInitialState(makeConfig(pool, 3));
-    for (let i = 0; i < 3; i++) s = dispatch(s, { type: 'ackRoleReveal', bySeat: i });
-    // Advance through whatever night steps remain.
-    let safety = 0;
-    while (s.phase === 'night' && safety++ < 50) {
-      const step = s.nightSchedule[s.nightStepIndex]!;
-      for (const seat of step.seats) {
-        if (step.role === 'werewolf') {
-          s = dispatch(s, { type: 'loneWolfSkip', bySeat: seat });
-        } else {
-          s = dispatch(s, { type: 'nightAck', bySeat: seat });
-        }
-      }
-    }
-    expect(s.phase).toBe('day');
-    s = dispatch(s, { type: 'startVote' });
-    // Find a werewolf seat and have everyone vote them.
-    const wolfSeat = s.seats.findIndex((seat) => seat.finalRole === 'werewolf');
-    if (wolfSeat === -1) {
-      // Both werewolves ended up in the center; impossible with 2 wolves+3 player pool but guard.
-      return;
-    }
-    for (const seat of s.seats) {
-      const target = seat.index === wolfSeat ? (wolfSeat + 1) % s.seats.length : wolfSeat;
-      s = dispatch(s, { type: 'castVote', bySeat: seat.index, targetSeat: target });
-    }
+    let s = playNight(ackAll(rig(['werewolf', 'villager', 'villager'], ['villager', 'mason', 'werewolf'])));
+    s = voteAll(s, [1, 0, 0]);
     expect(s.phase).toBe('resolution');
-    expect(s.killedSeats).toContain(wolfSeat);
-    expect(s.winnerTeam).toBe('village');
+    expect(s.killedSeats).toEqual([0]);
+    expect(s.winningTeams).toEqual(['village']);
+    expect(s.winners).toEqual([1, 2]);
   });
 
   it('tanner wins when the tanner is killed', () => {
-    const pool: OnuwRoleId[] = ['werewolf', 'tanner', 'villager', 'villager', 'villager', 'minion'];
-    let s = onuwModule.createInitialState(makeConfig(pool, 3, 42));
-    for (let i = 0; i < 3; i++) s = dispatch(s, { type: 'ackRoleReveal', bySeat: i });
-    let safety = 0;
-    while (s.phase === 'night' && safety++ < 50) {
-      const step = s.nightSchedule[s.nightStepIndex]!;
-      for (const seat of step.seats) {
-        if (step.role === 'werewolf') {
-          s = dispatch(s, { type: 'loneWolfSkip', bySeat: seat });
-        } else {
-          s = dispatch(s, { type: 'nightAck', bySeat: seat });
-        }
-      }
-    }
-    s = dispatch(s, { type: 'startVote' });
-    const tannerSeat = s.seats.findIndex((seat) => seat.finalRole === 'tanner');
-    if (tannerSeat === -1) return;
-    for (const seat of s.seats) {
-      const target = seat.index === tannerSeat ? (tannerSeat + 1) % s.seats.length : tannerSeat;
-      s = dispatch(s, { type: 'castVote', bySeat: seat.index, targetSeat: target });
-    }
-    expect(s.killedSeats).toContain(tannerSeat);
-    expect(s.winnerTeam).toBe('tanner');
+    let s = playNight(ackAll(rig(['tanner', 'werewolf', 'villager'], ['villager', 'villager', 'minion'])));
+    s = voteAll(s, [1, 0, 0]);
+    expect(s.killedSeats).toEqual([0]);
+    expect(s.winningTeams).toEqual(['tanner']);
+    expect(s.winners).toEqual([0]);
   });
 });
 
@@ -171,24 +102,13 @@ describe('ONUW — viewFor redacts hidden info', () => {
     expect(view0.centerCards.every((c) => c.revealedRole === null)).toBe(true);
   });
 
-  it('reveals everything at game over', () => {
-    const pool: OnuwRoleId[] = ['werewolf', 'villager', 'villager', 'villager', 'minion', 'mason'];
-    let s = onuwModule.createInitialState(makeConfig(pool, 3));
-    for (let i = 0; i < 3; i++) s = dispatch(s, { type: 'ackRoleReveal', bySeat: i });
-    while (s.phase === 'night') {
-      const step = s.nightSchedule[s.nightStepIndex]!;
-      for (const seat of step.seats) {
-        if (step.role === 'werewolf') s = dispatch(s, { type: 'loneWolfSkip', bySeat: seat });
-        else s = dispatch(s, { type: 'nightAck', bySeat: seat });
-      }
-    }
-    s = dispatch(s, { type: 'startVote' });
-    for (const seat of s.seats) {
-      s = dispatch(s, { type: 'castVote', bySeat: seat.index, targetSeat: 0 });
-    }
+  it('reveals everything at resolution', () => {
+    let s = playNight(ackAll(rig(['werewolf', 'villager', 'villager'], ['villager', 'minion', 'mason'])));
+    s = voteAll(s, [1, 0, 0]);
     expect(s.phase).toBe('resolution');
     const view = onuwModule.viewFor(s, 1);
     expect(view.seats.every((seat) => seat.revealedRole !== null)).toBe(true);
     expect(view.centerCards.every((c) => c.revealedRole !== null)).toBe(true);
+    expect(view.yourFinalRole).toBe('villager');
   });
 });

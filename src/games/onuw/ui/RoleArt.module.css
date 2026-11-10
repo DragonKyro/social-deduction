@@ -1,0 +1,38 @@
+/* Printed card stock: parchment fill + CSS paper fibre (cheap: one data-URI
+   tile shared by every card, no per-card SVG turbulence). */
+.card {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border-radius: 7px;
+  overflow: hidden;
+  background:
+    var(--paper-fibre),
+    radial-gradient(120% 90% at 50% 40%, #f4e8cc 0%, #e8d6ad 62%, #cdb47f 100%);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(60, 40, 20, 0.35), inset 0 0 18px rgba(90, 60, 25, 0.35);
+}
+
+.card > svg {
+  display: block;
+}
+
+.werewolves {
+  background:
+    var(--paper-fibre),
+    radial-gradient(120% 90% at 50% 40%, #f2e2c6 0%, #e4c9a6 62%, #c49c78 100%);
+}
+
+.tanner {
+  background:
+    var(--paper-fibre),
+    radial-gradient(120% 90% at 50% 40%, #f3e6c4 0%, #e6d0a0 62%, #c8a668 100%);
+}
+
+.back {
+  background: #0b1229;
+  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(212, 166, 74, 0.35);
+}
+
+.village {
+  border-radius: 7px;
+}

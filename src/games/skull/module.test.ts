@@ -146,12 +146,18 @@ describe('Skull engine', () => {
         });
       }
     }
+    // Own skull → the challenger chooses what to discard; someone else's
+    // → one disk is removed at random.
+    if (s.phase === 'discarding') {
+      s = apply(s, { type: 'discardDisk', bySeat: opener, disk: 'rose' });
+    }
     expect(s.phase).toBe('roundOver');
     const last = s.history[s.history.length - 1]!;
     expect(last.success).toBe(false);
-    // Challenger should lose a disk (rose preferred).
-    expect(
-      s.players[opener]!.remaining.roses + s.players[opener]!.remaining.skulls,
-    ).toBeLessThan(initialRoses + 1);
+    // Challenger lost exactly one disk; everything else came back to hand.
+    const after = s.players[opener]!;
+    expect(after.stack).toEqual([]);
+    expect(after.remaining.roses + after.remaining.skulls).toBe(3);
+    expect(initialRoses).toBeLessThanOrEqual(3);
   });
 });

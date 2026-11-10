@@ -14,6 +14,12 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# Explicit bash = -eo pipefail, so a failing command piped into tail still
+# fails the step (without it, type errors were silently ignored).
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,10 +35,23 @@ jobs:
           npm --version
           echo "free memory:"
           free -h || true
+      # The lockfile must resolve everything from registry.npmjs.org: a dev
+      # machine behind a corporate mirror records mirror URLs that this runner
+      # can't reach. Fix locally with `npm run fix-lock`.
+      - name: Lockfile uses the public npm registry
+        run: |
+          bad=$(grep -o '"resolved": "https?://[^"]*"' package-lock.json | grep -v '"resolved": "https://registry.npmjs.org/' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::package-lock.json has non-public registry URLs (run npm run fix-lock):"
+            echo "$bad" | head -5
+            exit 1
+          fi
       - name: npm ci (verbose)
         run: npm ci --no-audit --no-fund --foreground-scripts --loglevel=verbose 2>&1 | tail -200
       - name: Run typecheck (separate step so we see TS errors)
         run: npx tsc --noEmit 2>&1 | tail -100
+      - name: Run tests
+        run: npx vitest run 2>&1 | tail -60
       - name: Run vite build (separate step so we isolate the failure)
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Card } from './state';
-import { claimExists, compareClaim } from './hands';
+import { allClaims, claimExists, compareClaim, isStrictRaise, isValidClaim, normalizeClaim } from './hands';
 import type { HandClaim } from './hands';
 
 describe('hand comparison', () => {
@@ -115,5 +115,98 @@ describe('claimExists', () => {
         pool,
       ),
     ).toBe(false);
+  });
+});
+
+describe('ace-low straights (wheel)', () => {
+  function c(rank: number, suit: 'spades' | 'hearts' | 'diamonds' | 'clubs'): Card {
+    return { rank: rank as Card['rank'], suit };
+  }
+  it('A-2-3-4-5 is a 5-high straight, ranked below a 6-high straight', () => {
+    const pool = [c(14, 'spades'), c(2, 'hearts'), c(3, 'clubs'), c(4, 'clubs'), c(5, 'diamonds')];
+    expect(claimExists({ kind: 'straight', topRank: 5 }, pool)).toBe(true);
+    expect(claimExists({ kind: 'straight', topRank: 6 }, pool)).toBe(false);
+    expect(compareClaim({ kind: 'straight', topRank: 5 }, { kind: 'straight', topRank: 6 })).toBe(-1);
+  });
+  it('steel wheel is a 5-high straight flush', () => {
+    const pool = [c(14, 'hearts'), c(2, 'hearts'), c(3, 'hearts'), c(4, 'hearts'), c(5, 'hearts')];
+    expect(claimExists({ kind: 'straightFlush', topRank: 5, suit: 'hearts' }, pool)).toBe(true);
+    expect(claimExists({ kind: 'straightFlush', topRank: 5, suit: 'spades' }, pool)).toBe(false);
+  });
+  it('an ace is never low in a plain flush', () => {
+    const pool = [c(14, 'hearts'), c(2, 'hearts'), c(3, 'hearts'), c(4, 'hearts'), c(6, 'hearts')];
+    expect(claimExists({ kind: 'flush', topRank: 6, suit: 'hearts' }, pool)).toBe(false);
+    expect(claimExists({ kind: 'flush', topRank: 14, suit: 'hearts' }, pool)).toBe(true);
+  });
+});
+
+describe('claim validation', () => {
+  it('rejects malformed claims', () => {
+    const bad: unknown[] = [
+      null,
+      { kind: 'royalty', rank: 14 },
+      { kind: 'pair', rank: 15 },
+      { kind: 'pair', rank: 1 },
+      { kind: 'pair', rank: 7.5 },
+      { kind: 'twoPair', highRank: 3, lowRank: 9 },
+      { kind: 'twoPair', highRank: 9, lowRank: 9 },
+      { kind: 'fullHouse', threeRank: 9, twoRank: 9 },
+      { kind: 'straight', topRank: 4 },
+      { kind: 'flush', topRank: 5, suit: 'hearts' },
+      { kind: 'flush', topRank: 9, suit: 'stars' },
+      { kind: 'straightFlush', topRank: 9 },
+    ];
+    for (const b of bad) {
+      expect(isValidClaim(b)).toBe(false);
+      expect(normalizeClaim(b)).toBeNull();
+    }
+  });
+
+  it('regression: an impossible "2-high flush" is no longer the strongest flush', () => {
+    // compareClaim inverts flush ranks, so topRank 2 used to beat every real
+    // flush and was accepted by isStrictRaise.
+    const prev: HandClaim = { kind: 'flush', topRank: 6, suit: 'spades' };
+    const bogus = { kind: 'flush', topRank: 2, suit: 'spades' } as HandClaim;
+    expect(isStrictRaise(prev, bogus)).toBe(false);
+    expect(isStrictRaise(null, bogus)).toBe(false);
+  });
+
+  it('normalizeClaim strips unknown fields', () => {
+    const raw = { kind: 'pair', rank: 9, smuggled: { secret: true } };
+    expect(normalizeClaim(raw)).toEqual({ kind: 'pair', rank: 9 });
+  });
+
+  it('allClaims is strictly increasing and every entry is valid', () => {
+    const all = allClaims();
+    for (let i = 1; i < all.length; i++) expect(compareClaim(all[i - 1]!, all[i]!)).toBe(-1);
+    for (const cl of all) expect(isValidClaim(cl)).toBe(true);
+    // 13 high + 13 pair + 78 two pair + 13 trips + 10 straights + 36 flushes
+    // + 156 full houses + 13 quads + 40 straight flushes.
+    expect(all.length).toBe(372);
+  });
+
+  it('flush evaluation matches a brute-force reference on random pools', () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const suits = ['spades', 'hearts', 'diamonds', 'clubs'] as const;
+    for (let t = 0; t < 300; t++) {
+      const pool: Card[] = [];
+      const used = new Set<string>();
+      const n = 5 + Math.floor(rnd() * 25);
+      while (pool.length < n) {
+        const card = { rank: (2 + Math.floor(rnd() * 13)) as Card['rank'], suit: suits[Math.floor(rnd() * 4)]! };
+        const k = `${card.rank}${card.suit}`;
+        if (used.has(k)) continue;
+        used.add(k);
+        pool.push(card);
+      }
+      for (const suit of suits) {
+        for (let top = 6; top <= 14; top++) {
+          const suited = pool.filter((x) => x.suit === suit);
+          const ref = suited.some((x) => x.rank === top) && suited.filter((x) => x.rank < top).length >= 4;
+          expect(claimExists({ kind: 'flush', topRank: top as Card['rank'], suit }, pool)).toBe(ref);
+        }
+      }
+    }
   });
 });

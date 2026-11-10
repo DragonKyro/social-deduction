@@ -12,11 +12,15 @@ export type CockroachPokerAction =
       claim: Creature;
       target: SeatIndex;
     }
-  // Decider call: 'truth' = claim is correct, 'lie' = claim is wrong.
+  // Holder calls it: 'truth' = claim is correct, 'lie' = claim is wrong.
+  // Not allowed once the holder has peeked.
   | { type: 'decide'; bySeat: SeatIndex; call: 'truth' | 'lie' }
-  // Decider peeks then passes onward (must include new claim + target).
+  // Holder secretly looks at the card. Only allowed while someone who
+  // hasn't seen it remains; afterwards the holder must `passOn`.
+  | { type: 'peek'; bySeat: SeatIndex }
+  // After peeking: pass the card on with a new claim to an unseen seat.
   | {
-      type: 'peekAndPass';
+      type: 'passOn';
       bySeat: SeatIndex;
       claim: Creature;
       target: SeatIndex;

@@ -1,0 +1,228 @@
+/* ==========================================================================
+   Shared theme: self-hosted fonts, design tokens, and the motion library.
+
+   Imported once from src/index.css. Per-game CSS modules consume the
+   variables and the global `sd-*` animation names below; see
+   src/ui/shared/README.md for the catalogue.
+
+   Fonts are bundled from @fontsource (OFL) so the app makes no third-party
+   font requests from GitHub Pages.
+   ========================================================================== */
+
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+@import '@fontsource/inter/latin-700.css';
+@import '@fontsource/cinzel/latin-400.css';
+@import '@fontsource/cinzel/latin-700.css';
+@import '@fontsource/cinzel/latin-900.css';
+@import '@fontsource/im-fell-english/latin-400.css';
+@import '@fontsource/im-fell-english/latin-400-italic.css';
+@import '@fontsource/special-elite/latin-400.css';
+@import '@fontsource/playfair-display/latin-400.css';
+@import '@fontsource/playfair-display/latin-700.css';
+@import '@fontsource/playfair-display/latin-400-italic.css';
+@import '@fontsource/pirata-one/latin-400.css';
+
+:root {
+  /* ---- Typography ------------------------------------------------------ */
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Roman inscriptional caps: Avalon, Coup, headings. */
+  --font-regal: 'Cinzel', 'Trajan Pro', 'Palatino Linotype', Georgia, serif;
+  /* Old-print folklore: One Night Werewolf, village notices. */
+  --font-folk: 'IM Fell English', 'Palatino Linotype', Georgia, serif;
+  /* Typewriter dossiers: Secret Hitler, Codenames. */
+  --font-dossier: 'Special Elite', 'Courier New', Courier, monospace;
+  /* Romantic serif: Love Letter, Liar's Poker. */
+  --font-romance: 'Playfair Display', 'Didot', 'Bodoni MT', Georgia, serif;
+  /* Blackletter-ish: Skull, Liar's Dice (pirate / biker / tavern). */
+  --font-rogue: 'Pirata One', 'Old English Text MT', Georgia, serif;
+
+  /* ---- Surfaces -------------------------------------------------------- */
+  --bg-0: #07090f;
+  --bg-1: #0d111b;
+  --bg-2: #141a27;
+  --bg-3: #1c2435;
+  --line: #273046;
+  --line-strong: #3a4664;
+  --text: #e8e6e1;
+  --text-dim: #a3a9b8;
+  --text-faint: #6b7385;
+
+  /* ---- Accents --------------------------------------------------------- */
+  --gold: #d4a64a;
+  --gold-bright: #f3d27a;
+  --gold-deep: #8a6420;
+  --parchment: #efe2c4;
+  --parchment-dark: #cdb88c;
+  --ink: #2a1f14;
+  --blood: #9b1c1c;
+  --ember: #e8743b;
+  --good: #3f7fd6;
+  --evil: #c43b3b;
+  --success: #2fae7a;
+  --danger: #e05252;
+
+  /* ---- Depth ----------------------------------------------------------- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 6px 16px -4px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 18px 40px -12px rgba(0, 0, 0, 0.75), 0 4px 10px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 10px 24px -8px rgba(0, 0, 0, 0.7), 0 2px 0 rgba(255, 255, 255, 0.04) inset;
+  --glow-gold: 0 0 0 1px rgba(243, 210, 122, 0.55), 0 0 18px rgba(212, 166, 74, 0.45);
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 160ms;
+  --dur-med: 320ms;
+  --dur-slow: 650ms;
+
+  /* Card proportions (poker 63x88). */
+  --card-ratio: 63 / 88;
+
+  /* A subtle film-grain noise usable as a background-image layer. */
+  --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.09 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  /* Paper fibres for parchment / card stock. */
+  --paper-fibre: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.04 0.6' numOctaves='3' seed='7'/><feColorMatrix values='0 0 0 0 0.35  0 0 0 0 0.25  0 0 0 0 0.1  0 0 0 0.16 0'/></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>");
+}
+
+/* ==========================================================================
+   Keyframes. Use by name from CSS modules, e.g.
+     animation: sd-deal-in var(--dur-slow) var(--ease-out) both;
+   ========================================================================== */
+
+@keyframes sd-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sd-rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes sd-drop-in {
+  from { opacity: 0; transform: translateY(-18px) scale(1.04); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A card sliding in from the deck (above, rotated) and settling. */
+@keyframes sd-deal-in {
+  0% { opacity: 0; transform: translate(-40px, -60px) rotate(-14deg) scale(0.85); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes sd-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+/* Rubber-stamp slam (votes, "EXECUTED", "PASSED"). */
+@keyframes sd-stamp {
+  0% { opacity: 0; transform: scale(2.4) rotate(-12deg); }
+  55% { opacity: 1; transform: scale(0.94) rotate(-8deg); }
+  75% { transform: scale(1.03) rotate(-8deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-8deg); }
+}
+
+@keyframes sd-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-6px) rotate(-1deg); }
+  30% { transform: translateX(5px) rotate(1deg); }
+  45% { transform: translateX(-4px); }
+  60% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+}
+
+/* Breathing glow for "your turn" / active seat. Set --sd-glow to a colour. */
+@keyframes sd-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 1px var(--sd-glow, var(--gold)), 0 0 6px 0 var(--sd-glow, var(--gold)); }
+  50% { box-shadow: 0 0 0 2px var(--sd-glow, var(--gold)), 0 0 22px 2px var(--sd-glow, var(--gold)); }
+}
+
+@keyframes sd-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Candle / torch flicker for light sources and embers. */
+@keyframes sd-flicker {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  20% { opacity: 0.86; filter: brightness(0.92); }
+  22% { opacity: 1; }
+  48% { opacity: 0.93; filter: brightness(1.06); }
+  70% { opacity: 0.84; }
+  72% { opacity: 1; filter: brightness(1.1); }
+}
+
+/* Diagonal sheen sweeping across a surface (foil cards, gold leaf). Apply
+   to a pseudo-element with a linear-gradient background. */
+@keyframes sd-sheen {
+  0% { transform: translateX(-120%) skewX(-18deg); }
+  100% { transform: translateX(220%) skewX(-18deg); }
+}
+
+@keyframes sd-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Dice tumble: combine with a randomised --sd-tumble-x / --sd-tumble-y. */
+@keyframes sd-tumble {
+  0% { transform: translateY(-30px) rotate(0deg) scale(0.9); opacity: 0; }
+  30% { opacity: 1; }
+  60% { transform: translateY(4px) rotate(300deg) scale(1.05); }
+  80% { transform: translateY(-3px) rotate(350deg); }
+  100% { transform: translateY(0) rotate(360deg) scale(1); }
+}
+
+/* Slow drift for fog / smoke layers. */
+@keyframes sd-drift {
+  0% { transform: translateX(-8%); }
+  50% { transform: translateX(8%); }
+  100% { transform: translateX(-8%); }
+}
+
+/* Night sky twinkle. */
+@keyframes sd-twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* Banner unfurl (scaleY from top). */
+@keyframes sd-unfurl {
+  from { transform: scaleY(0); transform-origin: top; opacity: 0; }
+  to { transform: scaleY(1); transform-origin: top; opacity: 1; }
+}
+
+/* ==========================================================================
+   Utility classes (global, for quick use without a module).
+   ========================================================================== */
+
+.sd-rise-in { animation: sd-rise-in var(--dur-med) var(--ease-out) both; }
+.sd-fade-in { animation: sd-fade-in var(--dur-med) ease both; }
+.sd-pop { animation: sd-pop var(--dur-med) var(--ease-spring) both; }
+.sd-shake { animation: sd-shake 480ms var(--ease-in-out) both; }
+.sd-float { animation: sd-float 3.2s ease-in-out infinite; }
+.sd-flicker { animation: sd-flicker 2.6s linear infinite; }
+.sd-your-turn { animation: sd-pulse-glow 1.8s ease-in-out infinite; }
+
+/* Stagger children: set style={{ '--i': index }} on each child. */
+.sd-stagger > * {
+  animation: sd-rise-in var(--dur-med) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+/* Honour reduced-motion: keep end states, drop movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

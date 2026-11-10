@@ -1,4 +1,4 @@
-import { makeRng, rngInt } from '@/engine/rng';
+import { makeRng, rngInt, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { DieFace, LiarsDicePrivateState, PlayerState } from './state';
 
@@ -9,7 +9,7 @@ export function rollDice(
   seed: number,
   cursor: number,
 ): { dice: DieFace[]; nextCursor: number } {
-  const rng = makeRng((seed ^ 0x6a_9b_ce_03) + cursor);
+  const rng = makeRng(subSeed(seed, 0x6a_9b_ce_03, cursor));
   const dice: DieFace[] = [];
   for (let i = 0; i < count; i++) {
     const v = (rngInt(rng, 6) + 1) as DieFace;
@@ -27,7 +27,7 @@ export function buildInitial(
     throw new Error(`Liar's Dice needs 2-8 players (got ${names.length})`);
   }
   const seats = names.map((name, index) => ({ index, name }));
-  const leaderRng = makeRng(seed ^ STARTING_SEAT_SEED_MASK);
+  const leaderRng = makeRng(subSeed(seed, STARTING_SEAT_SEED_MASK));
   const startingSeat = rngInt(leaderRng, names.length);
 
   let cursor = 0;
@@ -63,6 +63,7 @@ export function buildInitial(
     startingDice: options.startingDice,
     currentBid: null,
     currentBidder: null,
+    roundBids: [],
     lastReveal: null,
     revealAcked,
     roundOverAcked,
@@ -114,6 +115,7 @@ export function rerollAll(
     roundNumber: state.roundNumber + 1,
     currentBid: null,
     currentBidder: null,
+    roundBids: [],
     lastReveal: null,
     revealAcked,
     roundOverAcked,

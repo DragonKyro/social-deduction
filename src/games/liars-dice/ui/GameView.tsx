@@ -1,410 +1,522 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
+import type { SeatIndex } from '@/engine/types';
 import { useGameStore } from '@/store/gameStore';
 import type { LiarsDiceAction } from '../actions';
-import type {
-  Bid,
-  DieFace,
-  LiarsDicePublicState,
-  PublicPlayer,
-} from '../state';
+import { FACES, dieMatches, isLegalRaise, minCountFor } from '../rules';
+import type { Bid, DieFace, LiarsDicePublicState, PublicPlayer } from '../state';
+import { Candle, DiceCup, DiceDefs, Die } from './DiceArt';
+import { useHotSeat } from './useHotSeat';
+import type { HotSeat } from './useHotSeat';
 import styles from './GameView.module.css';
+
+type Dispatch = (a: LiarsDiceAction, opts?: { keepOpen?: boolean }) => void;
+
+const REVEAL_PHASES = new Set(['revealing', 'roundOver', 'gameOver']);
 
 export function LiarsDiceGameView() {
   const publicView = useGameStore((s) => s.publicView);
-  const localSeat = useGameStore((s) => s.localSeat);
-  const setLocalSeat = useGameStore((s) => s.setLocalSeat);
-  const dispatch = useGameStore((s) => s.dispatch);
-  const exitGame = useGameStore((s) => s.exitGame);
-
   if (!publicView) return null;
-  const view = publicView.view as LiarsDicePublicState;
-  const dispatchAction = (a: LiarsDiceAction) => dispatch(a);
-
-  return (
-    <div className={styles.root}>
-      <header className={styles.header}>
-        <div>
-          <h2 className={styles.title}>Liar's Dice</h2>
-          <p className={styles.subtitle}>
-            Round {view.roundNumber} · {view.totalDice} dice in play
-            {view.wildOnes ? ' · 1s wild' : ''}
-            {view.spotOn ? ' · spot-on on' : ''}
-          </p>
-        </div>
-        <button onClick={exitGame} className={styles.secondaryButton}>
-          Exit
-        </button>
-      </header>
-
-      <Board view={view} localSeat={localSeat} onPickSeat={setLocalSeat} />
-
-      <BidStrip view={view} />
-
-      <PhasePanel view={view} localSeat={localSeat} dispatch={dispatchAction} />
-    </div>
-  );
+  return <Tavern view={publicView.view as LiarsDicePublicState} />;
 }
 
-function Board({
-  view,
-  localSeat,
-  onPickSeat,
-}: {
-  view: LiarsDicePublicState;
-  localSeat: number | null;
-  onPickSeat: (seat: number) => void;
-}) {
-  return (
-    <div className={styles.boardGrid}>
-      {view.players.map((p) => (
-        <SeatPanel
-          key={p.index}
-          p={p}
-          view={view}
-          isLocal={p.index === localSeat}
-          onPick={() => onPickSeat(p.index)}
-        />
-      ))}
-    </div>
-  );
+function mustAct(view: LiarsDicePublicState): SeatIndex[] {
+  if (view.phase === 'rollPending') return view.awaitingAck;
+  if (view.phase === 'bidding') return [view.currentSeat];
+  return [];
 }
 
-function SeatPanel({
-  p,
-  view,
-  isLocal,
-  onPick,
-}: {
-  p: PublicPlayer;
-  view: LiarsDicePublicState;
-  isLocal: boolean;
-  onPick: () => void;
-}) {
-  const isActive = p.index === view.currentSeat;
-  const isBidder = p.index === view.currentBidder;
-  const classes = [
-    styles.seatPanel,
-    isActive ? styles.active : '',
-    isLocal ? styles.localSeat : '',
-    p.eliminated ? styles.eliminatedSeat : '',
-    isBidder ? styles.bidder : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+function Tavern({ view }: { view: LiarsDicePublicState }) {
+  const localSeat = useGameStore((s) => s.localSeat);
+  const aiSeats = useGameStore((s) => s.aiSeats);
+  const storeDispatch = useGameStore((s) => s.dispatch);
+  const exitGame = useGameStore((s) => s.exitGame);
+  const hs = useHotSeat({
+    seats: view.seats.map((s) => s.index),
+    mustAct: mustAct(view),
+    publicPhase: REVEAL_PHASES.has(view.phase),
+  });
+
+  // While a hand-off is pending, nothing private is rendered at all.
+  const shown: LiarsDicePublicState = hs.redact ? { ...view, yourDice: [] } : view;
+  const dispatch: Dispatch = (a, opts) => {
+    storeDispatch(a);
+    if (!opts?.keepOpen) hs.afterAct();
+  };
+  const name = (i: SeatIndex | null) => (i === null ? '' : view.seats[i]?.name ?? `Seat ${i + 1}`);
+  const opponents = view.players.filter((p) => p.index !== localSeat);
+  const me = localSeat !== null ? view.players[localSeat] : undefined;
 
   return (
-    <div className={classes}>
-      <div className={styles.seatHeader}>
-        <div>
-          <div className={styles.seatName}>
-            {p.name} {isLocal && <span className={styles.youTag}>(you)</span>}
+    <DiceDefs>
+      <div className={styles.root}>
+        <div className={styles.glowLeft} aria-hidden />
+        <div className={styles.glowRight} aria-hidden />
+        <header className={styles.header}>
+          <Candle height={86} className={styles.candle} flameClassName={styles.flame} />
+          <div className={styles.titleBlock}>
+            <h2 className={styles.title}>Liar&apos;s Dice</h2>
+            <p className={styles.subtitle}>
+              Round {view.roundNumber} · {view.totalDice} dice on the table
+              {view.wildOnes ? ' · ones are wild' : ''}
+              {view.spotOn ? ' · spot-on allowed' : ''}
+            </p>
           </div>
-          <div className={styles.seatStatusRow}>
-            {p.eliminated && <span className={styles.statusBad}>out</span>}
-            {isActive && !p.eliminated && (
-              <span className={styles.statusActive}>turn</span>
-            )}
-            {isBidder && !p.eliminated && !isActive && (
-              <span className={styles.statusMuted}>high bidder</span>
-            )}
-          </div>
-        </div>
-        <div className={styles.seatTokens}>
-          <div className={styles.tokenCount}>{p.diceCount}</div>
-          <div className={styles.tokenLabel}>dice</div>
-        </div>
-      </div>
+          <button onClick={exitGame} className={styles.exitButton}>
+            Leave table
+          </button>
+        </header>
 
-      <div className={styles.diceRow}>
-        {isLocal ? (
-          <YourDice view={view} />
-        ) : (
-          <RevealedOrBacks view={view} seatIndex={p.index} count={p.diceCount} />
-        )}
-      </div>
+        <p className={styles.status} aria-live="polite">
+          {statusLine(view, localSeat, name)}
+        </p>
 
-      {!isLocal && (
-        <button onClick={onPick} className={styles.passButton}>
-          look from this seat
-        </button>
-      )}
-    </div>
-  );
-}
-
-function YourDice({ view }: { view: LiarsDicePublicState }) {
-  if (view.yourDice.length === 0) {
-    return <span className={styles.empty}>—</span>;
-  }
-  return (
-    <div className={styles.diceList}>
-      {view.yourDice.map((d, i) => (
-        <DieChip key={i} face={d} />
-      ))}
-    </div>
-  );
-}
-
-function RevealedOrBacks({
-  view,
-  seatIndex,
-  count,
-}: {
-  view: LiarsDicePublicState;
-  seatIndex: number;
-  count: number;
-}) {
-  if (count === 0) return <span className={styles.empty}>—</span>;
-  // During reveal/roundOver, show the actual dice.
-  if (view.phase === 'revealing' || view.phase === 'roundOver') {
-    const dice = view.lastReveal?.allDice[seatIndex];
-    if (dice) {
-      return (
-        <div className={styles.diceList}>
-          {dice.map((d, i) => (
-            <DieChip key={i} face={d} />
+        <section className={styles.opponents} aria-label="Other players">
+          {opponents.map((p) => (
+            <SeatCup key={p.index} p={p} view={shown} isAI={aiSeats.includes(p.index)} />
           ))}
-        </div>
-      );
-    }
-  }
-  return (
-    <div className={styles.diceList}>
-      {Array.from({ length: count }, (_, i) => (
-        <span key={i} className={styles.dieBack} />
-      ))}
-    </div>
+        </section>
+
+        <BidSlip view={view} name={name} />
+
+        {me ? (
+          <YourCup view={shown} me={me} hs={hs} dispatch={dispatch} name={name} />
+        ) : (
+          <section className={styles.yourArea}>
+            <p className={styles.muted}>You are watching this table.</p>
+            <PhaseNotes view={view} name={name} />
+          </section>
+        )}
+
+        {hs.covered && <HandOffCover view={view} hs={hs} localSeat={localSeat} name={name} />}
+      </div>
+    </DiceDefs>
   );
 }
 
-function DieChip({ face, highlighted }: { face: DieFace; highlighted?: boolean }) {
+function statusLine(
+  view: LiarsDicePublicState,
+  localSeat: SeatIndex | null,
+  name: (i: SeatIndex | null) => string,
+): string {
+  switch (view.phase) {
+    case 'rollPending':
+      return `Cups are shaking — ${view.awaitingAck.length} still to look under their cup.`;
+    case 'bidding':
+      return view.currentSeat === localSeat ? 'Your turn: raise the bid or call a liar.' : `${name(view.currentSeat)} is weighing the bid…`;
+    case 'revealing':
+      return 'Cups up! Count the dice.';
+    case 'roundOver':
+      return 'Round over — ready for the next roll.';
+    case 'gameOver':
+      return `${view.matchWinners.map(name).join(', ')} wins the table.`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Seats
+// ---------------------------------------------------------------------------
+
+function DiceCountPips({ count, start }: { count: number; start: number }) {
   return (
-    <span
-      className={`${styles.dieChip} ${highlighted ? styles.dieHighlighted : ''}`}
-      title={String(face)}
-    >
-      {face}
+    <span className={styles.countPips} aria-label={`${count} of ${start} dice`}>
+      {Array.from({ length: Math.max(count, start) }, (_, i) => (
+        <span key={i} className={i < count ? styles.pipOn : styles.pipOff} />
+      ))}
     </span>
   );
 }
 
-function BidStrip({ view }: { view: LiarsDicePublicState }) {
-  if (view.phase === 'rollPending') {
-    const acked = view.players.filter((p) => !p.eliminated && p.rollAcked).length;
-    const total = view.players.filter((p) => !p.eliminated).length;
-    return (
-      <div className={styles.bidStrip}>
-        <span className={styles.bidLabel}>Waiting for rolls:</span>
-        <span>{acked}/{total} ready</span>
-      </div>
-    );
-  }
-  if (!view.currentBid) {
-    return (
-      <div className={styles.bidStrip}>
-        <span className={styles.bidLabel}>Current bid:</span>
-        <span>—</span>
-      </div>
-    );
-  }
+function revealDiceFor(view: LiarsDicePublicState, seat: SeatIndex): DieFace[] | null {
+  if (!REVEAL_PHASES.has(view.phase) || !view.lastReveal) return null;
+  return view.lastReveal.allDice[seat] ?? null;
+}
+
+function RevealedDice({ view, seat, size }: { view: LiarsDicePublicState; seat: SeatIndex; size: number }) {
+  const dice = revealDiceFor(view, seat);
+  const r = view.lastReveal;
+  if (!dice || !r) return null;
+  const lost = r.loserSeat === seat;
   return (
-    <div className={styles.bidStrip}>
-      <span className={styles.bidLabel}>Current bid:</span>
-      <b>{view.currentBid.count} × {view.currentBid.face}s</b>
-      <span>by {view.currentBidder !== null && view.seats[view.currentBidder]?.name}</span>
+    <div className={styles.revealRow} key={`r${view.roundNumber}`}>
+      {dice.map((d, i) => {
+        const match = dieMatches(d, r.bid.face, view.wildOnes);
+        const isLostDie = lost && i === dice.length - 1;
+        return (
+          <span
+            key={i}
+            className={`${styles.dieSlot} ${styles.riseIn} ${match ? styles.match : styles.noMatch} ${
+              isLostDie ? styles.rollAway : ''
+            }`}
+            style={{ '--i': i } as CSSProperties}
+          >
+            <Die face={d} size={size} title={`${d}${match ? ' (counts)' : ''}${isLostDie ? ' (lost)' : ''}`} />
+          </span>
+        );
+      })}
     </div>
   );
 }
 
-function PhasePanel({
-  view,
-  localSeat,
-  dispatch,
-}: {
-  view: LiarsDicePublicState;
-  localSeat: number | null;
-  dispatch: (a: LiarsDiceAction) => void;
-}) {
-  if (view.phase === 'gameOver') {
-    const winners = view.matchWinners
-      .map((i) => view.seats[i]?.name)
-      .filter(Boolean)
-      .join(', ');
-    return (
-      <div className={styles.panel}>
-        <h3 className={styles.h3}>Match over</h3>
-        <p>Winner: <b>{winners || '(none)'}</b></p>
+function SeatCup({ p, view, isAI }: { p: PublicPlayer; view: LiarsDicePublicState; isAI: boolean }) {
+  const active = view.phase === 'bidding' && p.index === view.currentSeat;
+  const bidder = p.index === view.currentBidder && view.phase === 'bidding';
+  const reveal = revealDiceFor(view, p.index);
+  const shaking = view.phase === 'rollPending' && !p.rollAcked && !p.eliminated;
+  const lastBid = [...view.roundBids].reverse().find((b) => b.seat === p.index);
+  return (
+    <article
+      className={`${styles.seat} ${active ? styles.active : ''} ${p.eliminated ? styles.out : ''}`}
+      aria-label={`${p.name}${isAI ? ' (AI)' : ''}, ${p.diceCount} dice${p.eliminated ? ', out' : ''}`}
+    >
+      <div className={styles.plaque}>
+        <span className={styles.seatName}>{p.name}</span>
+        {isAI && <span className={styles.aiTag}>AI</span>}
       </div>
-    );
-  }
-
-  if (localSeat === null) {
-    return (
-      <div className={styles.panel}>
-        <p style={{ color: '#94a3b8' }}>Pick a seat above to play from.</p>
-      </div>
-    );
-  }
-
-  if (view.phase === 'rollPending') {
-    const pending = view.yourAckPending;
-    return (
-      <div className={styles.panel}>
-        <h3 className={styles.h3}>Your dice</h3>
-        <YourDice view={view} />
-        {pending ? (
-          <button
-            className={styles.primaryButton}
-            style={{ marginTop: 10 }}
-            onClick={() => dispatch({ type: 'ackRoll', bySeat: localSeat })}
-          >
-            Ready →
-          </button>
-        ) : (
-          <p style={{ color: '#94a3b8' }}>Waiting on others…</p>
+      <div className={styles.cupZone}>
+        {reveal && <RevealedDice view={view} seat={p.index} size={26} />}
+        {!p.eliminated && (
+          <DiceCup
+            key={`${view.roundNumber}-${reveal ? 'up' : 'down'}`}
+            size={64}
+            className={`${styles.cup} ${shaking ? styles.shaking : ''} ${reveal ? styles.lifted : ''}`}
+          />
+        )}
+        {p.eliminated && <span className={styles.plank}>walked the plank</span>}
+        {bidder && lastBid && (
+          <span className={styles.speech}>
+            {lastBid.bid.count} × <Die face={lastBid.bid.face} size={16} />
+          </span>
         )}
       </div>
-    );
-  }
+      <DiceCountPips count={p.diceCount} start={view.startingDice} />
+    </article>
+  );
+}
 
-  if (view.phase === 'revealing') {
-    const r = view.lastReveal!;
-    return (
-      <div className={styles.panel}>
-        <h3 className={styles.h3}>
-          {r.kind === 'liar' ? 'Liar called' : 'Spot-on called'} —{' '}
-          {r.callerWon ? 'caller wins' : 'caller loses'}
-        </h3>
-        <p style={{ margin: '4px 0', color: '#cbd5e1' }}>
-          Bid: <b>{r.bid.count} × {r.bid.face}s</b>. Actual:{' '}
-          <b>{r.actual} × {r.bid.face}s</b> {view.wildOnes && r.bid.face !== 1 ? '(1s wild)' : ''}
-        </p>
-        <p style={{ color: '#fca5a5' }}>
-          {view.seats[r.loserSeat]?.name} loses a die.
-        </p>
-        <button
-          className={styles.primaryButton}
-          disabled={!view.yourAckPending}
-          onClick={() => dispatch({ type: 'ackReveal', bySeat: localSeat })}
-        >
-          {view.yourAckPending ? 'Continue →' : 'Acknowledged'}
-        </button>
+// ---------------------------------------------------------------------------
+// The bid slip (current bid + this round's calls)
+// ---------------------------------------------------------------------------
+
+function BidSlip({ view, name }: { view: LiarsDicePublicState; name: (i: SeatIndex | null) => string }) {
+  const bid = view.phase === 'bidding' ? view.currentBid : view.lastReveal?.bid ?? null;
+  return (
+    <section className={styles.slipRow} aria-label="Bidding">
+      <div className={styles.slip}>
+        <span className={styles.slipLabel}>{view.phase === 'bidding' ? 'Standing bid' : 'Last bid'}</span>
+        {bid ? (
+          <div className={styles.slipBid} key={`${bid.count}-${bid.face}`}>
+            <span className={styles.slipCount}>{bid.count}</span>
+            <span className={styles.slipTimes}>×</span>
+            <Die face={bid.face} size={46} />
+          </div>
+        ) : (
+          <div className={styles.slipEmpty}>no bid yet</div>
+        )}
+        {view.phase === 'bidding' && view.currentBidder !== null && (
+          <span className={styles.slipBy}>by {name(view.currentBidder)}</span>
+        )}
       </div>
-    );
-  }
+      {view.roundBids.length > 0 && (
+        <ol className={styles.chalk} aria-label="Bids this round">
+          {view.roundBids.map((b, i) => (
+            <li key={i} className={styles.chalkItem}>
+              <span>{name(b.seat)}</span>
+              <span className={styles.chalkBid}>
+                {b.bid.count} × <Die face={b.bid.face} size={15} />
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
 
-  if (view.phase === 'roundOver') {
-    return (
-      <div className={styles.panel}>
-        <h3 className={styles.h3}>Round over</h3>
-        <p style={{ color: '#cbd5e1' }}>Reroll up next.</p>
-        <button
-          className={styles.primaryButton}
-          disabled={!view.yourAckPending}
-          onClick={() => dispatch({ type: 'ackRoundOver', bySeat: localSeat })}
-        >
-          {view.yourAckPending ? 'Reroll →' : 'Acknowledged'}
-        </button>
+// ---------------------------------------------------------------------------
+// The local seat
+// ---------------------------------------------------------------------------
+
+function YourCup({
+  view,
+  me,
+  hs,
+  dispatch,
+  name,
+}: {
+  view: LiarsDicePublicState;
+  me: PublicPlayer;
+  hs: HotSeat;
+  dispatch: Dispatch;
+  name: (i: SeatIndex | null) => string;
+}) {
+  const reveal = revealDiceFor(view, me.index);
+  return (
+    <section className={`${styles.yourArea} ${view.currentSeat === me.index && view.phase === 'bidding' ? styles.yourTurn : ''}`}>
+      <div className={styles.yourHeader}>
+        <span className={styles.yourName}>{me.name}</span>
+        <DiceCountPips count={me.diceCount} start={view.startingDice} />
       </div>
-    );
-  }
+      <div className={styles.yourCupRow}>
+        {me.eliminated ? (
+          <p className={styles.muted}>You&apos;re out of dice — enjoy the show.</p>
+        ) : reveal ? (
+          <RevealedDice view={view} seat={me.index} size={48} />
+        ) : view.yourDice.length > 0 ? (
+          <div className={styles.yourDice} key={`roll-${view.roundNumber}`}>
+            <DiceCup size={70} className={`${styles.cup} ${styles.cupAside}`} />
+            {view.yourDice.map((d, i) => (
+              <span key={i} className={`${styles.dieSlot} ${styles.tumble}`} style={{ '--i': i } as CSSProperties}>
+                <Die face={d} size={52} />
+              </span>
+            ))}
+          </div>
+        ) : (
+          <DiceCup size={80} className={`${styles.cup} ${view.phase === 'rollPending' ? styles.shaking : ''}`} />
+        )}
+      </div>
+      <ActionPanel view={view} me={me} hs={hs} dispatch={dispatch} name={name} />
+    </section>
+  );
+}
 
-  if (view.phase === 'bidding') {
-    if (localSeat !== view.currentSeat) {
-      return (
-        <div className={styles.panel}>
-          <p style={{ color: '#94a3b8' }}>
-            Waiting for {view.seats[view.currentSeat]?.name}…
-          </p>
-        </div>
-      );
-    }
-    return <BidPanel view={view} localSeat={localSeat} dispatch={dispatch} />;
-  }
-
+function PhaseNotes({ view, name }: { view: LiarsDicePublicState; name: (i: SeatIndex | null) => string }) {
+  if (view.phase === 'revealing' && view.lastReveal) return <Verdict view={view} name={name} />;
+  if (view.phase === 'gameOver') return <GameOver view={view} name={name} />;
   return null;
 }
 
-function BidPanel({
+function ActionPanel({
   view,
-  localSeat,
+  me,
+  hs,
   dispatch,
+  name,
 }: {
   view: LiarsDicePublicState;
-  localSeat: number;
-  dispatch: (a: LiarsDiceAction) => void;
+  me: PublicPlayer;
+  hs: HotSeat;
+  dispatch: Dispatch;
+  name: (i: SeatIndex | null) => string;
 }) {
+  // Public recap phases: in hot-seat one tap acknowledges for every local seat.
+  const ackSeats = hs.hotSeat ? view.awaitingAck.filter(hs.canView) : view.yourAckPending ? [me.index] : [];
+  const ackAll = (type: 'ackReveal' | 'ackRoundOver') => {
+    // Not keepOpen: the next private phase starts behind the hand-off cover.
+    for (const s of ackSeats) dispatch({ type, bySeat: s });
+  };
+
+  switch (view.phase) {
+    case 'gameOver':
+      return <GameOver view={view} name={name} />;
+    case 'rollPending':
+      return (
+        <div className={styles.panel}>
+          {view.yourAckPending ? (
+            <>
+              <p className={styles.panelText}>Peek under your cup — then keep it to yourself.</p>
+              <button className={styles.primary} onClick={() => dispatch({ type: 'ackRoll', bySeat: me.index })}>
+                I&apos;ve seen my dice
+              </button>
+            </>
+          ) : (
+            <p className={styles.muted}>Waiting for {view.awaitingAck.map(name).join(', ') || 'the table'}…</p>
+          )}
+        </div>
+      );
+    case 'revealing':
+      return (
+        <div className={styles.panel}>
+          <Verdict view={view} name={name} />
+          <button className={styles.primary} disabled={ackSeats.length === 0} onClick={() => ackAll('ackReveal')}>
+            {ackSeats.length > 0 ? 'Continue' : 'Waiting for the others…'}
+          </button>
+        </div>
+      );
+    case 'roundOver':
+      return (
+        <div className={styles.panel}>
+          <p className={styles.panelText}>Scoop up the dice — next roll is led by {name(view.lastReveal?.loserSeat ?? null)}.</p>
+          <button className={styles.primary} disabled={ackSeats.length === 0} onClick={() => ackAll('ackRoundOver')}>
+            {ackSeats.length > 0 ? 'Shake the cups' : 'Waiting for the others…'}
+          </button>
+        </div>
+      );
+    case 'bidding':
+      if (me.eliminated) return null;
+      if (view.currentSeat !== me.index) {
+        return (
+          <div className={styles.panel}>
+            <p className={styles.muted}>{name(view.currentSeat)} has the bid.</p>
+          </div>
+        );
+      }
+      return <BidPicker key={view.roundBids.length} view={view} seat={me.index} dispatch={dispatch} />;
+  }
+}
+
+function BidPicker({ view, seat, dispatch }: { view: LiarsDicePublicState; seat: SeatIndex; dispatch: Dispatch }) {
   const prev = view.currentBid;
   const cap = view.totalDice;
-  const defaultBid: Bid = prev
-    ? prev.face < 6
-      ? { count: prev.count, face: (prev.face + 1) as DieFace }
-      : { count: Math.min(cap, prev.count + 1), face: 2 }
-    : { count: 1, face: 2 };
-  const [count, setCount] = useState(defaultBid.count);
-  const [face, setFace] = useState<DieFace>(defaultBid.face);
+  const legalFaces = FACES.filter((f) => minCountFor(prev, f, cap, view.wildOnes) !== null);
+  const initialFace: DieFace =
+    prev && legalFaces.includes(prev.face) ? prev.face : legalFaces.find((f) => f !== 1) ?? legalFaces[0] ?? 2;
+  const [face, setFace] = useState<DieFace>(initialFace);
+  const [count, setCount] = useState<number>(minCountFor(prev, initialFace, cap, view.wildOnes) ?? 1);
 
-  const valid = (() => {
-    if (count < 1 || count > cap) return false;
-    if (!prev) return true;
-    if (count > prev.count) return true;
-    if (count === prev.count && face > prev.face) return true;
-    return false;
-  })();
+  const minForFace = minCountFor(prev, face, cap, view.wildOnes);
+  const bid: Bid = { count, face };
+  const valid = count <= cap && isLegalRaise(prev, bid, view.wildOnes);
+  const pick = (f: DieFace) => {
+    setFace(f);
+    const min = minCountFor(prev, f, cap, view.wildOnes);
+    if (min !== null) setCount((c) => Math.max(min, Math.min(c, cap)));
+  };
 
   return (
     <div className={styles.panel}>
-      <h3 className={styles.h3}>Your bid</h3>
-      <div className={styles.bidControls}>
-        <label>
-          <span className={styles.controlLabel}>Count</span>
-          <input
-            type="number"
-            min={1}
-            max={cap}
-            value={count}
-            onChange={(e) => setCount(Math.max(1, Math.min(cap, Number(e.target.value) || 1)))}
-            className={styles.bidInput}
-          />
-        </label>
-        <label>
-          <span className={styles.controlLabel}>Face</span>
-          <select
-            value={face}
-            onChange={(e) => setFace(Number(e.target.value) as DieFace)}
-            className={styles.bidSelect}
-          >
-            {[1, 2, 3, 4, 5, 6].map((f) => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </select>
-        </label>
-        <button
-          className={styles.primaryButton}
-          disabled={!valid}
-          onClick={() => dispatch({ type: 'placeBid', bySeat: localSeat, bid: { count, face } })}
-        >
-          Bid {count} × {face}s
-        </button>
-      </div>
+      {legalFaces.length > 0 && (
+        <>
+          <div className={styles.faceRow} role="group" aria-label="Choose a face">
+            {FACES.map((f) => {
+              const legal = legalFaces.includes(f);
+              return (
+                <button
+                  key={f}
+                  className={`${styles.faceButton} ${f === face ? styles.faceOn : ''}`}
+                  aria-pressed={f === face}
+                  aria-label={`Bid on ${f}s`}
+                  disabled={!legal}
+                  onClick={() => pick(f)}
+                >
+                  <Die face={f} size={38} />
+                </button>
+              );
+            })}
+          </div>
+          <div className={styles.countRow}>
+            <button
+              className={styles.stepper}
+              aria-label="Fewer dice"
+              disabled={minForFace === null || count <= minForFace}
+              onClick={() => setCount((c) => c - 1)}
+            >
+              −
+            </button>
+            <span className={styles.bigCount} aria-live="polite">
+              {count}
+            </span>
+            <button className={styles.stepper} aria-label="More dice" disabled={count >= cap} onClick={() => setCount((c) => c + 1)}>
+              +
+            </button>
+            <button
+              className={styles.primary}
+              disabled={!valid}
+              onClick={() => dispatch({ type: 'placeBid', bySeat: seat, bid })}
+            >
+              Bid {count} × {face}s
+            </button>
+          </div>
+          {view.wildOnes && (
+            <p className={styles.hint}>
+              {prev === null
+                ? 'Ones are wild — you can’t open on ones.'
+                : prev.face === 1
+                  ? `Leaving ones needs at least ${prev.count * 2 + 1} dice.`
+                  : `Switching to ones needs at least ${Math.ceil(prev.count / 2)}.`}
+            </p>
+          )}
+        </>
+      )}
       {prev && (
-        <div className={styles.bidControls} style={{ marginTop: 8 }}>
-          <button
-            className={styles.actionButtonRed}
-            onClick={() => dispatch({ type: 'call', bySeat: localSeat, kind: 'liar' })}
-          >
-            Call liar
+        <div className={styles.callRow}>
+          <button className={styles.liar} onClick={() => dispatch({ type: 'call', bySeat: seat, kind: 'liar' })}>
+            Liar!
           </button>
           {view.spotOn && (
-            <button
-              className={styles.actionButton}
-              onClick={() => dispatch({ type: 'call', bySeat: localSeat, kind: 'spotOn' })}
-            >
+            <button className={styles.spotOn} onClick={() => dispatch({ type: 'call', bySeat: seat, kind: 'spotOn' })}>
               Spot on
             </button>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function Verdict({ view, name }: { view: LiarsDicePublicState; name: (i: SeatIndex | null) => string }) {
+  const r = view.lastReveal;
+  if (!r) return null;
+  const stamp = r.kind === 'liar' ? (r.callerWon ? 'Liar!' : 'Honest!') : r.callerWon ? 'Spot on!' : 'Missed!';
+  const out = view.players[r.loserSeat]?.eliminated;
+  return (
+    <div className={styles.verdict}>
+      <span className={`${styles.stamp} ${r.callerWon ? styles.stampWin : styles.stampLose}`}>{stamp}</span>
+      <p className={styles.panelText}>
+        {name(r.bidder)} bid <b>{r.bid.count} × {r.bid.face}s</b>. The table holds <b>{r.actual}</b>
+        {view.wildOnes && r.bid.face !== 1 ? ' (ones wild)' : ''}. {name(r.caller)} called{' '}
+        {r.kind === 'liar' ? 'liar' : 'spot on'}.
+      </p>
+      <p className={styles.loss}>
+        {name(r.loserSeat)} loses a die{out ? ' — and walks the plank.' : '.'}
+      </p>
+    </div>
+  );
+}
+
+function GameOver({ view, name }: { view: LiarsDicePublicState; name: (i: SeatIndex | null) => string }) {
+  return (
+    <div className={`${styles.panel} ${styles.gameOver}`}>
+      <span className={styles.banner}>Last cup standing</span>
+      <p className={styles.winner}>{view.matchWinners.map(name).join(', ')}</p>
+      <p className={styles.muted}>{view.history.length} rounds played.</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hot-seat cover
+// ---------------------------------------------------------------------------
+
+function HandOffCover({
+  view,
+  hs,
+  localSeat,
+  name,
+}: {
+  view: LiarsDicePublicState;
+  hs: HotSeat;
+  localSeat: SeatIndex | null;
+  name: (i: SeatIndex | null) => string;
+}) {
+  const target = hs.nextHuman ?? localSeat;
+  const waitingOn = view.phase === 'bidding' ? view.currentSeat : null;
+  return (
+    <div className={styles.cover} role="dialog" aria-modal="true" aria-labelledby="ld-cover-title">
+      <div className={styles.coverCard}>
+        <DiceCup size={96} className={`${styles.cup} ${styles.shaking}`} />
+        <h3 id="ld-cover-title" className={styles.coverTitle}>
+          {hs.nextHuman !== null ? `Pass the device to ${name(hs.nextHuman)}` : `${name(waitingOn)} is deciding…`}
+        </h3>
+        <p className={styles.muted}>Cups stay down until the right pirate is holding the device.</p>
+        {target !== null && (
+          <button className={styles.primary} onClick={() => hs.revealTo(target)} autoFocus>
+            I&apos;m {name(target)} — lift my cup
+          </button>
+        )}
+        {hs.humanSeats.length > 1 && (
+          <div className={styles.switchRow}>
+            <span className={styles.muted}>Or hand it to:</span>
+            {hs.humanSeats
+              .filter((s) => s !== target)
+              .map((s) => (
+                <button key={s} className={styles.ghost} onClick={() => hs.revealTo(s)}>
+                  {name(s)}
+                </button>
+              ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

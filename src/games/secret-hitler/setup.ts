@@ -1,4 +1,4 @@
-import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
+import { makeRng, rngInt, rngShuffle, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import { alignmentCounts, FASCIST_POLICY_COUNT, LIBERAL_POLICY_COUNT } from './tracks';
 import type { ShPolicy, ShPrivateState, ShRoleId, ShSeatState } from './state';
@@ -20,13 +20,18 @@ export function dealRoles(playerCount: number, seed: number): ShRoleId[] {
   return rngShuffle(rng, pool);
 }
 
-export function makeSeats(playerNames: string[], roles: ShRoleId[]): ShSeatState[] {
+export function makeSeats(
+  playerNames: string[],
+  roles: ShRoleId[],
+  aiFlags: readonly boolean[] = [],
+): ShSeatState[] {
   if (playerNames.length !== roles.length) {
     throw new Error('name/role count mismatch');
   }
   return roles.map((role, i) => ({
     index: i,
     name: playerNames[i] ?? `Seat ${i + 1}`,
+    isAI: aiFlags[i] === true,
     role,
     party: role === 'liberal' ? 'liberal' : 'fascist',
     alive: true,
@@ -38,7 +43,7 @@ export function makeSeats(playerNames: string[], roles: ShRoleId[]): ShSeatState
 // Pick the starting president using the seeded RNG. Derived seed so the deal
 // and the leader-pick don't share an "interesting" stream slot.
 export function pickStartingPresident(playerCount: number, seed: number): SeatIndex {
-  const rng = makeRng(seed ^ 0x5a17_a1eb);
+  const rng = makeRng(subSeed(seed, 0x5a17_a1eb));
   return rngInt(rng, playerCount);
 }
 
@@ -48,7 +53,7 @@ export function buildInitialDeck(seed: number): ShPolicy[] {
   const deck: ShPolicy[] = [];
   for (let i = 0; i < LIBERAL_POLICY_COUNT; i++) deck.push('liberal');
   for (let i = 0; i < FASCIST_POLICY_COUNT; i++) deck.push('fascist');
-  const rng = makeRng(seed ^ 0xdec0_de01);
+  const rng = makeRng(subSeed(seed, 0xdec0_de01));
   return rngShuffle(rng, deck);
 }
 
@@ -61,7 +66,7 @@ export function reshuffleDeck(
   reshuffleCount: number,
 ): { deck: ShPolicy[]; discard: ShPolicy[] } {
   const combined = [...remainingDeck, ...discard];
-  const rng = makeRng((seed ^ 0xc1ea_ca11) + reshuffleCount * 0x9e3779b1);
+  const rng = makeRng(subSeed(seed, 0xc1ea_ca11, reshuffleCount));
   return {
     deck: rngShuffle(rng, combined),
     discard: [],
@@ -111,8 +116,32 @@ export function buildPartyKnowledge(
   return out;
 }
 
+// Rulebook: "If there are fewer than three tiles remaining in the Policy deck
+// at the end of a Legislative Session [or after a chaos top-deck], they are
+// shuffled with the Discard pile to create a new Policy deck." Applied
+// eagerly so the public deck size matches the table and a chaos top-deck
+// never draws from a 1-2 card stub.
+export function reshuffleIfLow<
+  S extends Pick<ShPrivateState, 'policyDeck' | 'policyDiscard' | 'seed' | 'reshuffleCount'>,
+>(state: S): S {
+  if (state.policyDeck.length >= 3) return state;
+  const reshuffled = reshuffleDeck(
+    state.policyDeck,
+    state.policyDiscard,
+    state.seed,
+    state.reshuffleCount,
+  );
+  return {
+    ...state,
+    policyDeck: reshuffled.deck,
+    policyDiscard: reshuffled.discard,
+    reshuffleCount: state.reshuffleCount + 1,
+  };
+}
+
 // Draw up to 3 cards from the deck; if the deck shrinks below 3 along the way,
-// reshuffle the discard in before continuing.
+// reshuffle the discard in before continuing (defensive: reshuffleIfLow
+// normally guarantees 3+ cards already).
 export function drawThree(
   state: ShPrivateState,
 ): { drawn: [ShPolicy, ShPolicy, ShPolicy]; deck: ShPolicy[]; discard: ShPolicy[]; reshuffleCount: number } {

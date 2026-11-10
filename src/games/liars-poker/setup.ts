@@ -1,4 +1,4 @@
-import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
+import { makeRng, rngInt, rngShuffle, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type {
   Card,
@@ -34,7 +34,7 @@ export function buildInitial(
     throw new Error('cardsPerPlayer must be 1-5');
   }
   const seats = names.map((name, index) => ({ index, name }));
-  const leaderRng = makeRng(seed ^ STARTING_SEAT_SEED_MASK);
+  const leaderRng = makeRng(subSeed(seed, STARTING_SEAT_SEED_MASK));
   const startingSeat = rngInt(leaderRng, names.length);
 
   const players: Record<SeatIndex, PlayerState> = {};
@@ -71,6 +71,7 @@ export function buildInitial(
     dummyHand: options.dummyHand,
     currentClaim: null,
     currentBidder: null,
+    roundClaims: [],
     lastReveal: null,
     revealAcked,
     roundOverAcked,
@@ -88,7 +89,7 @@ export function dealRound(
   leader: SeatIndex,
 ): LiarsPokerPrivateState {
   const cursor = state.rngCursor;
-  const rng = makeRng(state.seed ^ (0x12_34_be_ef + cursor));
+  const rng = makeRng(subSeed(state.seed, 0x12_34_be_ef, cursor));
   const deck = rngShuffle(rng, buildDeck());
   // Deal: each non-eliminated player gets cardCount cards (or 1 for dummy).
   let p = 0;
@@ -131,6 +132,7 @@ export function dealRound(
       : state.roundNumber + 1,
     currentClaim: null,
     currentBidder: null,
+    roundClaims: [],
     lastReveal: null,
     revealAcked,
     roundOverAcked,

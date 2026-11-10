@@ -3,82 +3,240 @@
   max-width: 760px;
   margin: 0 auto;
   display: grid;
-  gap: 20px;
+  gap: 18px;
+  color: #f4e7c9;
 }
 
 .header {
-  display: flex;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 18px;
   align-items: center;
+}
+@media (max-width: 560px) {
+  .header {
+    grid-template-columns: auto 1fr;
+  }
+  .fan {
+    display: none !important;
+  }
+}
+
+.back {
+  background: transparent;
+  color: #f4e7c9;
+  border: 1px solid rgba(243, 210, 122, 0.45);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-family: var(--font-romance);
+}
+.back.back:hover:not(:disabled) {
+  background: rgba(243, 210, 122, 0.1);
+  border-color: #f3d27a;
+}
+
+.fan {
+  display: flex;
+  align-items: flex-start;
+  padding: 4px 6px 0;
+  animation: global(sd-rise-in) var(--dur-slow) var(--ease-out) both;
+}
+.fanCard {
+  display: block;
+  width: 50px;
+  aspect-ratio: 126 / 176;
+  margin-left: -26px;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.55));
+}
+.fanCard:first-child {
+  margin-left: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-romance);
+  font-style: italic;
+  font-size: 40px;
+  line-height: 1;
+  background: linear-gradient(135deg, #8a6420, #f3d27a 35%, #c9963c 60%, #f6dd8f);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.6));
+}
+.tagline {
+  margin: 6px 0 0;
+  font-family: var(--font-romance);
+  font-style: italic;
+  color: #e9b9c4;
 }
 
 .panel {
-  background: #111827;
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  padding: 16px;
+  position: relative;
+  padding: 18px 20px;
+  border-radius: 14px;
+  color: #3a2414;
+  background-image:
+    var(--paper-fibre),
+    linear-gradient(180deg, #f6ecd6, #e6d3a9);
+  border: 1px solid #b48a3c;
+  box-shadow:
+    0 0 0 3px rgba(116, 17, 41, 0.9),
+    0 0 0 4px #d4a64a,
+    var(--shadow-md);
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
 }
 
 .h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #cbd5e1;
+  margin: 0 0 6px;
+  font-family: var(--font-romance);
+  font-style: italic;
+  font-size: 20px;
+  color: #6e0a18;
 }
 
 .subtitle {
   margin: 0 0 12px;
-  color: #94a3b8;
-  font-size: 13px;
+  font-family: var(--font-romance);
+  font-size: 14px;
+  color: #5a3a22;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 .countControls {
   display: flex;
-  gap: 6px;
-  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
-  flex-wrap: wrap;
 }
-
 .countControls button {
-  width: 38px;
-  height: 36px;
-  border-radius: 8px;
-  background: #1f2937;
-  color: #e2e8f0;
-  border: 1px solid #334155;
-  font-size: 14px;
+  width: 42px;
+  height: 40px;
+  border-radius: 50%;
+  background: #fff8ea;
+  color: #6e0a18;
+  border: 1px solid #b48a3c;
+  font-family: var(--font-romance);
+  font-weight: 700;
+  font-size: 17px;
   cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
-
+.countControls button:hover {
+  transform: translateY(-2px);
+}
 .countControls button.countActive {
-  background: #831843;
-  border-color: #f472b6;
-  color: #fce7f3;
+  background: radial-gradient(circle at 35% 30%, #c8202d, #5c0710);
+  color: #f6dd8f;
+  border-color: #f3d27a;
+  box-shadow: 0 0 0 2px rgba(243, 210, 122, 0.4);
 }
 
 .nameRow {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-
 .seatNumber {
-  width: 22px;
-  text-align: right;
-  color: #64748b;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #a3202f, #3b0610);
+  color: #f6dd8f;
+  font-family: var(--font-romance);
+  font-weight: 700;
   font-size: 13px;
+  border: 1px solid #d4a64a;
+  flex: none;
 }
-
 .nameInput {
   flex: 1;
-  padding: 6px 8px;
-  background: #0b1220;
-  border: 1px solid #1f2937;
-  color: #e2e8f0;
-  border-radius: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #3a2414;
+  border: 1px solid #c8ad7a;
+  border-radius: 8px;
+  font-family: var(--font-romance);
+  font-size: 15px;
+}
+.nameInput:focus {
+  outline: 2px solid #b3122a;
+  outline-offset: 1px;
+}
+
+.aiToggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 98px;
+  height: 32px;
+  padding: 0 8px 0 32px;
+  border-radius: 999px;
+  border: 1px solid #b48a3c;
+  background: #fff8ea;
+  color: #6e0a18;
+  cursor: pointer;
+  font-family: var(--font-romance);
+  font-size: 14px;
+  flex: none;
+  transition: background var(--dur-fast) ease;
+}
+.aiKnob {
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #d9c79f);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-med) var(--ease-spring), background var(--dur-fast) ease;
+}
+.aiLabel {
+  flex: 1;
+  text-align: center;
+}
+.aiOn {
+  background: linear-gradient(180deg, #8e1b2b, #4d0913);
+  color: #f6dd8f;
+}
+.aiOn .aiKnob {
+  transform: translateX(64px);
+  background: radial-gradient(circle at 35% 30%, #ffd2d8, #c8202d);
+}
+.aiOn {
+  padding: 0 32px 0 8px;
+}
+.aiToggle:focus-visible,
+.countControls button:focus-visible,
+.startButton:focus-visible,
+.back:focus-visible {
+  outline: 2px solid #f3d27a;
+  outline-offset: 2px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-style: italic;
+  color: #6b4a2a;
+}
+
+.rules {
+  margin: 0;
+  padding-left: 20px;
+  font-family: var(--font-romance);
+  font-size: 14px;
+  line-height: 1.6;
+  color: #3a2414;
 }
 
 .footer {
@@ -87,18 +245,44 @@
 }
 
 .startButton {
-  background: #ec4899;
-  color: #fdf2f8;
+  background: linear-gradient(180deg, #b3122a, #6e0a18);
+  color: #fff4dc;
+  font-family: var(--font-romance);
   font-weight: 700;
-  padding: 12px 22px;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
+  font-style: italic;
+  font-size: 18px;
+  padding: 12px 28px;
+  border: 1px solid #f3d27a;
+  border-radius: 999px;
   cursor: pointer;
+  box-shadow: 0 10px 24px -10px rgba(179, 18, 42, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) ease;
+}
+.startButton:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
 }
 
-.startButton:disabled {
-  background: #334155;
-  color: #94a3b8;
-  cursor: not-allowed;
+/* ---- Overrides for the global button rules in src/index.css ------------
+   (grey hover background at 0,2,1, 0.45 disabled opacity, base shadow).
+   Restated at higher specificity so the themed buttons keep their look. */
+
+.countControls button:hover:not(:disabled) {
+  background: #fff8ea;
+  border-color: #b48a3c;
+}
+.countControls button.countActive:hover:not(:disabled) {
+  background: radial-gradient(circle at 35% 30%, #c8202d, #5c0710);
+  border-color: #f3d27a;
+}
+.aiToggle.aiToggle:hover:not(:disabled) {
+  background: #fffdf6;
+  border-color: #b48a3c;
+}
+.aiToggle.aiOn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #a3202f, #5c0a16);
+}
+.startButton.startButton:hover:not(:disabled) {
+  background: linear-gradient(180deg, #c8203a, #7e0c1c);
+  border-color: #f3d27a;
 }

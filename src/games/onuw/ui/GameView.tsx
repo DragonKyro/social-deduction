@@ -1,37 +1,145 @@
-import { useMemo, useState } from 'react';
-import { useGameStore } from '@/store/gameStore';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import type { SeatIndex } from '@/engine/types';
+import { useGameStore, useSeatSwitching } from '@/store/gameStore';
+import { FlipCard } from '@/ui/shared/FlipCard';
+import { useSvgIds } from '@/ui/shared/svg';
 import type { OnuwAction } from '../actions';
-import { ROLES, rolesSortedByWakeOrder } from '../roles';
-import type { OnuwPublicSeatState, OnuwPublicState, OnuwRoleId } from '../state';
-import { RoleArt, TeamBadge } from './RoleArt';
+import { ROLES, rolesSortedByWakeOrder, wakesAtNight } from '../roles';
+import type {
+  OnuwNightObservation,
+  OnuwPublicSeatState,
+  OnuwPublicState,
+  OnuwRoleId,
+  OnuwTeamId,
+  OnuwYourNightStep,
+} from '../state';
+import { CardBack, RoleCard, RoleMedallion, TeamBadge, teamLabel } from './RoleArt';
+import { Sky, type SkyMode } from './Sky';
 import styles from './GameView.module.css';
+
+// ============================================================================
+// ONUW game screen.
+//
+// Hidden-info rules for this UI:
+//  - Only render what the current view contains; the DOM is inspectable.
+//  - Online (or one human vs AI) each device shows its own seat.
+//  - Pass-and-play (several humans, one device): the shared screen always
+//    renders the SPECTATOR view (localSeat = null). A player's private
+//    screen opens only after they tap "I am …" on a curtain, and closing it
+//    drops back to the spectator view before the device is handed on.
+//  - At night, pass-and-play hands the device around the table in seat
+//    order regardless of who is awake, so the hand-offs reveal nothing.
+// ============================================================================
+
+type Dispatch = (a: OnuwAction) => void;
 
 export function OnuwGameView() {
   const publicView = useGameStore((s) => s.publicView);
-  const localSeat = useGameStore((s) => s.localSeat);
-  const setLocalSeat = useGameStore((s) => s.setLocalSeat);
-  const dispatch = useGameStore((s) => s.dispatch);
-  const exitGame = useGameStore((s) => s.exitGame);
-
   if (!publicView) return null;
-  const view = publicView.view as OnuwPublicState;
+  return <Game view={publicView.view as OnuwPublicState} />;
+}
 
-  const dispatchAction = (a: OnuwAction) => dispatch(a);
-  const rotate = (seat: number) => setLocalSeat(seat);
+function Game({ view }: { view: OnuwPublicState }) {
+  const dispatch = useGameStore((s) => s.dispatch) as Dispatch;
+  const exitGame = useGameStore((s) => s.exitGame);
+  const isHost = useGameStore((s) => s.isHost);
+  const setLocalSeat = useGameStore((s) => s.setLocalSeat);
+  const switching = useSeatSwitching();
+
+  const humanSeats = view.seats.map((s) => s.index).filter((i) => switching.canView(i));
+  const passAndPlay = switching.enabled && humanSeats.length > 1;
+
+  // Pass-and-play state: whose private screen is open, and where the night
+  // hand-off has got to.
+  const [holder, setHolder] = useState<SeatIndex | null>(null);
+  const [curtainFor, setCurtainFor] = useState<SeatIndex | null>(null);
+  const [nightCursor, setNightCursor] = useState(0);
+  // When the day began (so the discussion timer survives remounts, e.g. a
+  // pass-and-play player checking their notes).
+  const [dayStartedAt, setDayStartedAt] = useState<number | null>(null);
+  useEffect(() => {
+    if (view.phase === 'day') setDayStartedAt((t) => t ?? Date.now());
+    else setDayStartedAt(null);
+  }, [view.phase]);
+
+  // The shared screen in pass-and-play always shows the spectator view.
+  useEffect(() => {
+    if (passAndPlay && holder === null && view.yourSeat !== null) setLocalSeat(null);
+  }, [passAndPlay, holder, view.yourSeat, setLocalSeat]);
+
+  const open = (seat: SeatIndex) => {
+    setCurtainFor(null);
+    setLocalSeat(seat);
+    setHolder(seat);
+  };
+  const close = () => {
+    setHolder(null);
+    setLocalSeat(null);
+  };
+
+  const skyMode: SkyMode = view.phase === 'setup' ? 'dusk' : view.phase === 'night' ? 'night' : 'dawn';
+  const nameOf = (i: SeatIndex) => view.seats[i]?.name ?? `Seat ${i + 1}`;
+
+  let body: ReactNode;
+  if (passAndPlay) {
+    if (holder !== null) {
+      body =
+        view.yourSeat !== holder ? (
+          <div className={styles.panel}>Turning the card over…</div>
+        ) : (
+          <PrivateScreen
+            view={view}
+            dispatch={dispatch}
+            onClose={close}
+            onNightDone={() => {
+              close();
+              setNightCursor((c) => (c + 1) % humanSeats.length);
+            }}
+          />
+        );
+    } else if (curtainFor !== null) {
+      body = (
+        <Curtain
+          title="A private moment"
+          name={nameOf(curtainFor)}
+          hint="Everyone else, look away while they check their card and notes."
+          onReady={() => open(curtainFor)}
+          onCancel={() => setCurtainFor(null)}
+        />
+      );
+    } else {
+      body = (
+        <SharedScreen
+          view={view}
+          dispatch={dispatch}
+          isHost={isHost}
+          humanSeats={humanSeats}
+          nightSeat={humanSeats[nightCursor % humanSeats.length] ?? null}
+          dayStartedAt={dayStartedAt}
+          onOpen={open}
+          onPeek={setCurtainFor}
+        />
+      );
+    }
+  } else {
+    body = <PersonalScreen view={view} dispatch={dispatch} isHost={isHost} dayStartedAt={dayStartedAt} />;
+  }
 
   return (
-    <div className={styles.root}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+    <div className={`${styles.root} ${styles[`phase_${view.phase}`] ?? ''}`}>
+      <Sky mode={skyMode} />
+      <header className={styles.header}>
         <div>
-          <h2 className={styles.title}>One Night Ultimate Werewolf</h2>
+          <h2 className={styles.title}>One Night</h2>
           <p className={styles.subtitle}>
-            {phaseLabel(view.phase)} · {view.seats.length} players, {view.centerCards.length} center cards
+            {phaseLabel(view.phase)} · {view.seats.length} players · 3 center cards
           </p>
         </div>
-        <button onClick={exitGame}>Exit</button>
+        <button className={styles.ghost} onClick={exitGame}>
+          Exit
+        </button>
       </header>
-
-      <PhaseRouter view={view} localSeat={localSeat} dispatch={dispatchAction} rotateSeat={rotate} />
+      <main className={styles.main}>{body}</main>
     </div>
   );
 }
@@ -39,1315 +147,1000 @@ export function OnuwGameView() {
 function phaseLabel(p: OnuwPublicState['phase']): string {
   switch (p) {
     case 'setup':
-      return 'Hand out roles';
+      return 'The cards are dealt';
     case 'night':
-      return 'Night phase';
+      return 'Night falls';
     case 'day':
-      return 'Day — discussion';
+      return 'Daybreak';
     case 'voting':
-      return 'Voting';
+      return 'The vote';
     case 'resolution':
     case 'gameOver':
-      return 'Resolution';
+      return 'The reckoning';
   }
 }
 
-function PhaseRouter({
+// ============================================================================
+// Screens
+// ============================================================================
+
+// Pass-and-play: the holder's private turn.
+function PrivateScreen({
   view,
-  localSeat,
   dispatch,
-  rotateSeat,
+  onClose,
+  onNightDone,
 }: {
   view: OnuwPublicState;
-  localSeat: number | null;
-  dispatch: (a: OnuwAction) => void;
-  rotateSeat: (s: number) => void;
+  dispatch: Dispatch;
+  onClose: () => void;
+  onNightDone: () => void;
 }) {
+  const me = view.yourSeat!;
+  const mine = view.seats[me]!;
   switch (view.phase) {
     case 'setup':
-      return <SetupPhase view={view} dispatch={dispatch} rotateSeat={rotateSeat} />;
+      return (
+        <RoleReveal
+          view={view}
+          onAck={() => {
+            dispatch({ type: 'ackRoleReveal', bySeat: me });
+            onClose();
+          }}
+        />
+      );
     case 'night':
-      return <NightPhase view={view} localSeat={localSeat} dispatch={dispatch} rotateSeat={rotateSeat} />;
-    case 'day':
-      return <DayPhase view={view} dispatch={dispatch} />;
+      return <NightScreen view={view} dispatch={dispatch} handoff onDone={onNightDone} />;
     case 'voting':
-      return <VotingPhase view={view} localSeat={localSeat} dispatch={dispatch} rotateSeat={rotateSeat} />;
+      if (!mine.hasVoted) {
+        return (
+          <Ballot
+            view={view}
+            onCast={(t) => {
+              dispatch({ type: 'castVote', bySeat: me, targetSeat: t });
+              onClose();
+            }}
+          />
+        );
+      }
+      return <NotesScreen view={view} onDone={onClose} />;
+    default:
+      // Day peek — or a night turn that just ended at dawn: keep showing the
+      // player's own result until they close it.
+      return <NotesScreen view={view} onDone={onClose} />;
+  }
+}
+
+// Pass-and-play: the screen everyone at the table can see (spectator view).
+function SharedScreen({
+  view,
+  dispatch,
+  isHost,
+  humanSeats,
+  nightSeat,
+  dayStartedAt,
+  onOpen,
+  onPeek,
+}: {
+  view: OnuwPublicState;
+  dispatch: Dispatch;
+  isHost: boolean;
+  humanSeats: SeatIndex[];
+  nightSeat: SeatIndex | null;
+  dayStartedAt: number | null;
+  onOpen: (seat: SeatIndex) => void;
+  onPeek: (seat: SeatIndex) => void;
+}) {
+  const nameOf = (i: SeatIndex) => view.seats[i]!.name;
+  switch (view.phase) {
+    case 'setup': {
+      const next = humanSeats.find((i) => !view.seats[i]!.hasAckedSetup);
+      return (
+        <div className={styles.stack}>
+          <Table view={view} mode="deal" />
+          {next !== undefined ? (
+            <PassPanel
+              title="Look at your card"
+              name={nameOf(next)}
+              hint="Everyone else, look away."
+              onReady={() => onOpen(next)}
+            />
+          ) : (
+            <div className={styles.panel}>Waiting for the others to look at their cards…</div>
+          )}
+        </div>
+      );
+    }
+    case 'night':
+      return nightSeat === null ? (
+        <SleepingVillage />
+      ) : (
+        <Curtain
+          title="Night"
+          name={nameOf(nightSeat)}
+          hint="The device goes round the table all night — everyone takes a turn, awake or not. Everyone else, eyes closed."
+          onReady={() => onOpen(nightSeat)}
+        />
+      );
+    case 'day':
+      return (
+        <DayScreen view={view} dispatch={dispatch} isHost={isHost} startedAt={dayStartedAt} peekSeats={humanSeats} onPeek={onPeek} />
+      );
+    case 'voting': {
+      const next = humanSeats.find((i) => !view.seats[i]!.hasVoted);
+      if (next !== undefined) {
+        return (
+          <Curtain
+            title="Secret ballot"
+            name={nameOf(next)}
+            hint="Votes are revealed all at once. Everyone else, look away."
+            onReady={() => onOpen(next)}
+          />
+        );
+      }
+      return <VotingStatus view={view} dispatch={dispatch} isHost={isHost} />;
+    }
     case 'resolution':
     case 'gameOver':
-      return <ResolutionPhase view={view} dispatch={dispatch} />;
+      return <Resolution view={view} dispatch={dispatch} isHost={isHost} />;
+  }
+}
+
+// Online, or a single human against AIs: this device shows its own seat.
+function PersonalScreen({
+  view,
+  dispatch,
+  isHost,
+  dayStartedAt,
+}: {
+  view: OnuwPublicState;
+  dispatch: Dispatch;
+  isHost: boolean;
+  dayStartedAt: number | null;
+}) {
+  const me = view.yourSeat;
+  const mine = me !== null ? view.seats[me] ?? null : null;
+  switch (view.phase) {
+    case 'setup':
+      if (mine && !mine.hasAckedSetup) {
+        return <RoleReveal view={view} onAck={() => dispatch({ type: 'ackRoleReveal', bySeat: mine.index })} />;
+      }
+      return (
+        <div className={styles.stack}>
+          <Table view={view} mode="deal" />
+          <div className={styles.panel}>
+            {mine ? 'Your card is face-down again. ' : ''}Waiting for everyone to look at their cards (
+            {view.seats.filter((s) => s.hasAckedSetup).length}/{view.seats.length})…
+          </div>
+        </div>
+      );
+    case 'night':
+      return mine ? <NightScreen view={view} dispatch={dispatch} /> : <SleepingVillage />;
+    case 'day':
+      return <DayScreen view={view} dispatch={dispatch} isHost={isHost} startedAt={dayStartedAt} showNotes={!!mine} />;
+    case 'voting':
+      if (mine && !mine.hasVoted) {
+        return <Ballot view={view} onCast={(t) => dispatch({ type: 'castVote', bySeat: mine.index, targetSeat: t })} />;
+      }
+      return <VotingStatus view={view} dispatch={dispatch} isHost={isHost} />;
+    case 'resolution':
+    case 'gameOver':
+      return <Resolution view={view} dispatch={dispatch} isHost={isHost} />;
   }
 }
 
 // ============================================================================
-// Setup phase: each seat privately views their dealt role.
+// Curtain / hand-off
 // ============================================================================
 
-function SetupPhase({
-  view,
-  dispatch,
-  rotateSeat,
+function Curtain({
+  title,
+  name,
+  hint,
+  onReady,
+  onCancel,
 }: {
-  view: OnuwPublicState;
-  dispatch: (a: OnuwAction) => void;
-  rotateSeat: (s: number) => void;
+  title: string;
+  name: string;
+  hint: string;
+  onReady: () => void;
+  onCancel?: () => void;
 }) {
-  const next = view.seats.find((s) => !s.hasAckedSetup);
-  const [covered, setCovered] = useState(true);
-
-  if (!next) {
-    return (
-      <div className={styles.panel}>
-        <p>Everyone has seen their role. Starting night…</p>
-      </div>
-    );
-  }
-  const needsRotate = view.yourSeat !== next.index;
-
-  if (needsRotate || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Pass the device</h2>
-          <p>It&apos;s {next.name}&apos;s turn to see their role.</p>
-          <p style={{ fontSize: 12, color: '#94a3b8' }}>Everyone else, look away.</p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (needsRotate) rotateSeat(next.index);
-              setCovered(false);
-            }}
-          >
-            I am {next.name} — show me my role
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const role = view.yourDealtRole;
-  if (!role) return <div className={styles.panel}>Loading role…</div>;
-  const spec = ROLES[role];
   return (
-    <div className={`${styles.panel} ${styles.roleReveal}`}>
-      <RoleArt role={role} size={140} />
-      <div>
-        <p style={{ margin: 0, color: '#94a3b8', fontSize: 13 }}>You are</p>
-        <h2 className={styles.roleName}>{spec.name}</h2>
-        <span className={`${styles.teamPill} ${styles[spec.team]}`}>{teamLabel(spec.team)}</span>
+    <div className={styles.curtain} role="dialog" aria-modal="true" aria-label={`${title}: pass to ${name}`}>
+      <div className={styles.lidTop} />
+      <div className={styles.lidBottom} />
+      <div className={styles.curtainInner}>
+        <MoonGlyph />
+        <p className={styles.eyebrow}>{title}</p>
+        <h2 className={styles.curtainName}>Pass the device to {name}</h2>
+        <p className={styles.dim}>{hint}</p>
+        <button className={styles.primary} onClick={onReady} autoFocus>
+          I am {name}
+        </button>
+        {onCancel && (
+          <button className={styles.ghost} onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </div>
-      <p style={{ maxWidth: 520, lineHeight: 1.5, color: '#cbd5e1' }}>{spec.description}</p>
-      <p style={{ color: '#94a3b8', fontSize: 12, maxWidth: 460 }}>
-        Remember your role. After night begins, swaps may change it.
-      </p>
-      <button
-        className={styles.primary}
-        onClick={() => {
-          dispatch({ type: 'ackRoleReveal', bySeat: next.index });
-          setCovered(true);
-        }}
-      >
-        I have memorised my role
+    </div>
+  );
+}
+
+function PassPanel({ title, name, hint, onReady }: { title: string; name: string; hint: string; onReady: () => void }) {
+  return (
+    <div className={`${styles.panel} ${styles.passPanel} sd-rise-in`}>
+      <p className={styles.eyebrow}>{title}</p>
+      <h3 className={styles.folkHeading}>Pass the device to {name}</h3>
+      <p className={styles.dim}>{hint}</p>
+      <button className={styles.primary} onClick={onReady}>
+        I am {name} — show my card
       </button>
     </div>
   );
 }
 
-function teamLabel(t: 'village' | 'werewolves' | 'tanner'): string {
-  if (t === 'village') return 'Village';
-  if (t === 'werewolves') return 'Werewolves';
-  return 'Tanner';
+function MoonGlyph() {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" aria-hidden className={styles.moonGlyph}>
+      <circle cx="32" cy="32" r="22" fill="#f3e8c4" />
+      <circle cx="41" cy="26" r="19" fill="#0b1229" />
+      <circle cx="14" cy="12" r="1.2" fill="#f3e8c4" />
+      <circle cx="52" cy="50" r="1" fill="#f3e8c4" />
+    </svg>
+  );
 }
 
-// ============================================================================
-// Night phase: walk through the role wake order, hot-seat style.
-// ============================================================================
-
-function NightPhase({
-  view,
-  localSeat,
-  dispatch,
-  rotateSeat,
-}: {
-  view: OnuwPublicState;
-  localSeat: number | null;
-  dispatch: (a: OnuwAction) => void;
-  rotateSeat: (s: number) => void;
-}) {
-  const step = view.activeNightStep;
-  const [covered, setCovered] = useState(true);
-
-  if (!step) {
-    return (
-      <div className={styles.panel}>
-        <p>Advancing night…</p>
-      </div>
-    );
-  }
-
-  const remainingSeats = step.seats.filter((s) => !step.acked.includes(s));
-  const nextSeat = remainingSeats[0];
-
-  if (nextSeat === undefined) {
-    return (
-      <div className={styles.panel}>
-        <p>Resolving step…</p>
-      </div>
-    );
-  }
-
-  const needsRotate = localSeat !== nextSeat;
-  const seatInfo = view.seats[nextSeat]!;
-  const roleSpec = ROLES[step.role];
-
-  if (needsRotate || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Night step</h2>
-          <p style={{ color: '#94a3b8', fontSize: 13 }}>
-            Step {view.nightStepIndex + 1} of {view.nightTotalSteps}
-          </p>
-          <div className={styles.nightStepBanner}>
-            <p style={{ margin: 0, fontSize: 13, opacity: 0.8 }}>The {roleSpec.name} wakes</p>
-            <h2 style={{ margin: '6px 0' }}>{seatInfo.name}</h2>
-            <p style={{ margin: 0, fontSize: 12, opacity: 0.8 }}>
-              {step.seats.length > 1
-                ? `${step.acked.length}/${step.seats.length} of this role have acted`
-                : 'pass the device discreetly'}
-            </p>
-          </div>
-          <p style={{ fontSize: 12, color: '#94a3b8' }}>Everyone else, look away.</p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (needsRotate) rotateSeat(nextSeat);
-              setCovered(false);
-            }}
-          >
-            I am {seatInfo.name} — show my night action
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Local seat IS the one acting. Render the role-specific action UI.
+function SleepingVillage() {
   return (
-    <div className={`${styles.panel} ${styles.roleReveal}`}>
-      <RoleArt role={step.role} size={100} />
-      <h2 style={{ margin: 0 }}>{roleSpec.name}</h2>
-      <p style={{ color: '#94a3b8', fontSize: 13, maxWidth: 540 }}>{roleSpec.description}</p>
-
-      <RoleActionPanel
-        view={view}
-        actingSeat={nextSeat}
-        role={step.role}
-        dispatch={(a) => {
-          dispatch(a);
-          setCovered(true);
-        }}
-      />
+    <div className={`${styles.panel} ${styles.sleeping}`}>
+      <div className={styles.zzz} aria-hidden>
+        <span>z</span>
+        <span>z</span>
+        <span>z</span>
+      </div>
+      <h3 className={styles.folkHeading}>The village sleeps</h3>
+      <p className={styles.dim}>Somewhere in the dark, something stirs. Daybreak will come soon.</p>
     </div>
   );
 }
 
 // ============================================================================
-// Role-specific action UI. Each role's interaction is a small embedded panel.
+// Role reveal (setup)
 // ============================================================================
 
-function RoleActionPanel({
+function RoleReveal({ view, onAck }: { view: OnuwPublicState; onAck: () => void }) {
+  const [flipped, setFlipped] = useState(false);
+  const role = view.yourDealtRole;
+  const me = view.yourSeat!;
+  const spec = role ? ROLES[role] : null;
+  return (
+    <div className={`${styles.panel} ${styles.reveal}`}>
+      <p className={styles.eyebrow}>{view.seats[me]!.name}, this card is yours</p>
+      <FlipCard
+        width={200}
+        height={279}
+        radius={8}
+        dealDelayMs={0}
+        revealed={flipped && !!role}
+        back={<CardBack size={200} />}
+        front={role ? <RoleCard role={role} size={200} /> : <CardBack size={200} />}
+        className={styles.bigCard}
+      />
+      {!flipped || !spec ? (
+        <button className={styles.primary} onClick={() => setFlipped(true)}>
+          Turn over your card
+        </button>
+      ) : (
+        <div className={`${styles.revealText} sd-rise-in`}>
+          <h2 className={styles.roleName}>The {spec.name}</h2>
+          <p>
+            <TeamBadge role={role!} /> <span className={styles.dim}>{teamLabel(spec.team)}</span>
+          </p>
+          <p className={styles.description}>{spec.description}</p>
+          <p className={styles.dim}>Remember it — during the night your card may be swapped without you knowing.</p>
+          <button className={styles.primary} onClick={onAck}>
+            I&apos;ll remember — turn it face-down
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Night
+// ============================================================================
+
+function NightScreen({
   view,
-  actingSeat,
-  role,
   dispatch,
+  handoff = false,
+  onDone,
 }: {
   view: OnuwPublicState;
-  actingSeat: number;
-  role: OnuwRoleId;
-  dispatch: (a: OnuwAction) => void;
+  dispatch: Dispatch;
+  handoff?: boolean;
+  onDone?: () => void;
 }) {
-  const observation = view.yourObservations[view.yourObservations.length - 1] ?? null;
+  const me = view.yourSeat!;
+  const step = view.phase === 'night' ? view.yourNightStep : null;
+  const obs = view.yourObservations;
+  // Notes the player has already seen on this screen; anything newer is
+  // shown as "what you learned".
+  const [seen, setSeen] = useState(() => obs.length);
+  const [acted, setActed] = useState(false);
+  const act = (a: OnuwAction) => {
+    setActed(true);
+    dispatch(a);
+  };
 
-  // Observation-only roles (no action required, just ack).
-  const passiveRoles: ReadonlySet<OnuwRoleId> = new Set([
-    'mason',
-    'minion',
-    'insomniac',
-    'beholder',
-    'squire',
-    'empath',
-    'auraSeer',
-  ]);
-  if (passiveRoles.has(role)) {
+  if (step) {
     return (
-      <ObservationAndAck
-        observation={observation}
-        onAck={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-      />
+      <div className={`${styles.panel} ${styles.wake} sd-your-turn`} style={{ '--sd-glow': '#9fb8ff' } as CSSProperties}>
+        <WakeHeader view={view} step={step} />
+        <NightControls view={view} step={step} me={me} act={act} />
+        {obs.length > 0 && <NotesList title="What you know" observations={obs} highlightFrom={Math.min(seen, obs.length - 1)} />}
+      </div>
     );
   }
 
-  switch (role) {
+  const fresh = obs.slice(seen);
+  const finish = () => {
+    setSeen(obs.length);
+    setActed(false);
+    onDone?.();
+  };
+
+  if (acted || fresh.length > 0) {
+    return (
+      <div className={`${styles.panel} ${styles.learned}`}>
+        <p className={styles.eyebrow}>{fresh.length > 0 ? 'What you learned' : 'It is done'}</p>
+        {fresh.map((o, i) => (
+          <ObservationReveal key={seen + i} observation={o} delay={i * 260} />
+        ))}
+        <button className={styles.primary} onClick={finish}>
+          {handoff ? 'Close my eyes — pass the device on' : 'Close my eyes'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${styles.panel} ${styles.sleeping}`}>
+      <div className={styles.zzz} aria-hidden>
+        <span>z</span>
+        <span>z</span>
+        <span>z</span>
+      </div>
+      <h3 className={styles.folkHeading}>{handoff ? 'Nothing stirs for you right now' : 'You are asleep'}</h3>
+      <p className={styles.dim}>
+        {handoff
+          ? 'Keep your eyes closed. The device will come round again.'
+          : "You'll be woken when it is your turn."}
+      </p>
+      <YourCardLine view={view} />
+      {obs.length > 0 && <NotesList title="What you know" observations={obs} />}
+      {handoff && (
+        <button className={styles.primary} onClick={finish}>
+          Pass the device on
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WakeHeader({ view, step }: { view: OnuwPublicState; step: OnuwYourNightStep }) {
+  const spec = ROLES[step.role];
+  return (
+    <div className={styles.wakeHeader}>
+      <FlipCard
+        width={112}
+        height={156}
+        revealed
+        dealDelayMs={0}
+        back={<CardBack size={112} />}
+        front={<RoleCard role={step.role} size={112} subtitle={step.asDoppelganger ? 'DOPPELGANGER' : undefined} />}
+      />
+      <div>
+        <p className={styles.eyebrow}>Open your eyes</p>
+        <h2 className={styles.roleName}>
+          {step.asDoppelganger ? `Doppelganger — the ${spec.name}` : `The ${spec.name}`}
+        </h2>
+        <p className={styles.description}>{spec.description}</p>
+        {view.yourDealtRole && view.yourDealtRole !== step.role && !step.asDoppelganger && (
+          <p className={styles.dim}>You were dealt the {ROLES[view.yourDealtRole].name}.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NightControls({
+  view,
+  step,
+  me,
+  act,
+}: {
+  view: OnuwPublicState;
+  step: OnuwYourNightStep;
+  me: SeatIndex;
+  act: Dispatch;
+}) {
+  const others = view.seats.filter((s) => s.index !== me);
+  const knownWolves = new Set<SeatIndex>();
+  for (const o of view.yourObservations) {
+    for (const e of o.entries) if (e.shownAs === 'werewolf' && e.position?.kind === 'seat') knownWolves.add(e.position.index);
+  }
+  const last = view.yourObservations.at(-1) ?? null;
+  const pass = (label: string) =>
+    step.canPass ? (
+      <button className={styles.muted} onClick={() => act({ type: 'nightAck', bySeat: me })}>
+        {label}
+      </button>
+    ) : null;
+
+  switch (step.role) {
     case 'doppelganger':
-      return <PickSeat view={view} excludeSelf={actingSeat} onPick={(t) => dispatch({ type: 'doppelgangerCopy', bySeat: actingSeat, targetSeat: t })} label="Copy whose role?" observation={observation} ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })} />;
-    case 'werewolf': {
-      // The werewolf step covers seats with dealtRole === 'werewolf'.
-      // Lone-wolf detection: wake observation has zero entries means there
-      // are no OTHER awake wolves visible to this seat — eligible to peek
-      // a center card.
-      const entries = observation?.entries ?? [];
-      const isLoneWolf = entries.length === 0;
+      return <SeatChoice label="Look at whose card — and become it?" seats={others} onPick={(t) => act({ type: 'doppelgangerCopy', bySeat: me, targetSeat: t })} />;
+
+    case 'werewolf':
       return (
-        <WerewolfWakePanel
-          view={view}
-          actingSeat={actingSeat}
-          observation={observation}
-          isLoneWolf={isLoneWolf}
-          dispatch={dispatch}
-          role={role}
-        />
+        <div className={styles.controls}>
+          {last && <Callout text={last.text} />}
+          {step.loneWolf ? (
+            <>
+              <CenterChoice label="You may look at one center card" onPick={(c) => act({ type: 'loneWolfPeekCenter', bySeat: me, centerIndex: c })} />
+              <div className={styles.actions}>
+                <button className={styles.muted} onClick={() => act({ type: 'loneWolfSkip', bySeat: me })}>
+                  Don&apos;t look
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className={styles.actions}>{pass('We have seen each other — close my eyes')}</div>
+          )}
+        </div>
+      );
+
+    case 'alphaWolf': {
+      const targets = others.filter((s) => !knownWolves.has(s.index));
+      return (
+        <div className={styles.controls}>
+          <SeatChoice label="Give the center werewolf card to a non-werewolf" seats={targets} onPick={(t) => act({ type: 'alphaWolfConvert', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>{pass('There is no one to convert')}</div>
+        </div>
       );
     }
     case 'mysticWolf':
-      // Mystic wolf wakes with werewolves (auto observation) then picks one
-      // other player to peek.
       return (
-        <MysticWolfPanel view={view} actingSeat={actingSeat} dispatch={dispatch} />
+        <div className={styles.controls}>
+          <SeatChoice label="You may look at another player's card" seats={others} onPick={(t) => act({ type: 'mysticWolfLook', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>{pass("Don't look")}</div>
+        </div>
       );
+
     case 'seer':
-      return (
-        <SeerPanel
-          view={view}
-          actingSeat={actingSeat}
-          dispatch={dispatch}
-          observation={observation}
-        />
-      );
+      return <SeerControls me={me} others={others} act={act} />;
     case 'apprenticeSeer':
       return (
-        <PickCenterCard
-          view={view}
-          onPick={(i) => dispatch({ type: 'apprenticeSeerLook', bySeat: actingSeat, centerIndex: i })}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          label="Peek one center card"
-        />
+        <div className={styles.controls}>
+          <CenterChoice label="You may look at one center card" onPick={(c) => act({ type: 'apprenticeSeerLook', bySeat: me, centerIndex: c })} />
+          <div className={styles.actions}>{pass("Don't look")}</div>
+        </div>
       );
-    case 'paranormalInvestigator':
+    case 'paranormalInvestigator': {
+      const left = others.filter((s) => !step.looked.includes(s.index));
       return (
-        <ParanormalPanel
-          view={view}
-          actingSeat={actingSeat}
-          dispatch={dispatch}
-          observation={observation}
-        />
+        <div className={styles.controls}>
+          {step.looked.length > 0 && last && <Callout text={last.text} />}
+          <SeatChoice
+            label={step.looked.length === 0 ? 'You may look at up to two players, one at a time' : 'Look at one more player?'}
+            seats={left}
+            onPick={(t) => act({ type: 'paranormalLook', bySeat: me, targetSeat: t })}
+          />
+          <div className={styles.actions}>
+            <button className={styles.muted} onClick={() => act({ type: 'paranormalStop', bySeat: me })}>
+              {step.looked.length === 0 ? "Don't investigate" : 'Stop here'}
+            </button>
+          </div>
+        </div>
       );
+    }
     case 'robber':
       return (
-        <PickSeatWithSkip
-          view={view}
-          excludeSelf={actingSeat}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          onPick={(t) => dispatch({ type: 'robberSwap', bySeat: actingSeat, targetSeat: t })}
-          onSkip={() => dispatch({ type: 'robberSkip', bySeat: actingSeat })}
-          pickLabel="Steal whose card?"
-          skipLabel="Stay as I am"
-        />
+        <div className={styles.controls}>
+          <SeatChoice label="Swap your card with whose — and look at it?" seats={others} onPick={(t) => act({ type: 'robberSwap', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>
+            <button className={styles.muted} onClick={() => act({ type: 'robberSkip', bySeat: me })}>
+              Rob no one
+            </button>
+          </div>
+        </div>
       );
     case 'witch':
+      if (step.centerPeeked === null) {
+        return (
+          <div className={styles.controls}>
+            <CenterChoice label="You may look at one center card" onPick={(c) => act({ type: 'witchLook', bySeat: me, centerIndex: c })} />
+            <div className={styles.actions}>
+              <button className={styles.muted} onClick={() => act({ type: 'witchSkip', bySeat: me })}>
+                Leave the cauldron be
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
-        <WitchPanel view={view} actingSeat={actingSeat} dispatch={dispatch} observation={observation} />
+        <div className={styles.controls}>
+          {last && <ObservationReveal observation={last} />}
+          <SeatChoice
+            label={`Now give Center ${step.centerPeeked + 1} to a player (you may choose yourself)`}
+            seats={view.seats}
+            me={me}
+            onPick={(t) => act({ type: 'witchSwap', bySeat: me, centerIndex: step.centerPeeked!, targetSeat: t })}
+          />
+        </div>
       );
     case 'troublemaker':
-      return (
-        <TroublemakerPanel view={view} actingSeat={actingSeat} dispatch={dispatch} observation={observation} />
-      );
+      return <PairChoice label="Swap the cards of two other players" seats={others} confirm="Swap them" onConfirm={(a, b) => act({ type: 'troublemakerSwap', bySeat: me, a, b })} extra={pass('Make no trouble')} />;
     case 'villageIdiot':
       return (
-        <PickShiftDirection
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          onLeft={() => dispatch({ type: 'villageIdiotShift', bySeat: actingSeat, direction: 'left' })}
-          onRight={() => dispatch({ type: 'villageIdiotShift', bySeat: actingSeat, direction: 'right' })}
-          onSkip={() => dispatch({ type: 'villageIdiotSkip', bySeat: actingSeat })}
-        />
+        <div className={styles.controls}>
+          <p className={styles.prompt}>Move everyone else&apos;s card one seat…</p>
+          <div className={styles.actions}>
+            <button className={styles.primary} onClick={() => act({ type: 'villageIdiotShift', bySeat: me, direction: 'left' })}>
+              ← To the left
+            </button>
+            <button className={styles.primary} onClick={() => act({ type: 'villageIdiotShift', bySeat: me, direction: 'right' })}>
+              To the right →
+            </button>
+            <button className={styles.muted} onClick={() => act({ type: 'villageIdiotSkip', bySeat: me })}>
+              Leave them
+            </button>
+          </div>
+        </div>
       );
     case 'drunk':
-      return (
-        <PickCenterCard
-          view={view}
-          onPick={(i) => dispatch({ type: 'drunkSwap', bySeat: actingSeat, centerIndex: i })}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          label="Swap with which center slot?"
-        />
-      );
+      return <CenterChoice label="Swap your card with a center card (you won't see it)" onPick={(c) => act({ type: 'drunkSwap', bySeat: me, centerIndex: c })} />;
     case 'revealer':
       return (
-        <PickSeatWithSkip
-          view={view}
-          excludeSelf={actingSeat}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          onPick={(t) => dispatch({ type: 'revealerFlip', bySeat: actingSeat, targetSeat: t })}
-          onSkip={() => dispatch({ type: 'revealerSkip', bySeat: actingSeat })}
-          pickLabel="Flip whose card?"
-          skipLabel="Skip"
-        />
+        <div className={styles.controls}>
+          <SeatChoice label="You may flip another player's card face-up" seats={others} onPick={(t) => act({ type: 'revealerFlip', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>
+            <button className={styles.muted} onClick={() => act({ type: 'revealerSkip', bySeat: me })}>
+              Reveal nothing
+            </button>
+          </div>
+        </div>
       );
     case 'curator':
       return (
-        <PickSeat
-          view={view}
-          excludeSelf={actingSeat}
-          onPick={(t) => dispatch({ type: 'curatorGive', bySeat: actingSeat, targetSeat: t })}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          label="Give an artifact to whom?"
-        />
+        <div className={styles.controls}>
+          <SeatChoice label="Place an artifact on whose card?" seats={others} onPick={(t) => act({ type: 'curatorGive', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>{pass('Keep the relics locked away')}</div>
+        </div>
       );
-    case 'thing':
+    case 'thing': {
+      const n = view.seats.length;
+      const leftSeat = view.seats[(me - 1 + n) % n]!;
+      const rightSeat = view.seats[(me + 1) % n]!;
       return (
-        <ThingPanel view={view} actingSeat={actingSeat} dispatch={dispatch} observation={observation} />
+        <div className={styles.controls}>
+          <p className={styles.prompt}>Tap one of your neighbours on the shoulder</p>
+          <div className={styles.actions}>
+            <button className={styles.primary} onClick={() => act({ type: 'thingTap', bySeat: me, targetSeat: leftSeat.index })}>
+              ← Tap {leftSeat.name}
+            </button>
+            <button className={styles.primary} onClick={() => act({ type: 'thingTap', bySeat: me, targetSeat: rightSeat.index })}>
+              Tap {rightSeat.name} →
+            </button>
+          </div>
+        </div>
       );
+    }
     case 'bodySnatcher':
       return (
-        <PickSeat
-          view={view}
-          excludeSelf={actingSeat}
-          onPick={(t) => dispatch({ type: 'bodySnatcherSwap', bySeat: actingSeat, targetSeat: t })}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          label="Snatch whose body?"
-        />
+        <div className={styles.controls}>
+          <SeatChoice label="Take whose body (swap and look)?" seats={others} onPick={(t) => act({ type: 'bodySnatcherSwap', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>{pass('Stay in your own skin')}</div>
+        </div>
       );
     case 'windyWendy':
-      return (
-        <WindyWendyPanel view={view} actingSeat={actingSeat} dispatch={dispatch} observation={observation} />
-      );
+      return <WindyControls view={view} me={me} others={others} act={act} pass={pass('Let the air be still')} />;
     case 'defenderEr':
       return (
-        <PickSeat
-          view={view}
-          excludeSelf={null}
-          onPick={(t) => dispatch({ type: 'defenderProtect', bySeat: actingSeat, targetSeat: t })}
-          observation={observation}
-          ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-          label="Protect whom?"
-        />
-      );
-    case 'alphaWolf':
-      // Alpha wolf's step shows the werewolves they saw and then asks
-      // which player to convert. The wake observation is the first one
-      // pushed; the conversion observation appears once they pick.
-      return (
-        <AlphaWolfPanel view={view} actingSeat={actingSeat} dispatch={dispatch} />
+        <div className={styles.controls}>
+          <SeatChoice label="Watch over whom?" seats={view.seats} me={me} onPick={(t) => act({ type: 'defenderProtect', bySeat: me, targetSeat: t })} />
+          <div className={styles.actions}>{pass('Watch over no one')}</div>
+        </div>
       );
     default:
+      // Observation-only wake-ups (Minion, Mason, Insomniac, Squire, …).
       return (
-        <ObservationAndAck
-          observation={observation}
-          onAck={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-        />
+        <div className={styles.controls}>
+          {last && <ObservationReveal observation={last} />}
+          <div className={styles.actions}>{pass('I have seen — close my eyes')}</div>
+        </div>
       );
   }
 }
 
+function SeerControls({ me, others, act }: { me: SeatIndex; others: OnuwPublicSeatState[]; act: Dispatch }) {
+  const [mode, setMode] = useState<'seat' | 'center'>('seat');
+  const [picks, setPicks] = useState<number[]>([]);
+  return (
+    <div className={styles.controls}>
+      <div className={styles.tabs} role="tablist">
+        <button role="tab" aria-selected={mode === 'seat'} className={mode === 'seat' ? styles.tabOn : styles.tab} onClick={() => setMode('seat')}>
+          One player&apos;s card
+        </button>
+        <button role="tab" aria-selected={mode === 'center'} className={mode === 'center' ? styles.tabOn : styles.tab} onClick={() => setMode('center')}>
+          Two center cards
+        </button>
+      </div>
+      {mode === 'seat' ? (
+        <SeatChoice label="Look at whose card?" seats={others} onPick={(t) => act({ type: 'seerLookSeat', bySeat: me, targetSeat: t })} />
+      ) : (
+        <>
+          <CenterChoice
+            label="Pick two center cards"
+            selected={picks}
+            onPick={(c) => setPicks((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : cur.length < 2 ? [...cur, c] : [cur[1]!, c]))}
+          />
+          <div className={styles.actions}>
+            <button
+              className={styles.primary}
+              disabled={picks.length !== 2}
+              onClick={() => act({ type: 'seerLookCenter', bySeat: me, centerIndices: [picks[0]!, picks[1]!] })}
+            >
+              Look ({picks.length}/2)
+            </button>
+          </div>
+        </>
+      )}
+      <div className={styles.actions}>
+        <button className={styles.muted} onClick={() => act({ type: 'nightAck', bySeat: me })}>
+          Look at nothing
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WindyControls({ view, me, others, act, pass }: { view: OnuwPublicState; me: SeatIndex; others: OnuwPublicSeatState[]; act: Dispatch; pass: ReactNode }) {
+  const [source, setSource] = useState<SeatIndex | null>(null);
+  if (source === null) {
+    return (
+      <div className={styles.controls}>
+        <SeatChoice label="Blow whose card along?" seats={others} onPick={setSource} />
+        <div className={styles.actions}>{pass}</div>
+      </div>
+    );
+  }
+  return (
+    <div className={styles.controls}>
+      <p className={styles.prompt}>Blow {view.seats[source]!.name}&apos;s card…</p>
+      <div className={styles.actions}>
+        <button className={styles.primary} onClick={() => act({ type: 'windyWendyShift', bySeat: me, sourceSeat: source, direction: 'left' })}>
+          ← Left
+        </button>
+        <button className={styles.primary} onClick={() => act({ type: 'windyWendyShift', bySeat: me, sourceSeat: source, direction: 'right' })}>
+          Right →
+        </button>
+        <button className={styles.muted} onClick={() => setSource(null)}>
+          Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
-// Small action panels
+// Pickers
 // ============================================================================
 
-function ObservationBox({ observation }: { observation: OnuwPublicState['yourObservations'][number] | null }) {
-  if (!observation) return null;
+function SeatChoice({
+  label,
+  seats,
+  me,
+  onPick,
+  selected = [],
+}: {
+  label: string;
+  seats: OnuwPublicSeatState[];
+  me?: SeatIndex;
+  onPick: (seat: SeatIndex) => void;
+  selected?: SeatIndex[];
+}) {
   return (
-    <div className={styles.observation}>
+    <div className={styles.choice}>
+      <p className={styles.prompt}>{label}</p>
+      <div className={`${styles.seatGrid} sd-stagger`}>
+        {seats.map((s, i) => (
+          <button
+            key={s.index}
+            className={`${styles.seatButton} ${selected.includes(s.index) ? styles.selected : ''}`}
+            style={{ '--i': i } as CSSProperties}
+            onClick={() => onPick(s.index)}
+            aria-pressed={selected.includes(s.index)}
+          >
+            <Avatar name={s.name} />
+            <span className={styles.seatButtonName}>
+              {s.name}
+              {s.index === me && <small> (you)</small>}
+            </span>
+          </button>
+        ))}
+        {seats.length === 0 && <p className={styles.dim}>No one to choose.</p>}
+      </div>
+    </div>
+  );
+}
+
+function PairChoice({
+  label,
+  seats,
+  confirm,
+  onConfirm,
+  extra,
+}: {
+  label: string;
+  seats: OnuwPublicSeatState[];
+  confirm: string;
+  onConfirm: (a: SeatIndex, b: SeatIndex) => void;
+  extra?: ReactNode;
+}) {
+  const [picks, setPicks] = useState<SeatIndex[]>([]);
+  return (
+    <div className={styles.controls}>
+      <SeatChoice
+        label={label}
+        seats={seats}
+        selected={picks}
+        onPick={(s) => setPicks((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : cur.length < 2 ? [...cur, s] : [cur[1]!, s]))}
+      />
+      <div className={styles.actions}>
+        <button className={styles.primary} disabled={picks.length !== 2} onClick={() => onConfirm(picks[0]!, picks[1]!)}>
+          {confirm} ({picks.length}/2)
+        </button>
+        {extra}
+      </div>
+    </div>
+  );
+}
+
+function CenterChoice({ label, onPick, selected = [] }: { label: string; onPick: (c: number) => void; selected?: number[] }) {
+  return (
+    <div className={styles.choice}>
+      <p className={styles.prompt}>{label}</p>
+      <div className={styles.centerRow}>
+        {[0, 1, 2].map((c) => (
+          <button
+            key={c}
+            className={`${styles.cardButton} ${selected.includes(c) ? styles.selected : ''}`}
+            onClick={() => onPick(c)}
+            aria-pressed={selected.includes(c)}
+            aria-label={`Center card ${c + 1}`}
+          >
+            <CardBack size={76} label={`Center card ${c + 1}`} />
+            <span className={styles.cardCaption}>Center {c + 1}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ name, size = 34 }: { name: string; size?: number }) {
+  return (
+    <span className={styles.avatar} style={{ width: size, height: size, fontSize: size * 0.48 }} aria-hidden>
+      {name.trim().slice(0, 1).toUpperCase() || '?'}
+    </span>
+  );
+}
+
+// ============================================================================
+// Observations / notes
+// ============================================================================
+
+function Callout({ text }: { text: string }) {
+  return <div className={`${styles.callout} sd-rise-in`}>{text}</div>;
+}
+
+// A night result: the sentence plus any card it revealed, flipped over.
+function ObservationReveal({ observation, delay = 0 }: { observation: OnuwNightObservation; delay?: number }) {
+  const cards = observation.entries.filter((e) => e.role);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setShown(true), 260 + delay);
+    return () => clearTimeout(t);
+  }, [delay]);
+  return (
+    <div className={`${styles.observation} sd-rise-in`} style={{ animationDelay: `${delay}ms` }}>
+      {cards.length > 0 && (
+        <div className={styles.observationCards}>
+          {cards.map((e, i) => (
+            <figure key={i} className={styles.obsCard}>
+              <FlipCard
+                width={92}
+                height={128}
+                revealed={shown}
+                back={<CardBack size={92} />}
+                front={<RoleCard role={e.role!} size={92} />}
+              />
+              <figcaption>{e.label}</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
       <p className={styles.observationText}>{observation.text}</p>
     </div>
   );
 }
 
-function ObservationAndAck({
-  observation,
-  onAck,
+function NotesList({
+  title,
+  observations,
+  highlightFrom,
 }: {
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  onAck: () => void;
+  title: string;
+  observations: OnuwNightObservation[];
+  highlightFrom?: number;
 }) {
   return (
-    <>
-      <ObservationBox observation={observation} />
-      <div className={styles.actions}>
-        <button className={styles.primary} onClick={onAck}>
-          OK, I&apos;ve seen it
-        </button>
-      </div>
-    </>
+    <div className={styles.notes}>
+      <p className={styles.eyebrow}>{title}</p>
+      <ol className={styles.notesList}>
+        {observations.map((o, i) => (
+          <li key={i} className={highlightFrom !== undefined && i >= highlightFrom ? styles.noteNew : undefined}>
+            {o.entries
+              .filter((e) => e.role)
+              .map((e, k) => (
+                <RoleMedallion key={k} role={e.role!} size={26} className={styles.noteIcon} />
+              ))}
+            <span>{o.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
-function PickSeat({
-  view,
-  excludeSelf,
-  onPick,
-  label,
-  observation,
-  ackWith,
-}: {
-  view: OnuwPublicState;
-  excludeSelf: number | null;
-  onPick: (seat: number) => void;
-  label: string;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  ackWith: () => void;
-}) {
-  const acted = observation !== null;
+function YourCardLine({ view }: { view: OnuwPublicState }) {
+  if (!view.yourDealtRole) return null;
   return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        {label}
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => {
-          if (s.index === excludeSelf) return null;
-          return (
-            <SeatPick
-              key={s.index}
-              seat={s}
-              isLocal={s.index === view.yourSeat}
-              onClick={acted ? undefined : () => onPick(s.index)}
-            />
-          );
-        })}
-      </div>
-      <ObservationBox observation={observation} />
-      {acted && (
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={ackWith}>
-            Done
-          </button>
-        </div>
+    <div className={styles.cardLine}>
+      <RoleMedallion role={view.yourDealtRole} size={40} />
+      <span>
+        You were dealt the <strong>{ROLES[view.yourDealtRole].name}</strong>.
+        <br />
+        <span className={styles.dim}>Your card may have changed in the night.</span>
+      </span>
+    </div>
+  );
+}
+
+function NotesScreen({ view, onDone }: { view: OnuwPublicState; onDone: () => void }) {
+  return (
+    <div className={`${styles.panel} ${styles.learned}`}>
+      <p className={styles.eyebrow}>{view.seats[view.yourSeat!]!.name} — only for your eyes</p>
+      <YourCardLine view={view} />
+      {view.yourObservations.length > 0 ? (
+        <NotesList title="What you know" observations={view.yourObservations} />
+      ) : (
+        <p className={styles.dim}>You learned nothing in the night.</p>
       )}
+      <button className={styles.primary} onClick={onDone}>
+        Done — hide my notes
+      </button>
     </div>
   );
 }
 
-function PickSeatWithSkip({
+// ============================================================================
+// Table (seats around the village square + center cards)
+// ============================================================================
+
+type TableMode = 'deal' | 'day' | 'reveal';
+
+function seatPositions(n: number, bottom: number): { x: number; y: number }[] {
+  // Ellipse in a 160×100 box; `bottom` sits at the front of the table.
+  return Array.from({ length: n }, (_, i) => {
+    const k = (i - bottom + n) % n;
+    const t = Math.PI / 2 + (k / n) * Math.PI * 2;
+    return { x: 80 + Math.cos(t) * 64, y: 50 + Math.sin(t) * 36 };
+  });
+}
+
+function Table({
   view,
-  excludeSelf,
-  observation,
-  ackWith,
-  onPick,
-  onSkip,
-  pickLabel,
-  skipLabel,
+  mode,
+  revealSeats = 0,
+  revealCenter = 0,
+  showVotes = false,
+  showDeaths = false,
 }: {
   view: OnuwPublicState;
-  excludeSelf: number | null;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  ackWith: () => void;
-  onPick: (seat: number) => void;
-  onSkip: () => void;
-  pickLabel: string;
-  skipLabel: string;
+  mode: TableMode;
+  revealSeats?: number;
+  revealCenter?: number;
+  showVotes?: boolean;
+  showDeaths?: boolean;
 }) {
-  const acted = observation !== null;
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        {pickLabel}
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => {
-          if (s.index === excludeSelf) return null;
-          return (
-            <SeatPick
-              key={s.index}
-              seat={s}
-              isLocal={s.index === view.yourSeat}
-              onClick={acted ? undefined : () => onPick(s.index)}
-            />
-          );
-        })}
-      </div>
-      <ObservationBox observation={observation} />
-      <div className={styles.actions}>
-        {!acted && (
-          <button className={styles.muted} onClick={onSkip}>
-            {skipLabel}
-          </button>
-        )}
-        {acted && (
-          <button className={styles.primary} onClick={ackWith}>
-            Done
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PickCenterCard({
-  view,
-  onPick,
-  observation,
-  ackWith,
-  label,
-}: {
-  view: OnuwPublicState;
-  onPick: (centerIndex: number) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  ackWith: () => void;
-  label: string;
-}) {
-  const acted = observation !== null;
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        {label}
-      </p>
-      <div className={styles.centerCardRow} style={{ justifyContent: 'center' }}>
-        {view.centerCards.map((c) => (
-          <button
-            key={c.index}
-            className={`${styles.centerCard} ${styles.selectable}`}
-            disabled={acted}
-            onClick={() => onPick(c.index)}
-          >
-            <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-            <div className={styles.centerBack}>?</div>
-          </button>
-        ))}
-      </div>
-      <ObservationBox observation={observation} />
-      {acted && (
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={ackWith}>
-            Done
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PickShiftDirection({
-  observation,
-  ackWith,
-  onLeft,
-  onRight,
-  onSkip,
-}: {
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  ackWith: () => void;
-  onLeft: () => void;
-  onRight: () => void;
-  onSkip: () => void;
-}) {
-  const acted = observation !== null;
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Shift every other player&apos;s card one slot…
-      </p>
-      <div className={styles.actions}>
-        {!acted && (
-          <>
-            <button className={styles.primary} onClick={onLeft}>
-              ← Left
-            </button>
-            <button className={styles.primary} onClick={onRight}>
-              Right →
-            </button>
-            <button className={styles.muted} onClick={onSkip}>
-              Skip
-            </button>
-          </>
-        )}
-        {acted && (
-          <button className={styles.primary} onClick={ackWith}>
-            Done
-          </button>
-        )}
-      </div>
-      <ObservationBox observation={observation} />
-    </div>
-  );
-}
-
-function SeerPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  const [mode, setMode] = useState<'choose' | 'seat' | 'center'>('choose');
-  const [centerPicks, setCenterPicks] = useState<number[]>([]);
-  const acted = observation !== null;
-  if (acted) {
-    return (
-      <>
-        <ObservationBox observation={observation} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  if (mode === 'choose') {
-    return (
-      <div className={styles.actions}>
-        <button className={styles.primary} onClick={() => setMode('seat')}>
-          Look at one player&apos;s card
-        </button>
-        <button className={styles.primary} onClick={() => setMode('center')}>
-          Look at two center cards
-        </button>
-      </div>
-    );
-  }
-  if (mode === 'seat') {
-    return (
-      <PickSeat
-        view={view}
-        excludeSelf={actingSeat}
-        onPick={(t) => dispatch({ type: 'seerLookSeat', bySeat: actingSeat, targetSeat: t })}
-        label="Look at whose card?"
-        observation={observation}
-        ackWith={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}
-      />
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Pick two center cards (any order)
-      </p>
-      <div className={styles.centerCardRow} style={{ justifyContent: 'center' }}>
-        {view.centerCards.map((c) => {
-          const selected = centerPicks.includes(c.index);
-          return (
-            <button
-              key={c.index}
-              className={`${styles.centerCard} ${styles.selectable} ${selected ? styles.selected : ''}`}
-              onClick={() =>
-                setCenterPicks((cur) =>
-                  cur.includes(c.index)
-                    ? cur.filter((x) => x !== c.index)
-                    : cur.length < 2
-                      ? [...cur, c.index]
-                      : cur,
-                )
-              }
-            >
-              <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-              <div className={styles.centerBack}>?</div>
-            </button>
-          );
-        })}
-      </div>
-      <div className={styles.actions}>
-        <button
-          className={styles.primary}
-          disabled={centerPicks.length !== 2}
-          onClick={() =>
-            dispatch({
-              type: 'seerLookCenter',
-              bySeat: actingSeat,
-              centerIndices: [centerPicks[0]!, centerPicks[1]!],
-            })
-          }
-        >
-          Look ({centerPicks.length}/2)
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ParanormalPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  // PI may look at 0, 1 or 2 players. Each lookup is a separate action; the
-  // host advances when the seat acks or after 2 looks. We render the latest
-  // observation and offer "look another" / "stop" until they ack.
-  const obsCount = view.yourObservations.length;
-  const stopped = obsCount === 0;
-  // Use the most recent observation.
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Investigate up to 2 players, one at a time. Stop early if you join a team.
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => (
-          <SeatPick
-            key={s.index}
-            seat={s}
-            isLocal={s.index === view.yourSeat}
-            onClick={
-              s.index === actingSeat
-                ? undefined
-                : () => dispatch({ type: 'paranormalLook', bySeat: actingSeat, targetSeat: s.index })
-            }
-          />
-        ))}
-      </div>
-      <ObservationBox observation={observation} />
-      <div className={styles.actions}>
-        <button
-          className={styles.muted}
-          onClick={() => dispatch({ type: 'paranormalStop', bySeat: actingSeat })}
-        >
-          {stopped ? 'Skip entirely' : 'Stop investigating'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function WitchPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  const [centerIndex, setCenterIndex] = useState<number | null>(null);
-  const acted = observation !== null;
-  if (acted) {
-    return (
-      <>
-        <ObservationBox observation={observation} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  if (centerIndex === null) {
-    return (
-      <div style={{ display: 'grid', gap: 12 }}>
-        <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-          Witch: peek a center card.
-        </p>
-        <div className={styles.centerCardRow} style={{ justifyContent: 'center' }}>
-          {view.centerCards.map((c) => (
-            <button
-              key={c.index}
-              className={`${styles.centerCard} ${styles.selectable}`}
-              onClick={() => setCenterIndex(c.index)}
-            >
-              <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-              <div className={styles.centerBack}>?</div>
-            </button>
-          ))}
-        </div>
-        <div className={styles.actions}>
-          <button className={styles.muted} onClick={() => dispatch({ type: 'witchSkip', bySeat: actingSeat })}>
-            Skip entirely
-          </button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Place Center {centerIndex + 1} face-down on which player? (May choose self.)
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => (
-          <SeatPick
-            key={s.index}
-            seat={s}
-            isLocal={s.index === view.yourSeat}
-            onClick={() => dispatch({ type: 'witchSwap', bySeat: actingSeat, centerIndex, targetSeat: s.index })}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function TroublemakerPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  const [picks, setPicks] = useState<number[]>([]);
-  const acted = observation !== null;
-  if (acted) {
-    return (
-      <>
-        <ObservationBox observation={observation} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Pick two OTHER players to swap.
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => {
-          if (s.index === actingSeat) return null;
-          const selected = picks.includes(s.index);
-          return (
-            <SeatPick
-              key={s.index}
-              seat={s}
-              isLocal={s.index === view.yourSeat}
-              selected={selected}
-              onClick={() =>
-                setPicks((cur) =>
-                  cur.includes(s.index)
-                    ? cur.filter((x) => x !== s.index)
-                    : cur.length < 2
-                      ? [...cur, s.index]
-                      : cur,
-                )
-              }
-            />
-          );
-        })}
-      </div>
-      <div className={styles.actions}>
-        <button
-          className={styles.primary}
-          disabled={picks.length !== 2}
-          onClick={() =>
-            dispatch({ type: 'troublemakerSwap', bySeat: actingSeat, a: picks[0]!, b: picks[1]! })
-          }
-        >
-          Swap ({picks.length}/2)
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ThingPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  const acted = observation !== null;
   const n = view.seats.length;
-  const left = (actingSeat - 1 + n) % n;
-  const right = (actingSeat + 1) % n;
-  if (acted) {
-    return (
-      <>
-        <ObservationBox observation={observation} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
+  const pos = seatPositions(n, view.yourSeat ?? 0);
+  const cardW = n > 7 ? 56 : 64;
+  const cardH = Math.round((cardW * 88) / 63);
+  const order = useMemo(() => {
+    // Flip order for the reveal: round the table starting at the front.
+    const start = view.yourSeat ?? 0;
+    return Array.from({ length: n }, (_, k) => (start + k) % n);
+  }, [n, view.yourSeat]);
   return (
-    <div className={styles.actions}>
-      <button
-        className={styles.primary}
-        onClick={() => dispatch({ type: 'thingTap', bySeat: actingSeat, targetSeat: left })}
-      >
-        Tap {view.seats[left]!.name} (left)
-      </button>
-      <button
-        className={styles.primary}
-        onClick={() => dispatch({ type: 'thingTap', bySeat: actingSeat, targetSeat: right })}
-      >
-        Tap {view.seats[right]!.name} (right)
-      </button>
-    </div>
-  );
-}
-
-function WindyWendyPanel({
-  view,
-  actingSeat,
-  dispatch,
-  observation,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-}) {
-  const [source, setSource] = useState<number | null>(null);
-  const acted = observation !== null;
-  if (acted) {
-    return (
-      <>
-        <ObservationBox observation={observation} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  if (source === null) {
-    return (
-      <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-        <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-          Pick a source card.
-        </p>
-        <div className={styles.seatGrid}>
-          {view.seats.map((s) => {
-            if (s.index === actingSeat) return null;
-            return (
-              <SeatPick
-                key={s.index}
-                seat={s}
-                isLocal={s.index === view.yourSeat}
-                onClick={() => setSource(s.index)}
-              />
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Shift {view.seats[source]!.name}&apos;s card …
-      </p>
-      <div className={styles.actions}>
-        <button
-          className={styles.primary}
-          onClick={() => dispatch({ type: 'windyWendyShift', bySeat: actingSeat, sourceSeat: source, direction: 'left' })}
-        >
-          ← Left
-        </button>
-        <button
-          className={styles.primary}
-          onClick={() => dispatch({ type: 'windyWendyShift', bySeat: actingSeat, sourceSeat: source, direction: 'right' })}
-        >
-          Right →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AlphaWolfPanel({
-  view,
-  actingSeat,
-  dispatch,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-}) {
-  const wakeObs = view.yourObservations[0] ?? null;
-  const convertObs = view.yourObservations[1] ?? null;
-  const converted = convertObs !== null;
-  if (converted) {
-    return (
-      <>
-        {wakeObs && <ObservationBox observation={wakeObs} />}
-        <ObservationBox observation={convertObs} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      {wakeObs && <ObservationBox observation={wakeObs} />}
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Alpha Wolf: pick a non-werewolf to convert into a werewolf.
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => {
-          if (s.index === actingSeat) return null;
+    <div className={styles.table}>
+      <div className={styles.tableTop} aria-hidden />
+      {showVotes && <VoteArrows view={view} pos={pos} />}
+      <div className={styles.tableCenter}>
+        {view.centerCards.map((c, i) => {
+          const face = c.revealedCard ?? null;
           return (
-            <SeatPick
-              key={s.index}
-              seat={s}
-              isLocal={s.index === view.yourSeat}
-              onClick={() => dispatch({ type: 'alphaWolfConvert', bySeat: actingSeat, targetSeat: s.index })}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function MysticWolfPanel({
-  view,
-  actingSeat,
-  dispatch,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  dispatch: (a: OnuwAction) => void;
-}) {
-  // The auto-observation (werewolf wake) is already in observations[0].
-  // After the look-at-one-player action, observations[1] will hold the peek.
-  const wakeObs = view.yourObservations[0] ?? null;
-  const peekObs = view.yourObservations[1] ?? null;
-  const peeked = peekObs !== null;
-  if (peeked) {
-    return (
-      <>
-        {wakeObs && <ObservationBox observation={wakeObs} />}
-        <ObservationBox observation={peekObs} />
-        <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-            Done
-          </button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <div style={{ display: 'grid', gap: 12, width: '100%' }}>
-      {wakeObs && <ObservationBox observation={wakeObs} />}
-      <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-        Mystic Wolf: look at one other player&apos;s card.
-      </p>
-      <div className={styles.seatGrid}>
-        {view.seats.map((s) => {
-          if (s.index === actingSeat) return null;
-          return (
-            <SeatPick
-              key={s.index}
-              seat={s}
-              isLocal={s.index === view.yourSeat}
-              onClick={() => dispatch({ type: 'mysticWolfLook', bySeat: actingSeat, targetSeat: s.index })}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WerewolfWakePanel({
-  view,
-  actingSeat,
-  observation,
-  isLoneWolf,
-  dispatch,
-  role,
-}: {
-  view: OnuwPublicState;
-  actingSeat: number;
-  observation: OnuwPublicState['yourObservations'][number] | null;
-  isLoneWolf: boolean;
-  dispatch: (a: OnuwAction) => void;
-  role: OnuwRoleId;
-}) {
-  // First show the wake observation (already auto-populated by host).
-  // For mystic wolf and alpha wolf, the wake observation is the same;
-  // the role-specific extra action runs as its own night step.
-  // For plain 'werewolf' if isLoneWolf, offer center peek before ack.
-  const [peekChoice, setPeekChoice] = useState<number | null>(null);
-  const hasPeeked = view.yourObservations.length > 1;
-  if (isLoneWolf && !hasPeeked && peekChoice === null) {
-    return (
-      <div style={{ display: 'grid', gap: 12 }}>
-        <ObservationBox observation={observation} />
-        <p className={styles.subtitle} style={{ textAlign: 'center' }}>
-          You are the only werewolf awake. Optionally peek one center card.
-        </p>
-        <div className={styles.centerCardRow} style={{ justifyContent: 'center' }}>
-          {view.centerCards.map((c) => (
-            <button
+            <FlipCard
               key={c.index}
-              className={`${styles.centerCard} ${styles.selectable}`}
-              onClick={() => {
-                dispatch({ type: 'loneWolfPeekCenter', bySeat: actingSeat, centerIndex: c.index });
-                setPeekChoice(c.index);
-              }}
-            >
-              <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-              <div className={styles.centerBack}>?</div>
-            </button>
-          ))}
-        </div>
-        <div className={styles.actions}>
-          <button
-            className={styles.muted}
-            onClick={() => dispatch({ type: 'loneWolfSkip', bySeat: actingSeat })}
-          >
-            Skip peek
-          </button>
-        </div>
+              width={cardW}
+              height={cardH}
+              dealDelayMs={mode === 'deal' ? (n + i) * 110 : null}
+              revealed={!!face && i < revealCenter}
+              back={<CardBack size={cardW} label={`Center card ${i + 1}`} />}
+              front={face ? <RoleCard role={face} size={cardW} /> : <CardBack size={cardW} />}
+            />
+          );
+        })}
       </div>
-    );
-  }
-  return (
-    <>
-      {view.yourObservations.map((o, i) => (
-        <ObservationBox key={i} observation={o} />
-      ))}
-      <div className={styles.actions}>
-        <button className={styles.primary} onClick={() => dispatch({ type: 'nightAck', bySeat: actingSeat })}>
-          Done (as {ROLES[role].name})
-        </button>
-      </div>
-    </>
-  );
-}
-
-function SeatPick({
-  seat,
-  isLocal,
-  selected,
-  onClick,
-}: {
-  seat: OnuwPublicSeatState;
-  isLocal: boolean;
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  const cls = [
-    styles.seat,
-    onClick && styles.selectable,
-    selected && styles.selected,
-    seat.killed && styles.killed,
-    isLocal && styles.you,
-  ]
-    .filter(Boolean)
-    .join(' ');
-  return (
-    <div className={cls} onClick={onClick}>
-      <div className={styles.seatAvatar}>{seat.name.slice(0, 1).toUpperCase()}</div>
-      <div>
-        <div className={styles.seatName}>
-          {seat.name}
-          {isLocal && (
-            <span style={{ color: '#60a5fa', fontSize: 11, marginLeft: 6 }}>(you)</span>
-          )}
-        </div>
-        <div className={styles.seatMeta}>Seat {seat.index + 1}</div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// Day phase — discussion timer + cheatsheet of roles in play
-// ============================================================================
-
-function DayPhase({
-  view,
-  dispatch,
-}: {
-  view: OnuwPublicState;
-  dispatch: (a: OnuwAction) => void;
-}) {
-  return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0 }}>Discussion</h3>
-      <p className={styles.subtitle}>
-        Talk it out, then vote. Center cards stay face-down (in their original slot order)
-        until everyone has voted.
-      </p>
-
-      <div className={styles.centerCardRow} style={{ marginTop: 12 }}>
-        {view.centerCards.map((c) => (
-          <div key={c.index} className={styles.centerCard}>
-            <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-            <div className={styles.centerBack}>?</div>
-          </div>
-        ))}
-      </div>
-
-      <h4 style={{ marginTop: 18, marginBottom: 4 }}>Roles &amp; night order in play</h4>
-      <p className={styles.subtitle}>
-        These are the cards dealt this game. Order is the official night wake-order.
-      </p>
-      <Cheatsheet view={view} />
-
-      <div className={styles.actions} style={{ marginTop: 18, justifyContent: 'flex-end' }}>
-        <button className={styles.primary} onClick={() => dispatch({ type: 'startVote' })}>
-          Start vote →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Cheatsheet({ view }: { view: OnuwPublicState }) {
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const r of view.rolePool) c[r] = (c[r] ?? 0) + 1;
-    return c;
-  }, [view.rolePool]);
-  const uniqueRoles = useMemo(() => {
-    const set = new Set<OnuwRoleId>();
-    for (const r of view.rolePool) set.add(r);
-    return rolesSortedByWakeOrder([...set]);
-  }, [view.rolePool]);
-  let nightCounter = 0;
-  return (
-    <div className={styles.cheatsheet}>
-      {uniqueRoles.map((r) => {
-        const spec = ROLES[r];
-        const hasNight = spec.wakeOrder < 1000;
-        if (hasNight) nightCounter++;
+      {view.seats.map((s) => {
+        const p = pos[s.index]!;
+        const face = mode === 'reveal' ? s.revealedCard : s.flippedCard;
+        const isRevealed = !!face && (mode !== 'reveal' || order.indexOf(s.index) < revealSeats);
+        const dead = showDeaths && s.killed;
+        const role = s.revealedRole;
         return (
-          <div key={r} className={styles.cheatRow}>
-            <div className={styles.cheatStep}>{hasNight ? nightCounter : '—'}</div>
-            <RoleArt role={r} size={36} />
-            <div>
-              <div className={styles.cheatName}>
-                <TeamBadge role={r} /> {spec.name}
-              </div>
-              <div className={styles.cheatDesc}>{spec.description}</div>
+          <div
+            key={s.index}
+            className={`${styles.seat} ${s.index === view.yourSeat ? styles.seatYou : ''} ${dead ? styles.seatDead : ''}`}
+            style={{ left: `${(p.x / 160) * 100}%`, top: `${p.y}%` }}
+          >
+            <div className={styles.seatCard}>
+              <FlipCard
+                width={cardW}
+                height={cardH}
+                dealDelayMs={mode === 'deal' ? s.index * 110 : null}
+                revealed={isRevealed}
+                back={<CardBack size={cardW} label={`${s.name}'s card`} />}
+                front={
+                  face ? (
+                    <RoleCard
+                      role={face}
+                      size={cardW}
+                      subtitle={mode === 'reveal' && role && role !== face ? `AS ${ROLES[role].name.toUpperCase()}` : undefined}
+                    />
+                  ) : (
+                    <CardBack size={cardW} />
+                  )
+                }
+              />
+              {dead && <span className={styles.slain}>Slain</span>}
+              {showVotes && s.votesReceived > 0 && <span className={styles.tally}>{s.votesReceived}</span>}
             </div>
-            <div className={styles.cheatCount}>×{counts[r]}</div>
+            <div className={styles.namePlate}>
+              <span className={styles.namePlateName}>{s.name}</span>
+              <span className={styles.namePlateStatus}>
+                {view.phase === 'setup' && (s.hasAckedSetup ? '✓ ready' : '…')}
+                {view.phase === 'voting' && (s.hasVoted ? '✓ voted' : '…')}
+                {mode !== 'reveal' && s.flippedCard && 'face-up'}
+                {mode === 'reveal' && s.won && <span className={styles.wonMark}>★ won</span>}
+              </span>
+            </div>
           </div>
         );
       })}
@@ -1355,186 +1148,355 @@ function Cheatsheet({ view }: { view: OnuwPublicState }) {
   );
 }
 
+function VoteArrows({ view, pos }: { view: OnuwPublicState; pos: { x: number; y: number }[] }) {
+  const id = useSvgIds();
+  const arrows = view.seats
+    .filter((s) => s.voteTarget !== null)
+    .map((s, k) => {
+      const a = pos[s.index]!;
+      const b = pos[s.voteTarget!]!;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const sx = a.x + ux * 9;
+      const sy = a.y + uy * 9;
+      const ex = b.x - ux * 10;
+      const ey = b.y - uy * 10;
+      // Bow the arrow so reciprocal votes don't overlap.
+      const cx = (sx + ex) / 2 - uy * 8;
+      const cy = (sy + ey) / 2 + ux * 8;
+      return { key: s.index, d: `M${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`, k };
+    });
+  return (
+    <svg className={styles.arrows} viewBox="0 0 160 100" aria-hidden>
+      <defs>
+        <marker id={id('head')} viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 Z" fill="#e8743b" />
+        </marker>
+      </defs>
+      {arrows.map((a) => (
+        <path
+          key={a.key}
+          d={a.d}
+          pathLength={1}
+          className={styles.arrow}
+          style={{ animationDelay: `${a.k * 220}ms` }}
+          markerEnd={id.url('head')}
+        />
+      ))}
+    </svg>
+  );
+}
+
 // ============================================================================
-// Voting phase
+// Day
 // ============================================================================
 
-function VotingPhase({
+function DayScreen({
   view,
-  localSeat,
   dispatch,
-  rotateSeat,
+  isHost,
+  startedAt,
+  showNotes = false,
+  peekSeats,
+  onPeek,
 }: {
   view: OnuwPublicState;
-  localSeat: number | null;
-  dispatch: (a: OnuwAction) => void;
-  rotateSeat: (s: number) => void;
+  dispatch: Dispatch;
+  isHost: boolean;
+  startedAt: number | null;
+  showNotes?: boolean;
+  peekSeats?: SeatIndex[];
+  onPeek?: (seat: SeatIndex) => void;
 }) {
-  const next = view.seats.find((s) => !s.hasVoted);
-  const [pick, setPick] = useState<number | null>(null);
-  const [covered, setCovered] = useState(true);
-
-  if (!next) {
-    return (
-      <div className={styles.panel}>
-        <p>All votes are in. Resolving…</p>
-      </div>
-    );
-  }
-  const needsRotate = localSeat !== next.index;
-  if (needsRotate || covered) {
-    return (
-      <div className={styles.coverScreen}>
-        <div className={styles.coverInner}>
-          <h2>Private vote</h2>
-          <p>It&apos;s {next.name}&apos;s turn to vote.</p>
-          <p style={{ fontSize: 12, color: '#94a3b8' }}>Everyone else, look away.</p>
-          <button
-            className={styles.primary}
-            onClick={() => {
-              if (needsRotate) rotateSeat(next.index);
-              setCovered(false);
-              setPick(null);
-            }}
-          >
-            I am {next.name} — show vote screen
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const flipped = view.seats.filter((s) => s.flippedCard);
   return (
-    <div className={styles.panel}>
-      <h3 style={{ marginTop: 0 }}>{next.name}, who do you suspect is a werewolf?</h3>
-      <p className={styles.subtitle}>
-        Tap a player to mark them, then confirm. Your vote stays private until tallied.
-      </p>
-      <h4 style={{ marginTop: 18, marginBottom: 4 }}>Cheatsheet — roles &amp; night order</h4>
-      <Cheatsheet view={view} />
-      <div className={styles.seatGrid} style={{ marginTop: 16 }}>
-        {view.seats.map((s) => (
-          <SeatPick
-            key={s.index}
-            seat={s}
-            isLocal={s.index === next.index}
-            selected={pick === s.index}
-            onClick={() => setPick(s.index)}
-          />
-        ))}
-      </div>
-      <div className={styles.actions} style={{ marginTop: 16 }}>
-        <button
-          className={styles.primary}
-          disabled={pick === null}
-          onClick={() => {
-            if (pick === null) return;
-            dispatch({ type: 'castVote', bySeat: next.index, targetSeat: pick });
-            setCovered(true);
-            setPick(null);
-          }}
-        >
-          Confirm vote
+    <div className={styles.dayGrid}>
+      <section className={styles.stack}>
+        <Table view={view} mode="day" />
+        {flipped.length > 0 && (
+          <p className={`${styles.callout} sd-rise-in`}>
+            The Revealer left {flipped.map((s) => `${s.name}'s card (the ${ROLES[s.flippedCard!].name})`).join(', ')} face-up.
+          </p>
+        )}
+      </section>
+      <aside className={styles.aside}>
+        <div className={styles.panel}>
+          <h3 className={styles.folkHeading}>Discuss — who is the werewolf?</h3>
+          <DayTimer seconds={view.dayDurationSec} startedAt={startedAt} />
+          {isHost ? (
+            <button className={styles.primary} onClick={() => dispatch({ type: 'startVote' })}>
+              Call the vote
+            </button>
+          ) : (
+            <p className={styles.dim}>The host will call the vote.</p>
+          )}
+        </div>
+        {showNotes && (
+          <div className={styles.panel}>
+            <YourCardLine view={view} />
+            {view.yourObservations.length > 0 ? (
+              <NotesList title="Your night" observations={view.yourObservations} />
+            ) : (
+              <p className={styles.dim}>You learned nothing in the night.</p>
+            )}
+          </div>
+        )}
+        {peekSeats && onPeek && (
+          <div className={styles.panel}>
+            <p className={styles.eyebrow}>Forgot what you saw?</p>
+            <div className={styles.peekRow}>
+              {peekSeats.map((i) => (
+                <button key={i} className={styles.muted} onClick={() => onPeek(i)}>
+                  {view.seats[i]!.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <Cheatsheet rolePool={view.rolePool} />
+      </aside>
+    </div>
+  );
+}
+
+function DayTimer({ seconds, startedAt }: { seconds: number; startedAt: number | null }) {
+  const remaining = () =>
+    Math.max(0, Math.ceil(seconds - (startedAt === null ? 0 : (Date.now() - startedAt) / 1000)));
+  const [left, setLeft] = useState(remaining);
+  useEffect(() => {
+    setLeft(remaining());
+    const t = setInterval(() => setLeft(remaining()), 1000);
+    return () => clearInterval(t);
+  }, [seconds, startedAt]);
+  const mm = Math.floor(left / 60);
+  const ss = String(left % 60).padStart(2, '0');
+  const pct = seconds > 0 ? left / seconds : 0;
+  return (
+    <div className={styles.timer} aria-live="off">
+      <div className={styles.timerBar} style={{ transform: `scaleX(${pct})` }} />
+      <span className={styles.timerText}>{left > 0 ? `${mm}:${ss}` : "Time's up — vote!"}</span>
+    </div>
+  );
+}
+
+function Cheatsheet({ rolePool }: { rolePool: OnuwRoleId[] }) {
+  const counts = useMemo(() => {
+    const c: Partial<Record<OnuwRoleId, number>> = {};
+    for (const r of rolePool) c[r] = (c[r] ?? 0) + 1;
+    return c;
+  }, [rolePool]);
+  const unique = useMemo(() => rolesSortedByWakeOrder([...new Set(rolePool)]), [rolePool]);
+  let step = 0;
+  return (
+    <details className={styles.cheatsheet} open>
+      <summary className={styles.eyebrow}>Cards in play · night order</summary>
+      <ol className={styles.cheatList}>
+        {unique.map((r) => {
+          const wakes = wakesAtNight(r);
+          if (wakes) step++;
+          return (
+            <li key={r} className={styles.cheatRow}>
+              <span className={styles.cheatStep}>{wakes ? step : '—'}</span>
+              <RoleMedallion role={r} size={34} />
+              <span>
+                <span className={styles.cheatName}>
+                  <TeamBadge role={r} /> {ROLES[r].name}
+                  {counts[r]! > 1 && <small> ×{counts[r]}</small>}
+                </span>
+                <span className={styles.cheatDesc}>{ROLES[r].description}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
+}
+
+// ============================================================================
+// Voting
+// ============================================================================
+
+function Ballot({ view, onCast }: { view: OnuwPublicState; onCast: (target: SeatIndex) => void }) {
+  const [pick, setPick] = useState<SeatIndex | null>(null);
+  const me = view.yourSeat!;
+  const others = view.seats.filter((s) => s.index !== me);
+  return (
+    <div className={`${styles.panel} ${styles.ballot}`}>
+      <p className={styles.eyebrow}>{view.seats[me]!.name}&apos;s secret ballot</p>
+      <h2 className={styles.folkHeading}>Point at the werewolf</h2>
+      <SeatChoice label="Who should die?" seats={others} selected={pick === null ? [] : [pick]} onPick={setPick} />
+      <div className={styles.actions}>
+        <button className={styles.primary} disabled={pick === null} onClick={() => pick !== null && onCast(pick)}>
+          {pick === null ? 'Choose a player' : `Vote for ${view.seats[pick]!.name}`}
         </button>
+      </div>
+      {view.yourObservations.length > 0 && (
+        <details className={styles.ballotNotes}>
+          <summary>Your notes</summary>
+          <NotesList title="What you know" observations={view.yourObservations} />
+        </details>
+      )}
+    </div>
+  );
+}
+
+function VotingStatus({ view, dispatch, isHost }: { view: OnuwPublicState; dispatch: Dispatch; isHost: boolean }) {
+  const [confirming, setConfirming] = useState(false);
+  const missing = view.seats.filter((s) => !s.hasVoted);
+  return (
+    <div className={styles.stack}>
+      <Table view={view} mode="day" />
+      <div className={styles.panel}>
+        <h3 className={styles.folkHeading}>
+          {view.yourSeat !== null && view.seats[view.yourSeat]?.hasVoted ? 'Your vote is cast.' : 'The village is voting.'}
+        </h3>
+        <p className={styles.dim}>
+          Waiting for {missing.map((s) => s.name).join(', ') || 'the count'}… All votes are revealed together.
+        </p>
+        {isHost && missing.length > 0 && (
+          <div className={styles.actions}>
+            {confirming ? (
+              <>
+                <button className={styles.danger} onClick={() => dispatch({ type: 'resolveVotes' })}>
+                  Count now — {missing.length} abstain
+                </button>
+                <button className={styles.muted} onClick={() => setConfirming(false)}>
+                  Keep waiting
+                </button>
+              </>
+            ) : (
+              <button className={styles.muted} onClick={() => setConfirming(true)}>
+                Count the votes now…
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// Resolution / game over
+// Resolution: arrows → deaths → every card flips → verdict
 // ============================================================================
 
-function ResolutionPhase({
-  view,
-  dispatch,
-}: {
-  view: OnuwPublicState;
-  dispatch: (a: OnuwAction) => void;
-}) {
-  const winner = view.winnerTeam ?? 'village';
-  const winnerLabel =
-    winner === 'village' ? '⚜ Village Wins' : winner === 'werewolves' ? '🐺 Werewolves Win' : '🃏 Tanner Wins';
+function Resolution({ view, dispatch, isHost }: { view: OnuwPublicState; dispatch: Dispatch; isHost: boolean }) {
+  const n = view.seats.length;
+  const arrowsAt = 1;
+  const deathsAt = arrowsAt + Math.ceil((n * 220) / 420) + 2;
+  const seatsAt = deathsAt + 2;
+  const centerAt = seatsAt + n;
+  const verdictAt = centerAt + 4;
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (tick >= verdictAt) return;
+    const t = setTimeout(() => setTick((x) => x + 1), 420);
+    return () => clearTimeout(t);
+  }, [tick, verdictAt]);
+  const done = tick >= verdictAt;
+  const teams = view.winningTeams;
   return (
-    <div style={{ display: 'grid', gap: 16 }}>
-      <div className={`${styles.gameOverBanner} ${styles[winner]}`}>{winnerLabel}</div>
-
-      <div className={styles.panel}>
-        <h3 style={{ marginTop: 0 }}>Vote tally</h3>
-        <div className={styles.voteTable}>
-          {view.seats.map((s) => (
-            <div key={s.index} className={styles.voteRow}>
-              <span>
-                {s.name}
-                {s.killed && <span style={{ color: '#f87171', marginLeft: 8 }}>☠ killed</span>}
-              </span>
-              <span>{view.voteTally[s.index] ?? 0} votes</span>
-            </div>
-          ))}
-        </div>
-        <p className={styles.subtitle} style={{ marginTop: 10 }}>
-          Who voted whom:
-        </p>
-        <div className={styles.voteTable}>
-          {view.seats.map((s) => (
-            <div key={s.index} className={styles.voteRow}>
-              <span>{s.name}</span>
-              <span>
-                → {s.voteTarget !== null ? view.seats[s.voteTarget]?.name ?? '—' : '—'}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className={styles.panel}>
-        <h3 style={{ marginTop: 0 }}>Final roles</h3>
-        <div className={styles.seatGrid}>
-          {view.seats.map((s) => (
-            <RevealedSeat key={s.index} seat={s} />
-          ))}
-        </div>
-        <h4 style={{ marginTop: 18, marginBottom: 6 }}>Center cards (original slot order)</h4>
-        <div className={styles.centerCardRow}>
-          {view.centerCards.map((c) => (
-            <div key={c.index} className={styles.centerCard}>
-              <span className={styles.centerCardLabel}>Center {c.index + 1}</span>
-              {c.revealedRole ? (
-                <>
-                  <RoleArt role={c.revealedRole} size={60} />
-                  <span style={{ fontSize: 12 }}>{ROLES[c.revealedRole].name}</span>
-                </>
-              ) : (
-                <div className={styles.centerBack}>?</div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {view.phase !== 'gameOver' && (
+    <div className={styles.stack}>
+      {done && <Verdict teams={teams} winners={view.winners.map((i) => view.seats[i]!.name)} />}
+      <Table
+        view={view}
+        mode="reveal"
+        showVotes={tick >= arrowsAt}
+        showDeaths={tick >= deathsAt}
+        revealSeats={Math.max(0, tick - seatsAt + 1)}
+        revealCenter={Math.max(0, tick - centerAt + 1)}
+      />
+      {!done && (
         <div className={styles.actions}>
-          <button className={styles.primary} onClick={() => dispatch({ type: 'ackGameOver' })}>
-            Continue
+          <button className={styles.muted} onClick={() => setTick(verdictAt)}>
+            Skip to the verdict
           </button>
+        </div>
+      )}
+      {done && (
+        <div className={`${styles.resultsGrid} sd-rise-in`}>
+          <div className={styles.panel}>
+            <p className={styles.eyebrow}>How the village voted</p>
+            <ul className={styles.voteList}>
+              {view.seats.map((s) => (
+                <li key={s.index}>
+                  <span>{s.name}</span>
+                  <span className={styles.dim}>→</span>
+                  <span>{s.voteTarget !== null ? view.seats[s.voteTarget]!.name : 'abstained'}</span>
+                  {s.killed && <span className={styles.deathMark}>☠ slain</span>}
+                </li>
+              ))}
+            </ul>
+            {view.killedSeats.length === 0 && <p className={styles.dim}>No one received more than one vote — no one dies.</p>}
+          </div>
+          <div className={styles.panel}>
+            <p className={styles.eyebrow}>Cards at dawn</p>
+            <ul className={styles.finalList}>
+              {view.seats.map((s) => (
+                <li key={s.index}>
+                  {s.revealedRole && <RoleMedallion role={s.revealedRole} size={30} />}
+                  <span>
+                    <strong>{s.name}</strong> —{' '}
+                    {s.revealedCard && s.revealedRole && s.revealedCard !== s.revealedRole
+                      ? `${ROLES[s.revealedCard].name} (as ${ROLES[s.revealedRole].name})`
+                      : s.revealedRole
+                        ? ROLES[s.revealedRole].name
+                        : '?'}
+                    {s.won && <span className={styles.wonMark}> ★</span>}
+                  </span>
+                </li>
+              ))}
+              {view.alphaCenter.length > 0 && (
+                <li>
+                  <span className={styles.dim}>Alpha&apos;s center slot: {view.alphaCenter.map((r) => ROLES[r].name).join(', ')}</span>
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
+      {done && (
+        <div className={styles.actions}>
+          {view.phase === 'resolution' && isHost && (
+            <button className={styles.primary} onClick={() => dispatch({ type: 'ackGameOver' })}>
+              End the game
+            </button>
+          )}
+          {view.phase === 'resolution' && !isHost && <p className={styles.dim}>Waiting for the host to end the game…</p>}
         </div>
       )}
     </div>
   );
 }
 
-function RevealedSeat({ seat }: { seat: OnuwPublicSeatState }) {
-  if (!seat.revealedRole) return null;
-  const spec = ROLES[seat.revealedRole];
+function Verdict({ teams, winners }: { teams: OnuwTeamId[]; winners: string[] }) {
+  const names: Record<OnuwTeamId, string> = { village: 'the Village', werewolves: 'the Werewolves', tanner: 'the Tanner' };
+  const solo: Record<OnuwTeamId, string> = {
+    village: 'The Village prevails',
+    werewolves: 'The Werewolves feast',
+    tanner: 'The Tanner gets his wish',
+  };
+  const headline =
+    teams.length === 0
+      ? 'Nobody wins'
+      : teams.length === 1
+        ? solo[teams[0]!]
+        : `${teams.map((t) => names[t]).join(' & ').replace(/^t/, 'T')} win`;
+  const tone = teams[0] ?? 'none';
   return (
-    <div className={`${styles.seat} ${seat.killed ? styles.killed : ''}`}>
-      <RoleArt role={seat.revealedRole} size={42} />
-      <div>
-        <div className={styles.seatName}>{seat.name}</div>
-        <div className={styles.seatMeta}>
-          <TeamBadge role={seat.revealedRole} /> {spec.name}
-          {seat.killed && <span style={{ color: '#f87171', marginLeft: 6 }}>☠</span>}
-        </div>
+    <div className={`${styles.verdict} ${styles[`verdict_${tone}`] ?? ''}`} role="status">
+      <div className={styles.verdictBanner}>
+        {teams.map((t) => (
+          <TeamBadge key={t} team={t} size={26} />
+        ))}
+        <h2 className={styles.verdictTitle}>{headline}</h2>
       </div>
+      {winners.length > 0 && <p className={styles.verdictSub}>Winners: {winners.join(', ')}</p>}
     </div>
   );
 }
+

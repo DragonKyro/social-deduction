@@ -1,16 +1,19 @@
 import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import { buildPoolFromPacks, type WordPackId } from '@/words';
+import { privateSeed, publicSeed } from './seed';
 import type {
   CellState,
   Coord,
   CrossCluesPrivateState,
 } from './state';
 
-// Derived-seed offsets so word-pick, deck-shuffle, and starting-seat picks
-// don't share an RNG stream. Same trick as Avalon's pickStartingLeader.
-const DECK_SEED_MASK = 0xc0_ff_ee_cc;
-const LEADER_SEED_MASK = 0x00_00_c1_e5;
+// Derived seeds (see seed.ts): the grid words and the starting seat are
+// public, so they come from `publicSeed`; the coordinate deck is private and
+// comes from `privateSeed`, never from a continuation of the word stream.
+const WORDS_SALT = 0x0c105e5;
+const DECK_SALT = 0xc0ffeecc;
+const LEADER_SALT = 0x0000c1e5;
 
 const GRID_SIZE = 5;
 const TOTAL_CELLS = GRID_SIZE * GRID_SIZE;
@@ -63,20 +66,20 @@ export function buildInitial(
   }
 
   // 1) Pick 10 words from the combined pool.
-  const wordsRng = makeRng(seed);
+  const wordsRng = makeRng(publicSeed(seed, WORDS_SALT));
   const shuffledWords = rngShuffle(wordsRng, pool);
   const rowWords = shuffledWords.slice(0, GRID_SIZE);
   const colWords = shuffledWords.slice(GRID_SIZE, WORDS_PER_GRID);
 
   // 2) Shuffle the 25 coord cards (independent stream).
-  const deckRng = makeRng(seed ^ DECK_SEED_MASK);
+  const deckRng = makeRng(privateSeed(seed, DECK_SALT));
   const deck = rngShuffle(deckRng, buildCoordDeck());
   if (deck.length !== TOTAL_CELLS) {
     throw new Error(`Internal: coord deck length ${deck.length}`);
   }
 
   // 3) Pick starting clue-giver (independent stream).
-  const leaderRng = makeRng(seed ^ LEADER_SEED_MASK);
+  const leaderRng = makeRng(publicSeed(seed, LEADER_SALT));
   const startingClueGiver = rngInt(leaderRng, names.length);
   const startingGuesser = (startingClueGiver + 1) % names.length;
 

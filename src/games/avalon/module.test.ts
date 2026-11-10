@@ -518,3 +518,233 @@ describe('Avalon — defaults', () => {
     expect(opts.specialRoles).toContain('mordred');
   });
 });
+
+// ============================================================================
+// Audit: rules + validation hardening (each test names the bug it pins)
+// ============================================================================
+
+const ROLES_EVIL = new Set<AvalonRoleId>(['assassin', 'morgana', 'mordred', 'oberon', 'minionOfMordred']);
+
+describe('Avalon — knowledge table across every table size', () => {
+  it('matches the rulebook for 5–10 players with every special that fits', () => {
+    const specialsFor = (n: number): AvalonRoleId[] =>
+      n >= 10
+        ? ['percival', 'morgana', 'mordred', 'oberon']
+        : n >= 7
+          ? ['percival', 'morgana', 'oberon']
+          : ['percival', 'morgana'];
+    for (let n = 5; n <= 10; n++) {
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const s = avalonModule.createInitialState(configFor(n, specialsFor(n), seed));
+        const { good, evil } = alignmentSplit(n);
+        expect(s.seats.filter((x) => x.alignment === 'good')).toHaveLength(good);
+        expect(s.seats.filter((x) => x.alignment === 'evil')).toHaveLength(evil);
+        const seatsOf = (pred: (r: AvalonRoleId) => boolean) =>
+          s.seats
+            .filter((x) => pred(x.role))
+            .map((x) => x.index)
+            .sort((a, b) => a - b);
+        const known = (i: number) => s.roleKnowledge[i]!.map((k) => k.seat);
+        for (const me of s.seats) {
+          const k = known(me.index);
+          switch (me.role) {
+            case 'merlin':
+              // All evil except Mordred: Oberon IS visible to Merlin.
+              expect(k).toEqual(seatsOf((r) => ROLES_EVIL.has(r) && r !== 'mordred'));
+              break;
+            case 'percival':
+              expect(k).toEqual(seatsOf((r) => r === 'merlin' || r === 'morgana'));
+              expect(new Set(s.roleKnowledge[me.index]!.map((x) => x.label)).size).toBe(1);
+              break;
+            case 'oberon':
+            case 'loyalServant':
+              expect(k).toEqual([]);
+              break;
+            default:
+              // Assassin / Morgana / Mordred / Minion: other evils except Oberon.
+              expect(k).toEqual(
+                seatsOf((r) => ROLES_EVIL.has(r) && r !== 'oberon').filter((x) => x !== me.index),
+              );
+          }
+          // Knowledge lists are in seat order (never role order).
+          expect(k).toEqual([...k].sort((a, b) => a - b));
+        }
+      }
+    }
+  });
+
+  it('Percival pair order cannot reveal which one is Merlin', () => {
+    // Over many deals Merlin is sometimes listed first, sometimes second.
+    const firstIsMerlin = new Set<boolean>();
+    for (let seed = 1; seed <= 30; seed++) {
+      const s = avalonModule.createInitialState(configFor(5, ['percival', 'morgana'], seed));
+      const p = s.seats.find((x) => x.role === 'percival')!;
+      const first = s.roleKnowledge[p.index]![0]!.seat;
+      firstIsMerlin.add(s.seats[first]!.role === 'merlin');
+    }
+    expect(firstIsMerlin.size).toBe(2);
+  });
+});
+
+describe('Avalon — quest table', () => {
+  it('team sizes match the rulebook for 5–10 players', () => {
+    const expected: Record<number, number[]> = {
+      5: [2, 3, 2, 3, 3],
+      6: [2, 3, 4, 3, 4],
+      7: [2, 3, 3, 4, 4],
+      8: [3, 4, 4, 5, 5],
+      9: [3, 4, 4, 5, 5],
+      10: [3, 4, 4, 5, 5],
+    };
+    for (let n = 5; n <= 10; n++) {
+      expect(questTrack(n).map((q) => q.teamSize)).toEqual(expected[n]);
+      expect(questTrack(n).map((q) => q.failsRequired)).toEqual(n >= 7 ? [1, 1, 1, 2, 1] : [1, 1, 1, 1, 1]);
+    }
+    expect(alignmentSplit(6)).toEqual({ good: 4, evil: 2 });
+    expect(alignmentSplit(8)).toEqual({ good: 5, evil: 3 });
+    expect(alignmentSplit(9)).toEqual({ good: 6, evil: 3 });
+  });
+
+  it('a single fail on quest 4 at 7+ players does not fail it', () => {
+    let s = avalonModule.createInitialState(configFor(7, [], 5));
+    s = ackEveryoneRoleReveal(s);
+    s = { ...s, currentQuestNumber: 4 };
+    const evils = s.seats.filter((x) => x.alignment === 'evil').map((x) => x.index);
+    const goods = s.seats.filter((x) => x.alignment === 'good').map((x) => x.index);
+    const team = [evils[0]!, ...goods.slice(0, 3)].sort((a, b) => a - b);
+    s = apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team });
+    for (let i = 0; i < 7; i++) s = apply(s, { type: 'castTeamVote', bySeat: i, approve: true });
+    s = apply(s, { type: 'ackTeamVoteReveal' });
+    for (const seat of team) s = apply(s, { type: 'playQuestCard', bySeat: seat, success: seat !== evils[0] });
+    expect(s.questHistory[0]).toMatchObject({ failCount: 1, failsRequired: 2, result: 'success' });
+  });
+});
+
+describe('Avalon — applyAction validation (audit fixes)', () => {
+  function started(n = 5): AvalonPrivateState {
+    return ackEveryoneRoleReveal(avalonModule.createInitialState(configFor(n, ['percival', 'morgana'])));
+  }
+
+  it('rejects non-integer / non-number team seats (1.5 used to wedge the quest forever)', () => {
+    const s = started();
+    for (const bad of [[0, 1.5], [0, '1'], [0, -1], [0, 5], [0, NaN]] as unknown[][]) {
+      expect(() =>
+        apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: bad as number[] }),
+      ).toThrow();
+    }
+    expect(() =>
+      apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: 'ab' as unknown as number[] }),
+    ).toThrow();
+  });
+
+  it('rejects duplicate seats in a team', () => {
+    const s = started();
+    expect(() => apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [1, 1] })).toThrow();
+    expect(() => apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [0, 1, 1] })).toThrow();
+  });
+
+  it('rejects non-boolean votes and quest cards', () => {
+    let s = started();
+    s = apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [0, 1] });
+    expect(() => apply(s, { type: 'castTeamVote', bySeat: 0, approve: 'yes' as unknown as boolean })).toThrow();
+    expect(() => apply(s, { type: 'castTeamVote', bySeat: 0.5, approve: true })).toThrow();
+    for (let i = 0; i < 5; i++) s = apply(s, { type: 'castTeamVote', bySeat: i, approve: true });
+    s = apply(s, { type: 'ackTeamVoteReveal' });
+    expect(() => apply(s, { type: 'playQuestCard', bySeat: 0, success: 0 as unknown as boolean })).toThrow();
+  });
+
+  it('a seat cannot vote twice', () => {
+    let s = started();
+    s = apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [0, 1] });
+    s = apply(s, { type: 'castTeamVote', bySeat: 2, approve: true });
+    expect(() => apply(s, { type: 'castTeamVote', bySeat: 2, approve: false })).toThrow();
+  });
+
+  it('only team members play quest cards, once each', () => {
+    let s = started();
+    s = apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [0, 1] });
+    for (let i = 0; i < 5; i++) s = apply(s, { type: 'castTeamVote', bySeat: i, approve: true });
+    s = apply(s, { type: 'ackTeamVoteReveal' });
+    expect(() => apply(s, { type: 'playQuestCard', bySeat: 3, success: true })).toThrow();
+    s = apply(s, { type: 'playQuestCard', bySeat: 0, success: true });
+    expect(() => apply(s, { type: 'playQuestCard', bySeat: 0, success: true })).toThrow();
+  });
+
+  it('actions are rejected out of phase, including the seatless acks', () => {
+    const s = started();
+    expect(() => apply(s, { type: 'ackTeamVoteReveal' })).toThrow();
+    expect(() => apply(s, { type: 'ackQuestResolution' })).toThrow();
+    expect(() => apply(s, { type: 'castTeamVote', bySeat: 0, approve: true })).toThrow();
+    expect(() => apply(s, { type: 'playQuestCard', bySeat: 0, success: true })).toThrow();
+    expect(() => apply(s, { type: 'ackRoleReveal', bySeat: 0 })).toThrow();
+    expect(() => apply(s, { type: 'assassinateMerlin', bySeat: 0, target: 1 })).toThrow();
+  });
+
+  it('a duplicate role ack is rejected (no pointless tick)', () => {
+    const s = avalonModule.createInitialState(configFor(5));
+    const once = apply(s, { type: 'ackRoleReveal', bySeat: 1 });
+    expect(() => apply(once, { type: 'ackRoleReveal', bySeat: 1 })).toThrow();
+    expect(() => apply(s, { type: 'ackRoleReveal', bySeat: 7 })).toThrow();
+  });
+
+  it('nothing is accepted after game over', () => {
+    const s = { ...started(), phase: 'gameOver' as const, winnerTeam: 'good' as const };
+    expect(() => apply(s, { type: 'ackQuestResolution' })).toThrow();
+    expect(() => apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [0, 1] })).toThrow();
+  });
+
+  it('optional-module actions are rejected, not silently accepted as no-ops', () => {
+    const s = started();
+    const actions: AvalonAction[] = [
+      { type: 'ladyInvestigate', bySeat: 0, target: 1 },
+      { type: 'ladyDeclare', bySeat: 0, declaredAlignment: 'good' },
+      { type: 'assignExcalibur', bySeat: 0, holderSeat: 1 },
+      { type: 'useExcalibur', bySeat: 0, targetSeat: null },
+    ];
+    for (const a of actions) expect(() => apply(s, a)).toThrow();
+  });
+
+  it('module toggles in the options never enable a half-wired module', () => {
+    const cfg = configFor(8, ['percival', 'morgana']);
+    Object.assign(cfg.gameOptions, { ladyOfTheLake: true, excalibur: true, twoLancelots: true });
+    const s = avalonModule.createInitialState(cfg);
+    expect(s.ladyOfTheLake).toBeNull();
+    expect(s.excalibur).toBeNull();
+    expect(s.lancelotSwapDeck).toBeNull();
+    const v = avalonModule.viewFor(s, 0);
+    expect(v.ladyOfTheLake).toBeNull();
+    expect(v.excalibur).toBeNull();
+    expect(v.lancelotSwapsApplied).toBeNull();
+  });
+
+  it('Lancelots and unknown role ids cannot be dealt', () => {
+    expect(() => buildRolePool(8, ['lancelotGood'])).toThrow();
+    expect(() => buildRolePool(8, ['lancelotEvil'])).toThrow();
+    expect(() => buildRolePool(8, ['bogus' as AvalonRoleId])).toThrow();
+    expect(() => avalonModule.createInitialState(configFor(8, ['lancelotGood', 'lancelotEvil']))).toThrow();
+  });
+
+  it('the Assassin cannot target themselves or a teammate they can see', () => {
+    let s = avalonModule.createInitialState(configFor(7, ['percival', 'morgana']));
+    s = { ...ackEveryoneRoleReveal(s), phase: 'assassinPick' };
+    const assassin = s.seats.find((x) => x.role === 'assassin')!.index;
+    const mate = s.roleKnowledge[assassin]![0]!.seat;
+    expect(() => apply(s, { type: 'assassinateMerlin', bySeat: assassin, target: assassin })).toThrow();
+    expect(() => apply(s, { type: 'assassinateMerlin', bySeat: assassin, target: mate })).toThrow();
+    expect(() => apply(s, { type: 'assassinateMerlin', bySeat: assassin, target: 99 })).toThrow();
+  });
+
+  it('records each completed vote in the public proposal log', () => {
+    let s = started();
+    const leader = s.currentLeaderSeat;
+    s = apply(s, { type: 'proposeTeam', bySeat: leader, team: [0, 1] });
+    for (let i = 0; i < 5; i++) s = apply(s, { type: 'castTeamVote', bySeat: i, approve: i === 0 });
+    expect(s.proposalHistory).toEqual([
+      { questNumber: 1, attempt: 1, leader, team: [0, 1], votes: [true, false, false, false, false], approved: false },
+    ]);
+    s = apply(s, { type: 'ackTeamVoteReveal' });
+    s = apply(s, { type: 'proposeTeam', bySeat: s.currentLeaderSeat, team: [2, 3] });
+    for (let i = 0; i < 5; i++) s = apply(s, { type: 'castTeamVote', bySeat: i, approve: true });
+    expect(s.proposalHistory[1]).toMatchObject({ attempt: 2, approved: true, leader: (leader + 1) % 5 });
+  });
+});

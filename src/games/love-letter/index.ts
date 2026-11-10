@@ -7,6 +7,9 @@ export type { LoveLetterAction } from './actions';
 export type {
   Card,
   EffectRecord,
+  EffectSecret,
+  KnownCard,
+  LogEntry,
   LoveLetterPhase,
   LoveLetterPrivateState,
   LoveLetterPublicState,

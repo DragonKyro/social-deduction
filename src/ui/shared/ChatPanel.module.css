@@ -1,0 +1,64 @@
+.root {
+  background: rgba(7, 9, 15, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.list {
+  overflow-y: auto;
+  font-size: 13px;
+  margin-bottom: 8px;
+  padding: 2px 4px;
+  scrollbar-width: thin;
+}
+
+.empty {
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+.line {
+  margin-bottom: 4px;
+  animation: global(sd-rise-in) var(--dur-med) var(--ease-out) both;
+  line-height: 1.35;
+}
+
+.who {
+  font-weight: 700;
+  color: #8fb8ff;
+  margin-right: 6px;
+}
+
+.mine .who {
+  color: var(--gold-bright);
+}
+
+.hostTag {
+  margin-left: 5px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--gold-deep);
+  color: var(--gold);
+  vertical-align: 1px;
+}
+
+.text {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: flex;
+  gap: 6px;
+}
+
+.form input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+}

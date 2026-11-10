@@ -1,4 +1,4 @@
-import { makeRng, rngInt, rngShuffle } from '@/engine/rng';
+import { makeRng, rngInt, rngShuffle, subSeed } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type {
   Card,
@@ -9,6 +9,15 @@ import type {
 import { RANK_COUNTS } from './state';
 
 const STARTING_SEAT_SEED_MASK = 0x00_00_5e_a7;
+
+/** Max public log entries kept (oldest dropped). */
+export const LOG_LIMIT = 40;
+
+function freshKnowledge(state: LoveLetterPrivateState): LoveLetterPrivateState['knowledge'] {
+  const out: LoveLetterPrivateState['knowledge'] = {};
+  for (const s of state.seats) out[s.index] = {};
+  return out;
+}
 
 // Rulebook token targets. Single-seat win at N tokens.
 export function tokensToWinFor(playerCount: number): number {
@@ -46,7 +55,7 @@ export function buildInitial(
   const seats = names.map((name, index) => ({ index, name }));
 
   // Pick starting seat (independent RNG stream).
-  const leaderRng = makeRng(seed ^ STARTING_SEAT_SEED_MASK);
+  const leaderRng = makeRng(subSeed(seed, STARTING_SEAT_SEED_MASK));
   const startingSeat = rngInt(leaderRng, names.length);
 
   const state: LoveLetterPrivateState = {
@@ -62,10 +71,13 @@ export function buildInitial(
     pendingGuardPlay: null,
     pendingCard: null,
     lastEffect: null,
+    effectSecret: null,
     priestPeek: null,
+    knowledge: {},
     revealAcked: {},
     startAcked: {},
     roundOverAcked: {},
+    log: [],
     history: [],
     matchWinners: [],
     seed,
@@ -99,7 +111,7 @@ export function dealRound(
   // round, not per action — that's enough non-determinism for shuffles in
   // a friends-only game.
   const cursor = state.rngCursor;
-  const rng = makeRng(state.seed ^ (0x10_b3_e5_57 ^ cursor));
+  const rng = makeRng(subSeed(state.seed, 0x10_b3_e5_57, cursor));
   const deck = rngShuffle(rng, buildDeck());
 
   // 1) Remove one face-down.
@@ -149,10 +161,16 @@ export function dealRound(
     pendingGuardPlay: null,
     pendingCard: null,
     lastEffect: null,
+    effectSecret: null,
     priestPeek: null,
+    knowledge: freshKnowledge(state),
     revealAcked: {},
     startAcked,
     roundOverAcked: {},
+    log: [
+      ...state.log,
+      { round: state.roundNumber, text: `Round ${state.roundNumber} dealt. ${state.players[startingSeat]!.name} goes first.` },
+    ].slice(-LOG_LIMIT),
     rngCursor: cursor + 1,
   };
 }

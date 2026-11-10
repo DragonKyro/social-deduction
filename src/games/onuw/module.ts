@@ -1,10 +1,11 @@
 import type { GameConfig, GameModule, SeatIndex } from '@/engine/types';
 import type { OnuwAction } from './actions';
 import { aiChooseAction } from './ai';
-import { ROLES } from './roles';
+import { RECOMMENDED_POOLS, ROLES } from './roles';
+import { resolveVotes } from './resolve';
 import { buildInitialPrivate, validateRolePool } from './setup';
 import {
-  OBSERVATIONAL_ROLES_NEED_ACK,
+  OBSERVATIONAL_ROLES,
   applyAlphaWolfConvert,
   applyApprenticeSeerLook,
   applyBodySnatcherSwap,
@@ -23,15 +24,19 @@ import {
   applyTroublemakerSwap,
   applyVillageIdiotShift,
   applyWindyWendyShift,
+  applyWitchLook,
   applyWitchSwap,
+  isLoneWolf,
   runAutoStep,
 } from './night';
 import type {
   OnuwArtifactId,
+  OnuwNightStep,
   OnuwPrivateState,
   OnuwPublicState,
   OnuwRoleId,
 } from './state';
+import { alphaTargets, currentStep, hasActedThisStep, isValidSeat, viewFor, yourNightStep } from './view';
 
 export interface OnuwSeatConfig {
   name: string;
@@ -51,203 +56,235 @@ function getOptions(config: GameConfig): OnuwOptions {
   return config.gameOptions as unknown as OnuwOptions;
 }
 
-// === Helpers ================================================================
+// === Night cursor ===========================================================
 
-function currentStep(state: OnuwPrivateState) {
-  return state.nightSchedule[state.nightStepIndex] ?? null;
+// Move the cursor to `index`, silently resolving steps that have no seats
+// (roles whose cards are all in the center). Entering an observation step
+// hands its seats their information immediately.
+function activateFrom(state: OnuwPrivateState, index: number): OnuwPrivateState {
+  const schedule = state.nightSchedule.slice();
+  let i = index;
+  while (i < schedule.length && schedule[i]!.seats.length === 0) {
+    schedule[i] = { ...schedule[i]!, resolved: true };
+    i++;
+  }
+  let next: OnuwPrivateState = { ...state, nightSchedule: schedule, nightStepIndex: i };
+  if (i >= schedule.length) return { ...next, phase: 'day' };
+  const step = schedule[i]!;
+  if (OBSERVATIONAL_ROLES.has(step.role)) next = runAutoStep(next, step);
+  return next;
 }
 
 function advanceStep(state: OnuwPrivateState): OnuwPrivateState {
-  // Mark the current step resolved, then move the cursor forward, skipping
-  // any steps whose role-spec says it has nothing to do. If we run out of
-  // steps, transition to day.
   const schedule = state.nightSchedule.slice();
-  if (state.nightStepIndex < schedule.length) {
-    schedule[state.nightStepIndex] = { ...schedule[state.nightStepIndex]!, resolved: true };
-  }
-  let next = { ...state, nightSchedule: schedule, nightStepIndex: state.nightStepIndex + 1 };
-  // Auto-skip dream wolf (no work to do at the step).
-  while (next.nightStepIndex < next.nightSchedule.length) {
-    const step = next.nightSchedule[next.nightStepIndex]!;
-    if (step.role === 'dreamWolf') {
-      // Apply auto step (no-op) and advance.
-      next = { ...next, nightStepIndex: next.nightStepIndex + 1 };
-      continue;
-    }
-    break;
-  }
-  if (next.nightStepIndex >= next.nightSchedule.length) {
-    return { ...next, phase: 'day' };
-  }
-  // Pre-run auto-resolution for observational roles. We still expect a
-  // per-seat ack — runAutoStep just populates observations.
-  const step = next.nightSchedule[next.nightStepIndex]!;
-  if (OBSERVATIONAL_ROLES_NEED_ACK.has(step.role)) {
-    next = runAutoStep(next, step.role, step.seats);
-  }
-  return next;
+  schedule[state.nightStepIndex] = { ...schedule[state.nightStepIndex]!, resolved: true };
+  return activateFrom({ ...state, nightSchedule: schedule }, state.nightStepIndex + 1);
 }
 
-function recordStepAck(
-  state: OnuwPrivateState,
-  step: number,
-  seat: SeatIndex,
-): OnuwPrivateState {
-  const cur = state.nightStepAcks[step] ?? [];
-  if (cur.includes(seat)) return state;
-  return {
-    ...state,
-    nightStepAcks: { ...state.nightStepAcks, [step]: [...cur, seat] },
-  };
-}
-
-function stepFullyAcked(state: OnuwPrivateState): boolean {
-  const step = currentStep(state);
-  if (!step) return false;
+// Record that `seat` is done with the current step; advance once every seat
+// of the step is done.
+function finishTurn(state: OnuwPrivateState, seat: SeatIndex): OnuwPrivateState {
+  const step = currentStep(state)!;
   const acks = state.nightStepAcks[step.stepIndex] ?? [];
-  return step.seats.every((s) => acks.includes(s));
+  const next: OnuwPrivateState = {
+    ...state,
+    nightStepAcks: { ...state.nightStepAcks, [step.stepIndex]: [...acks, seat] },
+  };
+  const done = next.nightStepAcks[step.stepIndex]!;
+  return step.seats.every((s) => done.includes(s)) ? advanceStep(next) : next;
 }
 
-function ensureSeatInStep(step: ReturnType<typeof currentStep>, seat: SeatIndex): void {
+// Validate that `seat` may take a night action for one of `roles` right now.
+function requireTurn(
+  state: OnuwPrivateState,
+  seat: unknown,
+  roles: readonly OnuwRoleId[],
+): OnuwNightStep {
+  if (state.phase !== 'night') throw new Error('Night actions are only valid at night');
+  if (!isValidSeat(state, seat)) throw new Error(`Invalid seat ${String(seat)}`);
+  const step = currentStep(state);
   if (!step) throw new Error('No active night step');
-  if (!step.seats.includes(seat)) {
-    throw new Error(`Seat ${seat} is not part of the current night step (${step.role})`);
+  if (!roles.includes(step.role)) {
+    throw new Error(`It is not the ${roles.map((r) => ROLES[r].name).join(' / ')} step`);
   }
+  if (!step.seats.includes(seat)) throw new Error(`Seat ${seat} is not awake for this step`);
+  if (hasActedThisStep(state, seat)) throw new Error(`Seat ${seat} has already acted this step`);
+  return step;
 }
 
-// === Vote resolution ========================================================
-//
-// ONUW vote rules:
-//  - Each player privately votes for one player.
-//  - The seat(s) with the most votes are killed.
-//  - Ties: ALL tied seats die.
-//  - If every seat receives exactly one vote and there's a 3+-way tie, no
-//    one dies (unless allowNoLynch is false — then everyone tied dies).
-//  - Hunter: if killed, the seat the Hunter voted for is also killed.
-//  - Prince: cannot be killed by vote; votes against Prince are ignored.
-//  - Ricochet Rhino: votes against Rhino redirect to the next seat clockwise.
-//  - Cursed: counts as werewolf for win conditions if killed.
-//
-// Win conditions (after deaths are resolved):
-//  - Tanner (or Apprentice Tanner) is killed → Tanner wins. (Also good
-//    wins if a non-tanner werewolf was also killed; rulebook ambiguity —
-//    we use: Tanner wins + village wins if a werewolf also died.)
-//  - At least one werewolf killed → village wins.
-//  - No werewolves in play (all in center) AND no one was killed → village wins.
-//  - No werewolves in play AND someone was killed → werewolves win.
-//  - At least one werewolf in play AND no werewolves killed → werewolves win.
-
-function resolveVotes(state: OnuwPrivateState): OnuwPrivateState {
-  let next = { ...state, seats: state.seats.map((s) => ({ ...s })) };
-  // Collect vote targets, applying Prince and Ricochet Rhino remappings.
-  const tally: Record<SeatIndex, number> = {};
-  for (let i = 0; i < next.seats.length; i++) tally[i] = 0;
-  for (const voter of next.seats) {
-    let target = voter.voteTarget;
-    if (target === null) continue;
-    target = remapVote(next, target);
-    tally[target] = (tally[target] ?? 0) + 1;
-  }
-  // Find max votes.
-  let maxVotes = 0;
-  for (const v of Object.values(tally)) {
-    if (v > maxVotes) maxVotes = v;
-  }
-  // Killed seats: all seats with the max vote count. If max is 1 and
-  // allowNoLynch, no one dies. If max is 0, no one dies.
-  let killed: SeatIndex[] = [];
-  if (maxVotes >= 2) {
-    killed = next.seats
-      .filter((s) => tally[s.index] === maxVotes)
-      .map((s) => s.index);
-  } else if (maxVotes === 1 && !next.allowNoLynch) {
-    killed = next.seats
-      .filter((s) => tally[s.index] === maxVotes)
-      .map((s) => s.index);
-  }
-  // Apply Hunter follow-up kills. If a Hunter is killed, their voteTarget
-  // also dies (re-mapped through the same Prince/Ricochet rules).
-  const hunterKills: SeatIndex[] = [];
-  for (const k of killed) {
-    if (next.seats[k]!.finalRole === 'hunter') {
-      const t = next.seats[k]!.voteTarget;
-      if (t !== null) {
-        hunterKills.push(remapVote(next, t));
-      }
-    }
-  }
-  const finalKilled = Array.from(new Set([...killed, ...hunterKills]));
-  // Mark seats killed.
-  next.seats = next.seats.map((s) =>
-    finalKilled.includes(s.index) ? { ...s, killed: true } : s,
-  );
-  next.killedSeats = finalKilled;
-  next.voteTally = tally;
-  next.phase = 'resolution';
-  next.winnerTeam = determineWinner(next, finalKilled);
-  return next;
-}
-
-function remapVote(state: OnuwPrivateState, target: SeatIndex): SeatIndex {
-  // Prince: votes redirect to Prince's voter? No — Prince just can't be
-  // killed. Easiest model: votes against Prince are NOT counted.
-  // We achieve "not counted" by returning a sentinel — but that'd mess
-  // tally typing. We use a "ghost seat" approach: return target as-is
-  // but then ZERO Prince's tally afterwards. So just return target here
-  // and post-process tallies.
-  // Ricochet Rhino: votes redirect to next seat clockwise.
-  const role = state.seats[target]?.finalRole;
-  if (role === 'ricochetRhino') {
-    return (target + 1) % state.seats.length;
-  }
+function requireOther(state: OnuwPrivateState, bySeat: SeatIndex, target: unknown, what: string): SeatIndex {
+  if (!isValidSeat(state, target)) throw new Error(`${what}: invalid seat ${String(target)}`);
+  if (target === bySeat) throw new Error(`${what}: must target another player`);
   return target;
 }
 
-function determineWinner(
-  state: OnuwPrivateState,
-  killedSeats: readonly SeatIndex[],
-): 'village' | 'werewolves' | 'tanner' | null {
-  const isWolf = (r: OnuwRoleId) => ROLES[r].team === 'werewolves';
-  const isTanner = (r: OnuwRoleId) => ROLES[r].team === 'tanner';
-  const hasWolfInPlay = state.seats.some((s) => isWolf(s.finalRole));
-  const wolfKilled = killedSeats.some((i) => {
-    const r = state.seats[i]!.finalRole;
-    // Cursed also counts as wolf if killed.
-    return isWolf(r) || r === 'cursed';
-  });
-  const tannerKilled = killedSeats.some((i) => isTanner(state.seats[i]!.finalRole));
-
-  if (tannerKilled) {
-    // Tanner wins; village ALSO wins if a wolf was also killed (common house rule).
-    if (wolfKilled) {
-      // Return a "joint" winner — for simplicity, label it tanner with a
-      // note. Engine doesn't model joint wins; we pick tanner.
-      return 'tanner';
-    }
-    return 'tanner';
+function requireCenter(state: OnuwPrivateState, index: unknown, what: string): number {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= state.centerCards.length) {
+    throw new Error(`${what}: invalid center card ${String(index)}`);
   }
-
-  if (!hasWolfInPlay) {
-    // All wolves in center.
-    if (killedSeats.length === 0) return 'village';
-    return 'werewolves';
-  }
-
-  // Wolves in play.
-  if (wolfKilled) return 'village';
-  return 'werewolves';
+  return index;
 }
 
-// Prince protection: zero out votes against any seat whose finalRole is
-// 'prince' before max-vote scan. We apply this BEFORE counting.
-function applyPrinceImmunity(state: OnuwPrivateState): OnuwPrivateState {
-  const next = { ...state, seats: state.seats.map((s) => ({ ...s })) };
-  for (const seat of next.seats) {
-    if (seat.voteTarget !== null && next.seats[seat.voteTarget]!.finalRole === 'prince') {
-      seat.voteTarget = null;
+function requireDirection(dir: unknown): 'left' | 'right' {
+  if (dir !== 'left' && dir !== 'right') throw new Error(`Invalid direction ${String(dir)}`);
+  return dir;
+}
+
+function applyNightAction(state: OnuwPrivateState, action: OnuwAction): OnuwPrivateState {
+  if (!('bySeat' in action)) throw new Error(`${action.type} must carry bySeat`);
+  const by = action.bySeat;
+  switch (action.type) {
+    case 'nightAck':
+    case 'loneWolfSkip':
+    case 'paranormalStop':
+    case 'robberSkip':
+    case 'witchSkip':
+    case 'villageIdiotSkip':
+    case 'revealerSkip': {
+      const roleFor: Partial<Record<OnuwAction['type'], OnuwRoleId[]>> = {
+        loneWolfSkip: ['werewolf', 'mysticWolf'],
+        paranormalStop: ['paranormalInvestigator'],
+        robberSkip: ['robber'],
+        witchSkip: ['witch'],
+        villageIdiotSkip: ['villageIdiot'],
+        revealerSkip: ['revealer'],
+      };
+      const step = currentStep(state);
+      const roles = roleFor[action.type] ?? (step ? [step.role] : []);
+      requireTurn(state, by, roles);
+      const mine = yourNightStep(state, by)!;
+      if (!mine.canPass) throw new Error(`The ${ROLES[mine.role].name} must act`);
+      return finishTurn(state, by);
     }
+
+    // -- Base game --
+    case 'seerLookSeat': {
+      requireTurn(state, by, ['seer']);
+      const t = requireOther(state, by, action.targetSeat, 'Seer');
+      return finishTurn(applySeerLookSeat(state, by, t), by);
+    }
+    case 'seerLookCenter': {
+      requireTurn(state, by, ['seer']);
+      const pair = action.centerIndices;
+      if (!Array.isArray(pair) || pair.length !== 2) throw new Error('Seer: pick two center cards');
+      const a = requireCenter(state, pair[0], 'Seer');
+      const b = requireCenter(state, pair[1], 'Seer');
+      if (a === b) throw new Error('Seer: pick two different center cards');
+      return finishTurn(applySeerLookCenter(state, by, [a, b]), by);
+    }
+    case 'robberSwap': {
+      requireTurn(state, by, ['robber']);
+      const t = requireOther(state, by, action.targetSeat, 'Robber');
+      return finishTurn(applyRobberSwap(state, by, t), by);
+    }
+    case 'troublemakerSwap': {
+      requireTurn(state, by, ['troublemaker']);
+      const a = requireOther(state, by, action.a, 'Troublemaker');
+      const b = requireOther(state, by, action.b, 'Troublemaker');
+      if (a === b) throw new Error('Troublemaker must swap two different players');
+      return finishTurn(applyTroublemakerSwap(state, by, a, b), by);
+    }
+    case 'drunkSwap': {
+      requireTurn(state, by, ['drunk']);
+      const c = requireCenter(state, action.centerIndex, 'Drunk');
+      return finishTurn(applyDrunkSwap(state, by, c), by);
+    }
+    case 'loneWolfPeekCenter': {
+      requireTurn(state, by, ['werewolf']);
+      if (!isLoneWolf(state, by)) throw new Error('Only a lone werewolf may look at a center card');
+      const c = requireCenter(state, action.centerIndex, 'Werewolf');
+      return finishTurn(applyLoneWolfPeek(state, by, c), by);
+    }
+
+    // -- Daybreak --
+    case 'doppelgangerCopy': {
+      requireTurn(state, by, ['doppelganger']);
+      const t = requireOther(state, by, action.targetSeat, 'Doppelganger');
+      return finishTurn(applyDoppelgangerCopy(state, by, t), by);
+    }
+    case 'apprenticeSeerLook': {
+      requireTurn(state, by, ['apprenticeSeer']);
+      const c = requireCenter(state, action.centerIndex, 'Apprentice Seer');
+      return finishTurn(applyApprenticeSeerLook(state, by, c), by);
+    }
+    case 'paranormalLook': {
+      requireTurn(state, by, ['paranormalInvestigator']);
+      const t = requireOther(state, by, action.targetSeat, 'Paranormal Investigator');
+      const looked = state.piLooks[by] ?? [];
+      if (looked.includes(t)) throw new Error('Paranormal Investigator: already looked at that player');
+      if (looked.length >= 2) throw new Error('Paranormal Investigator: at most two looks');
+      const { state: next, converted } = applyParanormalLook(state, by, t);
+      const looks = next.piLooks[by]?.length ?? 0;
+      return converted || looks >= 2 ? finishTurn(next, by) : next;
+    }
+    case 'witchLook': {
+      requireTurn(state, by, ['witch']);
+      if (state.witchPeeks[by] !== undefined) throw new Error('Witch: already looked at a center card');
+      const c = requireCenter(state, action.centerIndex, 'Witch');
+      return applyWitchLook(state, by, c);
+    }
+    case 'witchSwap': {
+      requireTurn(state, by, ['witch']);
+      const c = requireCenter(state, action.centerIndex, 'Witch');
+      const looked = state.witchPeeks[by];
+      if (looked !== undefined && looked !== c) throw new Error('Witch: must hand out the card she looked at');
+      if (!isValidSeat(state, action.targetSeat)) throw new Error('Witch: invalid seat');
+      return finishTurn(applyWitchSwap(state, by, c, action.targetSeat), by);
+    }
+    case 'villageIdiotShift': {
+      requireTurn(state, by, ['villageIdiot']);
+      const dir = requireDirection(action.direction);
+      return finishTurn(applyVillageIdiotShift(state, by, dir), by);
+    }
+    case 'revealerFlip': {
+      requireTurn(state, by, ['revealer']);
+      const t = requireOther(state, by, action.targetSeat, 'Revealer');
+      return finishTurn(applyRevealerFlip(state, by, t), by);
+    }
+    case 'curatorGive': {
+      requireTurn(state, by, ['curator']);
+      const t = requireOther(state, by, action.targetSeat, 'Curator');
+      return finishTurn(applyCuratorGive(state, by, t), by);
+    }
+    case 'alphaWolfConvert': {
+      requireTurn(state, by, ['alphaWolf']);
+      const t = requireOther(state, by, action.targetSeat, 'Alpha Wolf');
+      if (!alphaTargets(state, by).includes(t)) throw new Error('Alpha Wolf must pick a non-werewolf');
+      return finishTurn(applyAlphaWolfConvert(state, by, t), by);
+    }
+    case 'mysticWolfLook': {
+      requireTurn(state, by, ['mysticWolf']);
+      const t = requireOther(state, by, action.targetSeat, 'Mystic Wolf');
+      return finishTurn(applyMysticWolfLook(state, by, t), by);
+    }
+
+    // -- Bonus --
+    case 'thingTap': {
+      requireTurn(state, by, ['thing']);
+      const t = requireOther(state, by, action.targetSeat, 'The Thing');
+      const n = state.seats.length;
+      if (t !== (by - 1 + n) % n && t !== (by + 1) % n) throw new Error('The Thing can only tap a neighbor');
+      return finishTurn(applyThingTap(state, by, t), by);
+    }
+    case 'bodySnatcherSwap': {
+      requireTurn(state, by, ['bodySnatcher']);
+      const t = requireOther(state, by, action.targetSeat, 'Body Snatcher');
+      return finishTurn(applyBodySnatcherSwap(state, by, t), by);
+    }
+    case 'windyWendyShift': {
+      requireTurn(state, by, ['windyWendy']);
+      const src = requireOther(state, by, action.sourceSeat, 'Windy Wendy');
+      const dir = requireDirection(action.direction);
+      return finishTurn(applyWindyWendyShift(state, by, src, dir), by);
+    }
+    case 'defenderProtect': {
+      requireTurn(state, by, ['defenderEr']);
+      if (!isValidSeat(state, action.targetSeat)) throw new Error('Defender-er: invalid seat');
+      return finishTurn(applyDefenderProtect(state, by, action.targetSeat), by);
+    }
+    default:
+      throw new Error(`Unknown ONUW action ${(action as { type: string }).type}`);
   }
-  return next;
 }
 
 // === Module =================================================================
@@ -273,405 +310,62 @@ export const onuwModule: GameModule<OnuwPrivateState, OnuwPublicState, OnuwActio
       opts.rolePool,
       opts.players.map((p) => p.name),
       config.seed,
-      opts.dayDurationSec,
-      opts.allowNoLynch,
+      opts.dayDurationSec ?? 300,
+      opts.allowNoLynch ?? true,
     );
   },
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   applyAction(state: OnuwPrivateState, action: OnuwAction): OnuwPrivateState {
     switch (action.type) {
       case 'ackRoleReveal': {
         if (state.phase !== 'setup') throw new Error('ackRoleReveal only valid in setup');
+        if (!isValidSeat(state, action.bySeat)) throw new Error('Invalid seat');
+        if (state.setupAcked[action.bySeat]) throw new Error('Role already acknowledged');
         const setupAcked = { ...state.setupAcked, [action.bySeat]: true };
-        const allAcked = state.seats.every((s) => setupAcked[s.index]);
-        if (!allAcked) return { ...state, setupAcked };
-        // Move to night. Pre-run any observational auto steps at the front.
-        let next: OnuwPrivateState = { ...state, setupAcked, phase: 'night' };
-        const firstStep = next.nightSchedule[0];
-        if (firstStep) {
-          if (firstStep.role === 'dreamWolf') {
-            return advanceStep(next);
-          }
-          if (OBSERVATIONAL_ROLES_NEED_ACK.has(firstStep.role)) {
-            next = runAutoStep(next, firstStep.role, firstStep.seats);
-          }
-        }
-        return next;
+        const next: OnuwPrivateState = { ...state, setupAcked };
+        if (!state.seats.every((s) => setupAcked[s.index])) return next;
+        return activateFrom({ ...next, phase: 'night' }, 0);
       }
 
-      case 'startNight': {
-        // Not used directly — ackRoleReveal transitions automatically once
-        // all seats have acked.
-        return state;
-      }
+      case 'startNight':
+        throw new Error('The night starts automatically once every player has seen their role');
 
-      case 'nightAck': {
-        if (state.phase !== 'night') throw new Error('nightAck only valid at night');
-        const step = currentStep(state);
-        if (!step) throw new Error('No active night step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) {
-          next = advanceStep(next);
-        }
-        return next;
-      }
-
-      case 'seerLookSeat': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'seer') throw new Error('Not Seer step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applySeerLookSeat(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'seerLookCenter': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'seer') throw new Error('Not Seer step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applySeerLookCenter(state, action.bySeat, action.centerIndices);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'robberSwap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'robber') throw new Error('Not Robber step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.targetSeat === action.bySeat) {
-          throw new Error('Robber cannot target themselves');
-        }
-        let next = applyRobberSwap(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'robberSkip': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'robber') throw new Error('Not Robber step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'troublemakerSwap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'troublemaker') throw new Error('Not Troublemaker step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.a === action.b || action.a === action.bySeat || action.b === action.bySeat) {
-          throw new Error('Troublemaker must swap two distinct OTHER seats');
-        }
-        let next = applyTroublemakerSwap(state, action.bySeat, action.a, action.b);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'drunkSwap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'drunk') throw new Error('Not Drunk step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyDrunkSwap(state, action.bySeat, action.centerIndex);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'loneWolfPeekCenter': {
-        const step = currentStep(state);
-        if (!step || (step.role !== 'werewolf' && step.role !== 'alphaWolf' && step.role !== 'mysticWolf')) {
-          throw new Error('Not a werewolf step');
-        }
-        ensureSeatInStep(step, action.bySeat);
-        // Lone wolf only — must be the only awake wolf.
-        const otherWolves = state.seats.filter(
-          (s) => s.index !== action.bySeat && (s.dealtRole === 'werewolf' || s.dealtRole === 'alphaWolf' || s.dealtRole === 'mysticWolf'),
-        );
-        if (otherWolves.length > 0) throw new Error('Not a lone wolf');
-        let next = applyLoneWolfPeek(state, action.bySeat, action.centerIndex);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'loneWolfSkip': {
-        const step = currentStep(state);
-        if (!step || (step.role !== 'werewolf' && step.role !== 'alphaWolf' && step.role !== 'mysticWolf')) {
-          throw new Error('Not a werewolf step');
-        }
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-
-      // -- Daybreak --
-      case 'doppelgangerCopy': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'doppelganger') throw new Error('Not Doppelganger step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.targetSeat === action.bySeat) throw new Error('Doppelganger cannot copy itself');
-        let next = applyDoppelgangerCopy(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'apprenticeSeerLook': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'apprenticeSeer') throw new Error('Not Apprentice Seer step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyApprenticeSeerLook(state, action.bySeat, action.centerIndex);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'paranormalLook': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'paranormalInvestigator') throw new Error('Not PI step');
-        ensureSeatInStep(step, action.bySeat);
-        const before = state.seats[action.bySeat]!.observations.length;
-        const next0 = applyParanormalLook(state, action.bySeat, action.targetSeat);
-        const after = next0.seats[action.bySeat]!.observations.length;
-        // If PI joined a team (observation count grew by 2 instead of 1), end their step.
-        const joined = after - before > 1;
-        // If we've looked once and haven't joined, we COULD look once more.
-        // For UI simplicity: any subsequent paranormalLook by the same seat
-        // is also fine. We require an explicit paranormalStop to advance.
-        let next = next0;
-        if (joined) {
-          next = recordStepAck(next, step.stepIndex, action.bySeat);
-          if (stepFullyAcked(next)) next = advanceStep(next);
-          return next;
-        }
-        // Track "looks taken" in observations count - if 2 lookups, auto-stop.
-        const looks = next.seats[action.bySeat]!.observations.length;
-        if (looks >= 2) {
-          next = recordStepAck(next, step.stepIndex, action.bySeat);
-          if (stepFullyAcked(next)) next = advanceStep(next);
-        }
-        return next;
-      }
-      case 'paranormalStop': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'paranormalInvestigator') throw new Error('Not PI step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'witchSwap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'witch') throw new Error('Not Witch step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyWitchSwap(state, action.bySeat, action.centerIndex, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'witchSkip': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'witch') throw new Error('Not Witch step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'villageIdiotShift': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'villageIdiot') throw new Error('Not Village Idiot step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyVillageIdiotShift(state, action.bySeat, action.direction);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'villageIdiotSkip': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'villageIdiot') throw new Error('Not Village Idiot step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'revealerFlip': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'revealer') throw new Error('Not Revealer step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyRevealerFlip(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'revealerSkip': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'revealer') throw new Error('Not Revealer step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = recordStepAck(state, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'curatorGive': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'curator') throw new Error('Not Curator step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyCuratorGive(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'alphaWolfConvert': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'alphaWolf') throw new Error('Not Alpha Wolf step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.targetSeat === action.bySeat) throw new Error('Cannot convert self');
-        let next = applyAlphaWolfConvert(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'mysticWolfLook': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'mysticWolf') throw new Error('Not Mystic Wolf step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.targetSeat === action.bySeat) throw new Error('Cannot look at self');
-        let next = applyMysticWolfLook(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-
-      // -- Bonus --
-      case 'thingTap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'thing') throw new Error('Not Thing step');
-        ensureSeatInStep(step, action.bySeat);
-        // Must be an adjacent seat.
-        const n = state.seats.length;
-        const left = (action.bySeat - 1 + n) % n;
-        const right = (action.bySeat + 1) % n;
-        if (action.targetSeat !== left && action.targetSeat !== right) {
-          throw new Error('Thing can only tap neighbors');
-        }
-        let next = applyThingTap(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'bodySnatcherSwap': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'bodySnatcher') throw new Error('Not Body Snatcher step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.targetSeat === action.bySeat) throw new Error('Cannot snatch self');
-        let next = applyBodySnatcherSwap(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'windyWendyShift': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'windyWendy') throw new Error('Not Windy Wendy step');
-        ensureSeatInStep(step, action.bySeat);
-        if (action.sourceSeat === action.bySeat) {
-          throw new Error('Cannot shift self');
-        }
-        let next = applyWindyWendyShift(state, action.bySeat, action.sourceSeat, action.direction);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-      case 'defenderProtect': {
-        const step = currentStep(state);
-        if (!step || step.role !== 'defenderEr') throw new Error('Not Defender step');
-        ensureSeatInStep(step, action.bySeat);
-        let next = applyDefenderProtect(state, action.bySeat, action.targetSeat);
-        next = recordStepAck(next, step.stepIndex, action.bySeat);
-        if (stepFullyAcked(next)) next = advanceStep(next);
-        return next;
-      }
-
-      // -- Day → voting → resolution --
       case 'startVote': {
         if (state.phase !== 'day') throw new Error('startVote only valid in day');
         return { ...state, phase: 'voting', voteAcks: [] };
       }
+
       case 'castVote': {
         if (state.phase !== 'voting') throw new Error('castVote only valid in voting');
-        if (state.seats[action.bySeat]!.voteTarget !== null) {
-          throw new Error(`Seat ${action.bySeat} has already voted`);
-        }
-        let next = {
+        const by = action.bySeat;
+        if (!isValidSeat(state, by)) throw new Error('Invalid seat');
+        if (state.seats[by]!.voteTarget !== null) throw new Error(`Seat ${by} has already voted`);
+        const t = requireOther(state, by, action.targetSeat, 'Vote');
+        const next: OnuwPrivateState = {
           ...state,
-          seats: state.seats.map((s, i) =>
-            i === action.bySeat ? { ...s, voteTarget: action.targetSeat } : s,
-          ),
-          voteAcks: state.voteAcks.includes(action.bySeat)
-            ? state.voteAcks
-            : [...state.voteAcks, action.bySeat],
+          seats: state.seats.map((s, i) => (i === by ? { ...s, voteTarget: t } : s)),
+          voteAcks: [...state.voteAcks, by],
         };
-        // Auto-resolve when every seat has voted.
-        const everyoneVoted = next.seats.every((s) => s.voteTarget !== null);
-        if (everyoneVoted) {
-          next = applyPrinceImmunity(next);
-          next = resolveVotes(next);
-        }
-        return next;
+        return next.seats.every((s) => s.voteTarget !== null) ? resolveVotes(next) : next;
       }
+
       case 'resolveVotes': {
-        // Manual resolve (host wants to advance with abstentions).
+        // Host override: count now, treating missing ballots as abstentions.
         if (state.phase !== 'voting') throw new Error('resolveVotes only valid in voting');
-        let next = applyPrinceImmunity(state);
-        next = resolveVotes(next);
-        return next;
+        return resolveVotes(state);
       }
+
       case 'ackGameOver': {
-        if (state.phase !== 'resolution') return state;
+        if (state.phase !== 'resolution') throw new Error('ackGameOver only valid at resolution');
         return { ...state, phase: 'gameOver' };
       }
+
+      default:
+        return applyNightAction(state, action);
     }
   },
 
-  viewFor(state: OnuwPrivateState, seat: SeatIndex | null): OnuwPublicState {
-    const isOver = state.phase === 'resolution' || state.phase === 'gameOver';
-    const ownSeat = seat === null ? null : state.seats[seat] ?? null;
-    const step = currentStep(state);
-    return {
-      phase: state.phase,
-      seats: state.seats.map((s) => ({
-        index: s.index,
-        name: s.name,
-        hasAckedSetup: !!state.setupAcked[s.index],
-        hasVoted: s.voteTarget !== null,
-        voteTarget: isOver ? s.voteTarget : null,
-        votesReceived: isOver ? state.voteTally[s.index] ?? 0 : 0,
-        killed: s.killed,
-        revealedRole: isOver ? s.finalRole : null,
-        artifacts: s.artifacts,
-      })),
-      centerCards: state.centerCards.map((c) => ({
-        index: c.index,
-        revealedRole: isOver ? c.role : null,
-      })),
-      rolePool: state.rolePool,
-      nightStepIndex: state.nightStepIndex,
-      nightTotalSteps: state.nightSchedule.length,
-      activeNightStep:
-        state.phase === 'night' && step
-          ? {
-              role: step.role,
-              seats: step.seats,
-              acked: state.nightStepAcks[step.stepIndex] ?? [],
-              interactive: step.interactive,
-            }
-          : null,
-      yourSeat: seat,
-      yourDealtRole: ownSeat?.dealtRole ?? null,
-      yourFinalRole: ownSeat?.finalRole ?? null,
-      yourObservations: ownSeat?.observations ?? [],
-      yourVoteTarget: ownSeat?.voteTarget ?? null,
-      winnerTeam: state.winnerTeam,
-      killedSeats: isOver ? state.killedSeats : [],
-      voteTally: isOver ? state.voteTally : {},
-    };
-  },
+  viewFor,
 
   isFinished(state: OnuwPrivateState): boolean {
     return state.phase === 'gameOver';
@@ -680,13 +374,10 @@ export const onuwModule: GameModule<OnuwPrivateState, OnuwPublicState, OnuwActio
   aiChooseAction,
 
   defaultConfig(playerCount: number): GameConfig {
-    const baseRoles: OnuwRoleId[] = ['werewolf', 'werewolf', 'seer', 'robber', 'troublemaker'];
-    const filler: OnuwRoleId[] = Array(Math.max(0, playerCount + 3 - baseRoles.length)).fill(
-      'villager',
-    );
+    const n = Math.min(this.maxPlayers, Math.max(this.minPlayers, playerCount));
     const options: OnuwOptions = {
-      rolePool: [...baseRoles, ...filler].slice(0, playerCount + 3),
-      players: Array.from({ length: playerCount }, (_, i) => ({
+      rolePool: (RECOMMENDED_POOLS[n] ?? RECOMMENDED_POOLS[5]!).slice(),
+      players: Array.from({ length: n }, (_, i) => ({
         name: `Player ${i + 1}`,
         isAI: false,
       })),

@@ -1,244 +1,158 @@
-import { makeRng, rngInt } from '@/engine/rng';
+import { makeRng, rngFloat, rngInt } from '@/engine/rng';
+import type { RngState } from '@/engine/rng';
 import type { SeatIndex } from '@/engine/types';
 import type { LiarsPokerAction } from './actions';
-import { claimExists, compareClaim } from './hands';
-import type { HandClaim } from './hands';
-import type {
-  Card,
-  CardRank,
-  LiarsPokerPrivateState,
-  Suit,
-} from './state';
+import { ALL_RANKS, ALL_SUITS, allClaims, claimExistsIn, compareClaim, poolStats } from './hands';
+import type { HandClaim, PoolStats } from './hands';
+import type { Card, LiarsPokerPrivateState, LiarsPokerPublicState } from './state';
+import { viewFor } from './view';
 
+// ============================================================================
 // Liar's Poker AI.
 //
-// Strategy: estimate the combined pool. The AI knows its own hand + all
-// visible dummy hands. Unknown cards are sampled from the remaining deck
-// (52 minus known) uniformly. We score candidate claims by their probability
-// of existing in the realized pool. Then:
-//   - If no current claim: open with the strongest hand we have direct
-//     evidence for (e.g. pair we hold).
-//   - Else: cheapest legal raise whose pUnion >= threshold; if none, call liar.
+// Fairness: decides from `viewFor(state, seat)` only. Known cards are the
+// seat's own hand plus any dummy cards it is allowed to see; a dummy AI
+// does NOT know its own card. Every other card in play is unknown and is
+// Monte-Carlo sampled from the rest of the deck — never read. The private
+// seed is used only as an entropy source for sampling / bluff mixing.
+//
+// Decision: score each option by the chance it costs us a card —
+//   call liar → P(current claim exists)
+//   raise c   → P(c doesn't exist) × P(someone calls it)
+// with jitter, plus a bluff mixer that sometimes overclaims.
+// ============================================================================
 
-const ALL_SUITS: Suit[] = ['spades', 'hearts', 'diamonds', 'clubs'];
-
-function aliveSeats(state: LiarsPokerPrivateState): SeatIndex[] {
-  return state.seats
-    .map((s) => s.index)
-    .filter((i) => !state.players[i]!.eliminated);
-}
-
-function knownCards(
-  state: LiarsPokerPrivateState,
-  seat: SeatIndex,
-): Card[] {
-  const out: Card[] = [];
-  // Own hand (or empty if dummy).
-  const me = state.players[seat]!;
-  if (!me.isDummy) out.push(...me.hand);
-  // Visible dummy hands (everyone except the dummy themselves sees them).
-  for (const s of state.seats) {
-    if (s.index === seat) continue;
-    const p = state.players[s.index]!;
-    if (p.isDummy && !p.eliminated) out.push(...p.hand);
-  }
-  return out;
-}
-
-function unknownCardCount(
-  state: LiarsPokerPrivateState,
-  seat: SeatIndex,
-): number {
-  // Total cards in everyone's hands minus what we already see.
-  let total = 0;
-  for (const i of aliveSeats(state)) {
-    total += state.players[i]!.hand.length;
-  }
-  return total - knownCards(state, seat).length;
-}
-
-// Estimate probability that the combined pool contains the claim. We do this
-// by Monte-Carlo: sample unknown cards from the rest of the deck and test.
-function pClaimTrue(
-  state: LiarsPokerPrivateState,
-  seat: SeatIndex,
-  claim: HandClaim,
-): number {
-  const known = knownCards(state, seat);
-  const unknown = unknownCardCount(state, seat);
-  if (unknown === 0) {
-    return claimExists(claim, known) ? 1 : 0;
-  }
-  // Build the rest of the deck.
-  const seen = new Set<string>();
-  for (const c of known) seen.add(`${c.rank}-${c.suit}`);
-  const deck: Card[] = [];
-  for (const s of ALL_SUITS) {
-    for (let r = 2; r <= 14; r++) {
-      const key = `${r}-${s}`;
-      if (!seen.has(key)) deck.push({ rank: r as CardRank, suit: s });
-    }
-  }
-  const trials = 60;
-  let hits = 0;
-  const rng = makeRng(state.seed ^ (state.roundNumber * 19) ^ (seat * 31));
-  for (let t = 0; t < trials; t++) {
-    // Fisher-Yates partial shuffle.
-    const copy = deck.slice();
-    for (let i = copy.length - 1; i > copy.length - 1 - unknown; i--) {
-      const j = rngInt(rng, i + 1);
-      [copy[i], copy[j]] = [copy[j]!, copy[i]!];
-    }
-    const sample = copy.slice(copy.length - unknown);
-    const pool = known.concat(sample);
-    if (claimExists(claim, pool)) hits += 1;
-  }
-  return hits / trials;
-}
-
-// Generate a small set of candidate next-raises.
-function generateCandidates(
-  state: LiarsPokerPrivateState,
-  seat: SeatIndex,
-): HandClaim[] {
-  const candidates: HandClaim[] = [];
-  // Use the AI's known cards to enumerate plausible bumps.
-  const known = knownCards(state, seat);
-  const ranksIHave = new Set<CardRank>(known.map((c) => c.rank));
-  // High cards
-  for (let r = 7; r <= 14; r++) {
-    candidates.push({ kind: 'highCard', rank: r as CardRank });
-  }
-  // Pairs
-  for (let r = 2; r <= 14; r++) {
-    candidates.push({ kind: 'pair', rank: r as CardRank });
-  }
-  // Two pair (use ranks I have at least some evidence for)
-  const evidenceRanks = Array.from(ranksIHave);
-  for (const a of evidenceRanks) {
-    for (const b of evidenceRanks) {
-      if (a !== b) {
-        candidates.push({
-          kind: 'twoPair',
-          highRank: Math.max(a, b) as CardRank,
-          lowRank: Math.min(a, b) as CardRank,
-        });
-      }
-    }
-  }
-  // Three of a kind
-  for (let r = 2; r <= 14; r++) {
-    candidates.push({ kind: 'threeKind', rank: r as CardRank });
-  }
-  // Straights
-  for (let top = 6; top <= 14; top++) {
-    candidates.push({ kind: 'straight', topRank: top as CardRank });
-  }
-  // Flushes
-  for (const s of ALL_SUITS) {
-    for (let top = 6; top <= 14; top++) {
-      candidates.push({ kind: 'flush', topRank: top as CardRank, suit: s });
-    }
-  }
-  // Full houses, four of a kind, straight flushes — only if there's any
-  // chance with known evidence.
-  for (let r = 2; r <= 14; r++) {
-    candidates.push({ kind: 'fourKind', rank: r as CardRank });
-  }
-  for (const s of ALL_SUITS) {
-    for (let top = 6; top <= 14; top++) {
-      candidates.push({
-        kind: 'straightFlush',
-        topRank: top as CardRank,
-        suit: s,
-      });
-    }
-  }
-  return candidates;
-}
+const TRIALS = 90;
+const P_CALLED = 0.6;
+const CLAIMS = allClaims();
 
 export function aiChooseAction(
   state: LiarsPokerPrivateState,
   seat: SeatIndex,
 ): LiarsPokerAction | null {
-  if (state.players[seat]!.eliminated) return null;
-  switch (state.phase) {
+  if (!state.players[seat]) return null;
+  const view = viewFor(state, seat);
+  const rng = makeRng(mix(state.seed, seat, view.roundNumber, view.roundClaims.length, 0x51));
+  return decideFromView(view, rng);
+}
+
+/** Pure decision from a redacted view. Exported for fairness tests. */
+export function decideFromView(view: LiarsPokerPublicState, rng: RngState): LiarsPokerAction | null {
+  const seat = view.yourSeat;
+  if (seat === null) return null;
+  const me = view.players[seat];
+  if (!me || me.eliminated) return null;
+  switch (view.phase) {
     case 'dealPending':
-      if (state.players[seat]!.dealAcked) return null;
-      return { type: 'ackDeal', bySeat: seat };
-
+      return view.yourAckPending ? { type: 'ackDeal', bySeat: seat } : null;
     case 'revealing':
-      if (state.revealAcked[seat]) return null;
-      return { type: 'ackReveal', bySeat: seat };
-
+      return view.yourAckPending ? { type: 'ackReveal', bySeat: seat } : null;
     case 'roundOver':
-      if (state.roundOverAcked[seat]) return null;
-      return { type: 'ackRoundOver', bySeat: seat };
-
-    case 'bidding': {
-      if (seat !== state.currentSeat) return null;
-      const prev = state.currentClaim;
-      // Should we call?
-      if (prev !== null) {
-        const pTrue = pClaimTrue(state, seat, prev);
-        const rng = makeRng(state.seed ^ (state.roundNumber * 11) ^ (seat * 41));
-        const j = rngInt(rng, 15) / 100;
-        if (pTrue < 0.35 + j) {
-          return { type: 'callLiar', bySeat: seat };
-        }
-      }
-      const candidates = generateCandidates(state, seat).filter(
-        (c) => prev === null || compareClaim(prev, c) === -1,
-      );
-      const scored = candidates.map((c) => ({
-        claim: c,
-        p: pClaimTrue(state, seat, c),
-      }));
-
-      // Bluff mixer: with small probability, leap to a much stronger (but
-      // less safe) claim. Punishes opponents who learn the "always pick
-      // weakest safe claim" pattern. Bluff rate scales with own card count
-      // (more cards = more cover for a bluff).
-      const me = state.players[seat]!;
-      const bluffP = Math.min(
-        0.22,
-        0.06 + 0.04 * (me.cardCount || state.cardsPerPlayer),
-      );
-      const jr = makeRng(
-        (state.seed ^ (seat * 0x9e37) ^ (state.roundNumber * 53)) >>> 0,
-      );
-      const j = rngInt(jr, 100) / 100;
-      const wantBluff = j < bluffP;
-
-      const safe = scored.filter((x) => x.p >= 0.5);
-      const semi = scored.filter((x) => x.p >= 0.25 && x.p < 0.5);
-
-      if (wantBluff && semi.length > 0) {
-        // Sort by strength descending — pick a STRONGER claim than necessary.
-        semi.sort((a, b) =>
-          prev === null
-            ? compareClaim(b.claim, a.claim)
-            : compareClaim(b.claim, a.claim),
-        );
-        return { type: 'placeClaim', bySeat: seat, claim: semi[0]!.claim };
-      }
-
-      if (safe.length === 0) {
-        if (prev !== null) {
-          return { type: 'callLiar', bySeat: seat };
-        }
-        return {
-          type: 'placeClaim',
-          bySeat: seat,
-          claim: { kind: 'highCard', rank: 7 as CardRank },
-        };
-      }
-      // Pick the WEAKEST safe claim.
-      safe.sort((a, b) => compareClaim(a.claim, b.claim));
-      return { type: 'placeClaim', bySeat: seat, claim: safe[0]!.claim };
-    }
-
+      return view.yourAckPending ? { type: 'ackRoundOver', bySeat: seat } : null;
     case 'gameOver':
       return null;
+    case 'bidding':
+      if (view.currentSeat !== seat) return null;
+      return chooseClaimOrCall(view, seat, rng);
   }
+}
+
+/** Cards this seat can legitimately see right now. */
+export function knownCards(view: LiarsPokerPublicState): Card[] {
+  const out: Card[] = view.yourHand.slice();
+  for (const p of view.players) {
+    if (p.index === view.yourSeat || p.eliminated) continue;
+    out.push(...p.visibleHand);
+  }
+  return out;
+}
+
+/** Monte-Carlo samples of the full combined pool, consistent with the view. */
+function samplePools(view: LiarsPokerPublicState, rng: RngState): PoolStats[] {
+  const known = knownCards(view);
+  const unknown = Math.max(0, view.totalCards - known.length);
+  const seen = new Set(known.map((c) => `${c.rank}${c.suit}`));
+  const rest: Card[] = [];
+  for (const suit of ALL_SUITS) for (const rank of ALL_RANKS) if (!seen.has(`${rank}${suit}`)) rest.push({ rank, suit });
+  if (unknown === 0) return [poolStats(known)];
+  const out: PoolStats[] = [];
+  for (let t = 0; t < TRIALS; t++) {
+    const deck = rest.slice();
+    for (let i = deck.length - 1; i > deck.length - 1 - unknown && i > 0; i--) {
+      const j = rngInt(rng, i + 1);
+      [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+    }
+    out.push(poolStats(known.concat(deck.slice(deck.length - unknown))));
+  }
+  return out;
+}
+
+function probability(claim: HandClaim, samples: PoolStats[]): number {
+  let hits = 0;
+  for (const s of samples) if (claimExistsIn(claim, s)) hits += 1;
+  return hits / samples.length;
+}
+
+function chooseClaimOrCall(view: LiarsPokerPublicState, seat: SeatIndex, rng: RngState): LiarsPokerAction {
+  const prev = view.currentClaim;
+  const samples = samplePools(view, rng);
+  const raises = CLAIMS.filter((c) => prev === null || compareClaim(prev, c) === -1).map((claim) => ({
+    claim,
+    p: probability(claim, samples),
+  }));
+
+  if (prev === null) {
+    return { type: 'placeClaim', bySeat: seat, claim: openingClaim(raises, rng) };
+  }
+  if (raises.length === 0) return { type: 'callLiar', bySeat: seat };
+
+  const pPrev = probability(prev, samples);
+  const jitter = () => (rngFloat(rng) - 0.5) * 0.08;
+
+  // Bluff mixer: sometimes overclaim instead of the "obvious" move.
+  const myCards = me(view).handSize;
+  const bluffP = Math.min(0.22, 0.07 + 0.03 * myCards);
+  if (pPrev > 0.4 && rngFloat(rng) < bluffP) {
+    const semi = raises.filter((x) => x.p >= 0.25 && x.p < 0.5);
+    if (semi.length > 0) {
+      return { type: 'placeClaim', bySeat: seat, claim: semi[Math.floor(rngFloat(rng) * semi.length)]!.claim };
+    }
+  }
+
+  // Best raise: highest probability, weakest on ties (don't jump needlessly).
+  let best = raises[0]!;
+  for (const r of raises) if (r.p > best.p + 1e-9) best = r;
+  const raiseRisk = (1 - best.p) * P_CALLED + jitter();
+  const callRisk = pPrev + jitter();
+  return callRisk < raiseRisk
+    ? { type: 'callLiar', bySeat: seat }
+    : { type: 'placeClaim', bySeat: seat, claim: best.claim };
+}
+
+function openingClaim(raises: Array<{ claim: HandClaim; p: number }>, rng: RngState): HandClaim {
+  // Open with the strongest claim that's still comfortably likely, with a
+  // random threshold so the opener isn't a readable function of the hand.
+  const threshold = 0.62 + rngFloat(rng) * 0.15;
+  const safe = raises.filter((x) => x.p >= threshold);
+  if (safe.length === 0) {
+    let best = raises[0]!;
+    for (const r of raises) if (r.p > best.p) best = r;
+    return best.claim;
+  }
+  if (rngFloat(rng) < 0.25) return safe[Math.floor(rngFloat(rng) * safe.length)]!.claim;
+  return safe[safe.length - 1]!.claim; // raises are weakest-first
+}
+
+function me(view: LiarsPokerPublicState) {
+  return view.players[view.yourSeat!]!;
+}
+
+function mix(...parts: number[]): number {
+  let h = 0x811c9dc5;
+  for (const part of parts) {
+    h ^= part >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
+    h ^= h >>> 15;
+  }
+  return h >>> 0;
 }
